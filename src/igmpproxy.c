@@ -31,128 +31,129 @@
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
 */
+
 /**
 *   igmpproxy.c - The main file for the IGMP proxy application.
 *
-*   February 2005 - Johnny Egeland
+*   February 2005 - Johnny Egeland, September 2020 - Sietse van Zanen
 */
-
-/* getopt() and clock_getime() */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200112L
-#endif
 
 #include "igmpproxy.h"
 
 static const char Usage[] =
-"Usage: igmpproxy [-h] [-n] [-d] [-v [-v]] <configfile>\n"
+"Usage: igmpproxy [-h | -v] [-c [-cbrif...] [-h]] [[-n | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
+"   -v   Display version.\n"
 "   -n   Do not run as a daemon\n"
 "   -d   Run in debug mode. Output all messages on stderr. Implies -n.\n"
-"   -v   Be verbose. Give twice to see even debug messages.\n"
+"   -c   Daemon control and statistics.\n"
+"        -c   Reload Configuration.\n"
+"        -r   Rebuild Interfaces.\n"
+"        -r   Display routing table.\n"
+"        -i   Display interface statistics.\n"
+"        -f   Display configured filters.\n"
+"        -h   Do not display headers.\n"
 "\n"
-PACKAGE_STRING "\n"
-;
+PACKAGE_STRING "\n";
 
 // Local function Prototypes
 static void signalHandler(int);
-int     igmpProxyInit(void);
-void    igmpProxyCleanUp(void);
-void    igmpProxyRun(void);
+static void igmpProxyInit(void);
+static void igmpProxyCleanUp(void);
+static void igmpProxyRun(void);
 
-// Global vars...
-static int sighandled = 0;
-#define GOT_SIGINT  0x01
-#define GOT_SIGHUP  0x02
-#define GOT_SIGUSR1 0x04
-#define GOT_SIGUSR2 0x08
+// Global Variables Signal Handling / Timekeeping.
+unsigned int          sighandled, sigstatus;
+struct timespec       curtime, utcoff;
 
-// Holds the indeces of the upstream IF...
-int     upStreamIfIdx[MAX_UPS_VIFS];
+// Polling and buffering local statics.
+static struct pollfd  pollFD[2];
+static char          *recv_buf;
 
 /**
 *   Program main method. Is invoked when the program is started
 *   on commandline. The number of commandline arguments, and a
 *   pointer to the arguments are received on the line...
 */
-int main( int ArgCn, char *ArgVc[] ) {
+int main(int ArgCn, char *ArgVc[]) {
+    int            c, h;
 
-    int c;
-    bool NotAsDaemon = false;
-
+    memset(CONFIG, 0, sizeof(struct Config));
+    openlog("igmpproxy", LOG_PID, LOG_USER);
     srand(time(NULL) * getpid());
 
     // Parse the commandline options and setup basic settings..
-    while ((c = getopt(ArgCn, ArgVc, "vdnh")) != -1) {
+    for (c = getopt(ArgCn, ArgVc, "cvdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvdnh")) {
         switch (c) {
         case 'n':
-            NotAsDaemon = true;
+            CONFIG->notAsDaemon = true;
             break;
         case 'd':
-            Log2Stderr = true;
-            NotAsDaemon = true;
-            break;
-        case 'v':
-            if (LogLevel == LOG_INFO)
-                LogLevel = LOG_DEBUG;
-            else
-                LogLevel = LOG_INFO;
+            CONFIG->log2Stderr = true;
+            CONFIG->notAsDaemon = true;
             break;
         case 'h':
             fputs(Usage, stderr);
             exit(0);
-            break;
+        case 'c':
+            c = getopt(ArgCn, ArgVc, "cbrifh");
+            while (c != -1) {
+                char cmd[2] = "";
+                h = getopt(ArgCn, ArgVc, "cbrifh");
+                switch (c) {
+                case 'b':
+                case 'c':
+                    cliCmd((char *)&c);
+                    break;
+                case 'f':
+                case 'i':
+                case 'r':
+                    cliCmd(h == 'h' ? strcat(strcat(cmd, (char *)&c), (char *)&h) : (char *)&c);
+                }
+                c = h == 'h' ? getopt(ArgCn, ArgVc, "rifcvdnh") : h;
+                if (c == -1) exit(0);
+            }
+            cliCmd("cli");
+            exit(0);
+        case 'v':
+            fprintf(stdout, "Igmpproxy %s\n", PACKAGE_VERSION);
+            exit(0);
         default:
             exit(1);
-            break;
         }
     }
 
-    if (optind != ArgCn - 1) {
-        fputs("You must specify the configuration file.\n", stderr);
+    if (geteuid() != 0) {
+        // Check that we are root.
+        fprintf(stderr, "igmpproxy: must be root\n");
+        exit(1);
+    } else if (optind != ArgCn - 1) {
+        // Write debug notice with file path.
+        fprintf(stdout, "You must specify the configuration file.\n");
         exit(1);
     }
-    char *configFilePath = ArgVc[optind];
+    CONFIG->configFilePath = ArgVc[optind];
+    fprintf(stderr, "Searching for config file at '%s'\n", CONFIG->configFilePath);
 
-    // Chech that we are root
-    if (geteuid() != 0) {
-       fprintf(stderr, "igmpproxy: must be root\n");
-       exit(1);
+    if (! CONFIG->notAsDaemon) {
+        // Only daemon goes past this line.
+        if (fork()) exit(0);
+
+        // Detach daemon from terminal
+        if (close(0) < 0 || close(1) < 0 || close(2) < 0
+            || open("/dev/null", 0) != 0 || dup2(0, 1) < 0 || dup2(0, 2) < 0
+            || setpgid(0, 0) < 0) {
+            fprintf(stdout, "Failed to detach daemon.\n");
+            exit(1);
+        }
     }
 
-    openlog("igmpproxy", LOG_PID, LOG_USER);
-
-    // Write debug notice with file path...
-    my_log(LOG_DEBUG, 0, "Searching for config file at '%s'" , configFilePath);
-
     do {
-
-        // Loads the config file...
-        if( ! loadConfig( configFilePath ) ) {
-            my_log(LOG_ERR, 0, "Unable to load config file...");
-            break;
-        }
+        sighandled = sigstatus = 0;
 
         // Initializes the deamon.
-        if ( !igmpProxyInit() ) {
-            my_log(LOG_ERR, 0, "Unable to initialize IGMPproxy.");
-            break;
-        }
-
-        if ( !NotAsDaemon ) {
-
-            // Only daemon goes past this line...
-            if (fork()) exit(0);
-
-            // Detach daemon from terminal
-            if ( close( 0 ) < 0 || close( 1 ) < 0 || close( 2 ) < 0
-                || open( "/dev/null", 0 ) != 0 || dup2( 0, 1 ) < 0 || dup2( 0, 2 ) < 0
-                || setpgid( 0, 0 ) < 0
-            ) {
-                my_log( LOG_ERR, errno, "failed to detach daemon" );
-            }
-        }
+        igmpProxyInit();
 
         // Go to the main loop.
         igmpProxyRun();
@@ -160,10 +161,11 @@ int main( int ArgCn, char *ArgVc[] ) {
         // Clean up
         igmpProxyCleanUp();
 
-    } while ( false );
+    // If a SIGURG was caught try to restart.
+    } while (sighandled & GOT_SIGURG);
 
-    // Inform that we are exiting.
-    my_log(LOG_INFO, 0, "Shutdown complete....");
+    // Inform that we are exiting, we should never get here.
+    my_log(LOG_INFO, 0, "igmpproxy: Unexpected Termination.");
 
     exit(0);
 }
@@ -171,223 +173,151 @@ int main( int ArgCn, char *ArgVc[] ) {
 /**
 *   Handles the initial startup of the daemon.
 */
-int igmpProxyInit(void) {
+static void igmpProxyInit(void) {
     struct sigaction sa;
-    int Err;
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+    sigaction(SIGURG, &sa, NULL);
+    sigaction(SIGPIPE, &sa, NULL);
 
-    // Loads configuration for Physical interfaces...
+    // Load the config file.
+    if (! loadConfig()) {
+        my_log(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
+        exit(1);
+    }
+
+    // Enable mroute api open cli socket and set pollFD.
+    pollFD[0] = (struct pollfd){ enableMRouter(), POLLIN, 0 };
+    pollFD[1] = (struct pollfd){ openCliSock(), POLLIN, 0 };
+
+    // Initialize IGMP.
+    recv_buf = initIgmp();
+
+    // Loads configuration for Physical interfaces.
     buildIfVc();
 
-    // Configures IF states and settings
+    // Configures IF states and settings.
     configureVifs();
 
-    switch ( Err = enableMRouter() ) {
-    case 0: break;
-    case EADDRINUSE: my_log( LOG_ERR, EADDRINUSE, "MC-Router API already in use" ); break;
-    default: my_log( LOG_ERR, Err, "MRT_INIT failed" );
-    }
-
-    /* create VIFs for all IP, non-loop interfaces
-     */
-    {
-        unsigned Ix;
-        struct IfDesc *Dp;
-        int     vifcount = 0, upsvifcount = 0;
-
-        // init array to "not set"
-        for ( Ix = 0; Ix < MAX_UPS_VIFS; Ix++)
-        {
-            upStreamIfIdx[Ix] = -1;
-        }
-
-        for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
-
-            if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
-                if(Dp->state == IF_STATE_UPSTREAM) {
-                    if (upsvifcount < MAX_UPS_VIFS -1)
-                    {
-                        my_log(LOG_DEBUG, 0, "Found upstrem IF #%d, will assing as upstream Vif %d",
-                            upsvifcount, Ix);
-                        upStreamIfIdx[upsvifcount++] = Ix;
-                    } else {
-                        my_log(LOG_ERR, 0, "Cannot set VIF #%d as upstream as well. Mac upstream Vif count is %d",
-                            Ix, MAX_UPS_VIFS);
-                    }
-                }
-
-                if (Dp->state != IF_STATE_DISABLED) {
-                    addVIF( Dp );
-                    vifcount++;
-                }
-            }
-        }
-
-        if(0 == upsvifcount) {
-            my_log(LOG_ERR, 0, "There must be at least 1 Vif as upstream.");
-        }
-    }
-
-    // Initialize IGMP
-    initIgmp();
-    // Initialize Routing table
-    initRouteTable();
-    // Initialize timer
-    callout_init();
-
-    return 1;
+    // Create vifs for multicast traffic.
+    createVifs();
 }
 
 /**
 *   Clean up all on exit...
 */
-void igmpProxyCleanUp(void) {
-    my_log( LOG_DEBUG, 0, "clean handler called" );
+static void igmpProxyCleanUp(void) {
+    my_log(LOG_DEBUG, 0, "clean handler called");
 
-    free_all_callouts();    // No more timeouts.
-    clearAllRoutes();       // Remove all routes.
-    disableMRouter();       // Disable the multirout API
+    freeQueriers();         // Free all group queriers.
+    timer_freeQueue();      // Free all timeouts.
+    clearRoutes(NULL,NULL); // Remove all routes.
+    freeIfDescP(0);         // Free IfDesc table.
+    freeConfig(0);          // Free config.
+    disableMRouter();       // Disable the MRouter API.
+    if (strstr(CONFIG->runPath, "/igmpproxy/")) {
+        char rFile[strlen(CONFIG->runPath) + 14];
+        remove(strcat(strcpy(rFile, CONFIG->runPath), "igmpproxy.pid"));
+        remove(strcat(strcpy(rFile, CONFIG->runPath), "cli.sock"));
+        rmdir(CONFIG->runPath);
+    }
+    free(CONFIG->logFilePath);
+    free(CONFIG->runPath);
 }
 
 /**
-*   Main daemon loop.
+*   Main daemon event loop.
 */
-void igmpProxyRun(void) {
-    // Get the config.
-    struct Config *config = getCommonConfig();
-    // Set some needed values.
-    register int recvlen;
-    int     MaxFD, Rt, secs;
-    fd_set  ReadFDS;
-    socklen_t dummy = 0;
-    struct  timespec  curtime, lasttime, difftime, tv;
-    // The timeout is a pointer in order to set it to NULL if nessecary.
-    struct  timespec  *timeout = &tv;
-
-    // Initialize timer vars
-    difftime.tv_nsec = 0;
-    clock_gettime(CLOCK_MONOTONIC, &curtime);
-    lasttime = curtime;
-
-    // First thing we send a membership query in downstream VIF's...
-    sendGeneralMembershipQuery();
-
-    // Loop until the end...
-    for (;;) {
-
+static void igmpProxyRun(void) {
+    while (! (sighandled & GOT_SIGURG)) {
         // Process signaling...
-        if (sighandled) {
-            if (sighandled & GOT_SIGINT) {
-                sighandled &= ~GOT_SIGINT;
-                my_log(LOG_NOTICE, 0, "Got a interrupt signal. Exiting.");
-                break;
-            }
+        if (sighandled & GOT_SIGHUP) {
+            sigstatus = GOT_SIGHUP;
+            my_log(LOG_DEBUG, 0, "SIGHUP: Rebuilding interfaces and reloading config.");
+            reloadConfig(NULL);
+            sighandled &= ~GOT_SIGHUP;
+        } else if (sighandled & GOT_SIGUSR1) {
+            sigstatus = GOT_SIGUSR1;
+            my_log(LOG_DEBUG, 0, "SIGUSR1: Reloading config.");
+            reloadConfig(NULL);
+            sighandled &= ~GOT_SIGUSR1;
+        } else if (sighandled & GOT_SIGUSR2) {
+            sigstatus = GOT_SIGUSR2;
+            my_log(LOG_DEBUG, 0, "SIGUSR2: Rebuilding interfaces.");
+            rebuildIfVc(NULL);
+            sighandled &= ~GOT_SIGUSR2;
         }
 
-        /* aimwang: call rebuildIfVc */
-        if (config->rescanVif)
-            rebuildIfVc();
+        // Run queue aging, it wil return the time until next timer is scheduled.
+        clock_gettime(CLOCK_MONOTONIC, &curtime);
+        struct timespec timeout = timer_ageQueue();
 
-        // Prepare timeout...
-        secs = timer_nextTimer();
-        if(secs == -1) {
-            timeout = NULL;
-        } else {
-            timeout->tv_nsec = 0;
-            timeout->tv_sec = (secs > 3) ? 3 : secs; // aimwang: set max timeout
-        }
-
-        // Prepare for select.
-        MaxFD = MRouterFD;
-
-        FD_ZERO( &ReadFDS );
-        FD_SET( MRouterFD, &ReadFDS );
-
-        // wait for input
-        Rt = pselect( MaxFD +1, &ReadFDS, NULL, NULL, timeout, NULL );
+        // Wait for input
+        int Rt = ppoll(pollFD, 2, timeout.tv_sec != -1 ? &timeout : NULL, NULL);
 
         // log and ignore failures
-        if( Rt < 0 ) {
-            my_log( LOG_WARNING, errno, "select() failure" );
-            continue;
-        }
-        else if( Rt > 0 ) {
-
+        if (Rt < 0) my_log(LOG_WARNING, errno, "select() failure");
+        else if (Rt > 0) {
             // Read IGMP request, and handle it...
-            if( FD_ISSET( MRouterFD, &ReadFDS ) ) {
+            if (pollFD[0].revents & POLLIN) {
+                union {
+                    struct cmsghdr cmsgHdr;
+#ifdef IP_PKTINFO
+                    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
+#elif IP_RECVIF
+                    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
+#endif
+                } cmsgUn;
+                struct iovec  ioVec[1] = { { recv_buf, BUF_SIZE } };
+                struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
 
-                recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE,
-                                   0, NULL, &dummy);
-                if (recvlen < 0) {
-                    if (errno != EINTR) my_log(LOG_ERR, errno, "recvfrom");
-                    continue;
+                int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
+                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) {
+                    my_log(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
+                } else if ((msgHdr.msg_flags & MSG_CTRUNC)) {
+                    my_log(LOG_WARNING, errno, "recvmsg() truncated control message received");
+                } else {
+                    acceptIgmp(recvlen, msgHdr);
                 }
-
-                acceptIgmp(recvlen);
             }
+
+            // Check if any cli connection needs to be handled.
+            if (pollFD[1].revents & POLLIN) processCliCon(pollFD[1].fd);
         }
-
-        // At this point, we can handle timeouts...
-        do {
-            /*
-             * If the select timed out, then there's no other
-             * activity to account for and we don't need to
-             * call gettimeofday.
-             */
-            if (Rt == 0) {
-                curtime.tv_sec = lasttime.tv_sec + secs;
-                curtime.tv_nsec = lasttime.tv_nsec;
-                Rt = -1; /* don't do this next time through the loop */
-            } else {
-                clock_gettime(CLOCK_MONOTONIC, &curtime);
-            }
-            difftime.tv_sec = curtime.tv_sec - lasttime.tv_sec;
-            difftime.tv_nsec += curtime.tv_nsec - lasttime.tv_nsec;
-            while (difftime.tv_nsec > 1000000000) {
-                difftime.tv_sec++;
-                difftime.tv_nsec -= 1000000000;
-            }
-            if (difftime.tv_nsec < 0) {
-                difftime.tv_sec--;
-                difftime.tv_nsec += 1000000000;
-            }
-            lasttime = curtime;
-            if (secs == 0 || difftime.tv_sec > 0)
-                age_callout_queue(difftime.tv_sec);
-            secs = -1;
-        } while (difftime.tv_sec > 0);
-
     }
-
 }
 
-/*
- * Signal handler.  Take note of the fact that the signal arrived
- * so that the main loop can take care of it.
- */
+/**
+*   Signal handler.  Take note of the fact that the signal arrived so that the main loop can take care of it.
+*/
 static void signalHandler(int sig) {
     switch (sig) {
     case SIGINT:
+        if (!CONFIG->notAsDaemon) break;  // Daemon ignores SIGINT
+        /* FALLTHRU */
     case SIGTERM:
-        sighandled |= GOT_SIGINT;
-        break;
-        /* XXX: Not in use.
-        case SIGHUP:
-            sighandled |= GOT_SIGHUP;
-            break;
-
-        case SIGUSR1:
-            sighandled |= GOT_SIGUSR1;
-            break;
-
-        case SIGUSR2:
-            sighandled |= GOT_SIGUSR2;
-            break;
-        */
+        my_log(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
+        igmpProxyCleanUp();
+        exit(0);
+    case SIGURG:
+        my_log(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
+        sighandled |= GOT_SIGURG;
+        return;
+    case SIGPIPE:
+        my_log(LOG_NOTICE, 0, "SIGPIPE: Continueing.");
+        /* FALLTHRU */
+    case SIGHUP:
+    case SIGUSR1:
+    case SIGUSR2:
+        sighandled |= sig == SIGHUP ? GOT_SIGHUP : sig == SIGUSR1 ? GOT_SIGUSR1 : sig == SIGUSR2 ? GOT_SIGUSR2 : 0;
+        return;
     }
+    my_log(LOG_INFO, 0, "Caught unhandled signal %d", sig);
 }

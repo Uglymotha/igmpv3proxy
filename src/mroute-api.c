@@ -32,227 +32,194 @@
 **
 */
 /**
-*   mroute-api.c
-*
-*   This module contains the interface routines to the Linux mrouted API
+*   This module contains the interface routines to the mrouted API
 */
-
 
 #include "igmpproxy.h"
 
-// MAX_MC_VIFS from mclab.h must have same value as MAXVIFS from mroute.h
-#if MAX_MC_VIFS != MAXVIFS
-# error "constants don't match, correct mclab.h"
-#endif
+static int mrouterFD = -1;
 
-// need an IGMP socket as interface for the mrouted API
-// - receives the IGMP messages
-int         MRouterFD;          /* socket for all network I/O  */
-char        *recv_buf;          /* input packet buffer         */
-char        *send_buf;          /* output packet buffer        */
-
-
-// my internal virtual interfaces descriptor vector
-static struct VifDesc {
-    struct IfDesc *IfDp;
-} VifDescVc[ MAXVIFS ];
-
-/*
-** Initialises the mrouted API and locks it by this exclusively.
-**
-** returns: - 0 if the functions succeeds
-**          - the errno value for non-fatal failure condition
+/**
+*   Returns the mrouter FD.
 */
-int enableMRouter(void)
-{
-    int Va = 1;
-
-    if ( (MRouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0 )
-        my_log( LOG_ERR, errno, "IGMP socket open" );
-
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_INIT,
-                     (void *)&Va, sizeof( Va ) ) )
-        return errno;
-
-    return 0;
+int getMrouterFD(void) {
+    return mrouterFD;
 }
 
-/*
-** Diable the mrouted API and relases by this the lock.
-**
+/**
+*   Initializes the mrouted API and locks it by this exclusively.
 */
-void disableMRouter(void)
-{
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DONE, NULL, 0 )
-         || close( MRouterFD )
-    ) {
-        MRouterFD = 0;
-        my_log( LOG_ERR, errno, "MRT_DONE/close" );
+int enableMRouter(void) {
+    int            Va = 1;
+
+    if ((mrouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0) {
+        my_log(LOG_ERR, errno, "IGMP socket open Failed");
+    } else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va))) {
+        my_log(LOG_ERR, errno, "IGMP socket IP_HDRINCL Failed");
+    } else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va))) {
+        my_log(LOG_ERR, errno, "IGMP socket MRT_INIT Failed");
+    } else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va))) {
+        my_log(LOG_ERR, errno, "IGMP socket IP_IFINFO Failed");
+    }
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+    if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va))) || ! (Va & MRT_MFC_BW_UPCALL)) {
+        my_log(LOG_WARNING, errno, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
+        CONFIG->bwControlInterval = 0;
+    }
+#endif
+    fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
+
+    return mrouterFD;
+}
+
+/**
+*   Disable the mrouted API and relases by this the lock.
+*/
+void disableMRouter(void) {
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) || close(mrouterFD)) {
+        my_log(LOG_ERR, errno, "MRT_DONE/close");
     }
 
-    MRouterFD = 0;
+    mrouterFD = -1;
 }
 
-/*
- * aimwang: delVIF()
- */
-void delVIF( struct IfDesc *IfDp )
-{
+/**
+*   Delete vif when removed from config or disappeared from system.
+*/
+void delVIF(struct IfDesc *IfDp) {
     struct vifctl VifCtl;
 
-    if ((unsigned int)-1 == IfDp->index)
+    if ((unsigned int)-1 == IfDp->index) {
         return;
-
+    }
     VifCtl.vifc_vifi = IfDp->index;
 
-    my_log( LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
+    my_log(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
          IfDp->index, IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->threshold, IfDp->ratelimit);
-
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DEL_VIF,
-                     (char *)&VifCtl, sizeof( VifCtl ) ) )
-        my_log( LOG_WARNING, errno, "MRT_DEL_VIF" );
-}
-
-/*
-** Adds the interface '*IfDp' as virtual interface to the mrouted API
-**
-*/
-void addVIF( struct IfDesc *IfDp )
-{
-    struct vifctl VifCtl;
-    struct VifDesc *VifDp;
-
-    /* search free (aimwang: or exist) VifDesc
-     */
-    for ( VifDp = VifDescVc; VifDp < VCEP( VifDescVc ); VifDp++ ) {
-        if ( ! VifDp->IfDp || VifDp->IfDp == IfDp)
-            break;
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
+        my_log(LOG_WARNING, errno, "MRT_DEL_VIF %d:%s", IfDp->index, IfDp->Name);
     }
 
-    /* no more space
-     */
-    if ( VifDp >= VCEP( VifDescVc ) )
-        my_log( LOG_ERR, ENOMEM, "addVIF, out of VIF space" );
+    // Reset vif index.
+    IfDp->index = (unsigned int)-1;
+}
 
-    VifDp->IfDp = IfDp;
+/**
+*   Adds the interface '*IfDp' as virtual interface to the mrouted API
+*/
+void addVIF(struct IfDesc *IfDp) {
+    struct vifctl  VifCtl;
+    struct IfDesc *Dp = NULL;
+    unsigned int   Ix = 0;
+    uint32_t       vifBits = 0;
 
-    VifCtl.vifc_vifi  = VifDp - VifDescVc;
-    VifCtl.vifc_flags = 0;        /* no tunnel, no source routing, register ? */
-    VifCtl.vifc_threshold  = VifDp->IfDp->threshold;    // Packet TTL must be at least 1 to pass them
-    VifCtl.vifc_rate_limit = VifDp->IfDp->ratelimit;    // Ratelimit
+    // Find available vifindex.
+    for (getNextIf(&Dp); Dp; getNextIf(&Dp)) {
+        if (Dp->index != (unsigned int)-1) {
+            BIT_SET(vifBits, Dp->index);
+        }
+    }
+    while (Ix < MAXVIFS && (vifBits & (1 << Ix))) {
+        Ix++;
+    }
+    if (Ix >= MAXVIFS) {
+        my_log(LOG_WARNING, ENOMEM, "addVIF: out of VIF space");
+        return;
+    }
 
-    VifCtl.vifc_lcl_addr.s_addr = VifDp->IfDp->InAdr.s_addr;
+    // Set the index flags etc.
+    VifCtl.vifc_vifi = IfDp->index = Ix;
+    VifCtl.vifc_flags = 0;                       // no tunnel, no source routing, register ?
+    VifCtl.vifc_threshold  = IfDp->threshold;    // Packet TTL must be at least 1 to pass them
+    VifCtl.vifc_rate_limit = 0;                  // Ratelimit
+    IfDp->bytes = IfDp->rate = 0;                // Initialize bw control
+
+    VifCtl.vifc_lcl_addr.s_addr = IfDp->InAdr.s_addr;
     VifCtl.vifc_rmt_addr.s_addr = INADDR_ANY;
 
-    // Set the index...
-    VifDp->IfDp->index = VifCtl.vifc_vifi;
+    my_log(LOG_NOTICE, 0, "adding VIF %s, Ix %d, Fl 0x%x, IP %s, Threshold: %d, Ratelimit: %d",
+         IfDp->Name, VifCtl.vifc_vifi, VifCtl.vifc_flags, inetFmt(VifCtl.vifc_lcl_addr.s_addr, 1), VifCtl.vifc_threshold, IfDp->ratelimit);
 
-    my_log( LOG_NOTICE, 0, "adding VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
-         VifCtl.vifc_vifi, VifCtl.vifc_flags,  VifCtl.vifc_lcl_addr.s_addr, VifDp->IfDp->Name,
-         VifCtl.vifc_threshold, VifCtl.vifc_rate_limit);
-
-    struct SubnetList *currSubnet;
-    for(currSubnet = IfDp->allowednets; currSubnet; currSubnet = currSubnet->next) {
-        my_log(LOG_DEBUG, 0, "        Network for [%s] : %s",
-            IfDp->Name,
-            inetFmts(currSubnet->subnet_addr, currSubnet->subnet_mask, s1));
+    struct filters *filter;
+    for (filter = IfDp->aliases; filter; filter = filter->next) {
+        my_log(LOG_DEBUG, 0, "        Network for [%s] : %s", IfDp->Name, inetFmts(filter->src.ip, filter->src.mask, 1));
     }
 
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_ADD_VIF,
-                     (char *)&VifCtl, sizeof( VifCtl ) ) )
-        my_log( LOG_ERR, errno, "MRT_ADD_VIF" );
-
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
+        my_log(LOG_WARNING, errno, "MRT_ADD_VIF %d:%s", IfDp->index, IfDp->Name);
+        IfDp->index = (unsigned int)-1;
+    }
 }
 
-/*
-** Adds the multicast routed '*Dp' to the kernel routes
-**
-** returns: - 0 if the function succeeds
-**          - the errno value for non-fatal failure condition
+/**
+*   Adds the multicast routed '*Dp' to the kernel routes
+*   Returns: - 0 if the function succeeds
+*            - the errno value for non-fatal failure condition
 */
-int addMRoute( struct MRouteDesc *Dp )
-{
-    struct mfcctl CtlReq;
-    int rc;
+int addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) {
+    int            rc;
 
-    CtlReq.mfcc_origin    = Dp->OriginAdr;
-    CtlReq.mfcc_mcastgrp  = Dp->McAdr;
-    CtlReq.mfcc_parent    = Dp->InVif;
+    // Inialize the mfc control structure.
+#ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
+    struct mfcctl2 CtlReq = { {src}, {group}, vif, {0}, {0}, 0 };
+#else
+    struct mfcctl CtlReq = { {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+#endif
+    memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
-    /* copy the TTL vector
-     */
+    my_log(LOG_NOTICE, 0, "Adding MFC: %s -> %s, InpVIf: %d", fmtInAdr(CtlReq.mfcc_origin, 1), fmtInAdr(CtlReq.mfcc_mcastgrp, 2), (int)CtlReq.mfcc_parent);
 
-    memcpy( CtlReq.mfcc_ttls, Dp->TtlVc, sizeof( CtlReq.mfcc_ttls ) );
-
-    {
-        char FmtBuO[ 32 ], FmtBuM[ 32 ];
-
-        my_log( LOG_NOTICE, 0, "Adding MFC: %s -> %s, InpVIf: %d",
-             fmtInAdr( FmtBuO, CtlReq.mfcc_origin ),
-             fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
-             (int)CtlReq.mfcc_parent
-           );
+    if ((rc = setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)))) {
+        my_log(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
     }
-
-    rc = setsockopt( MRouterFD, IPPROTO_IP, MRT_ADD_MFC,
-                    (void *)&CtlReq, sizeof( CtlReq ) );
-    if (rc)
-        my_log( LOG_WARNING, errno, "MRT_ADD_MFC" );
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+    if (CONFIG->bwControlInterval) {
+        struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ, { {CONFIG->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0} };
+        if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc))) {
+            my_log(LOG_WARNING, errno, "MRT_ADD_BW_UPCALL %d - %s", vif, inetFmt(group, 1));
+        } else {
+            my_log(LOG_DEBUG, 0, "Added BW_UPCALL: Src %s, Dst %s", inetFmt(bwUpc.bu_src.s_addr, 1), inetFmt(bwUpc.bu_dst.s_addr, 2));
+        }
+    }
+#endif
 
     return rc;
 }
 
-/*
-** Removes the multicast routed '*Dp' from the kernel routes
-**
-** returns: - 0 if the function succeeds
-**          - the errno value for non-fatal failure condition
+/**
+*   Removes the multicast routed '*Dp' from the kernel routes
+*   Returns: - 0 if the function succeeds
+*            - the errno value for non-fatal failure condition
 */
-int delMRoute( struct MRouteDesc *Dp )
-{
-    struct mfcctl CtlReq;
+int delMRoute(uint32_t src, uint32_t group, int vif) {
     int rc;
 
-    CtlReq.mfcc_origin    = Dp->OriginAdr;
-    CtlReq.mfcc_mcastgrp  = Dp->McAdr;
-    CtlReq.mfcc_parent    = Dp->InVif;
+    // Inialize the mfc control structure.
+#ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
+    struct mfcctl2 CtlReq = { {src}, {group}, vif, {0}, {0}, 0 };
+#else
+    struct mfcctl CtlReq = { {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+#endif
 
-    /* clear the TTL vector
-     */
-    memset( CtlReq.mfcc_ttls, 0, sizeof( CtlReq.mfcc_ttls ) );
+    my_log(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", fmtInAdr(CtlReq.mfcc_origin, 1), fmtInAdr(CtlReq.mfcc_mcastgrp, 2), (int)CtlReq.mfcc_parent);
 
-    {
-        char FmtBuO[ 32 ], FmtBuM[ 32 ];
-
-        my_log( LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d",
-             fmtInAdr( FmtBuO, CtlReq.mfcc_origin ),
-             fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
-             (int)CtlReq.mfcc_parent
-           );
+    if ((rc = setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)))) {
+        my_log(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
     }
-
-    rc = setsockopt( MRouterFD, IPPROTO_IP, MRT_DEL_MFC,
-                    (void *)&CtlReq, sizeof( CtlReq ) );
-    if (rc)
-        my_log( LOG_WARNING, errno, "MRT_DEL_MFC" );
 
     return rc;
 }
 
-/*
-** Returns for the virtual interface index for '*IfDp'
-**
-** returns: - the vitrual interface index if the interface is registered
-**          - -1 if no virtual interface exists for the interface
-**
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+/**
+*   Delete all BW_UPCALLS for S,G
 */
-int getVifIx( struct IfDesc *IfDp )
-{
-    struct VifDesc *Dp;
-
-    for ( Dp = VifDescVc; Dp < VCEP( VifDescVc ); Dp++ )
-        if ( Dp->IfDp == IfDp )
-            return Dp - VifDescVc;
-
-    return -1;
+void deleteUpcalls(uint32_t src, uint32_t group) {
+    struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_DELETE_ALL, { {0}, 0, 0 }, { {0}, 0, 0} };
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc))) {
+        my_log(LOG_INFO, 0, "Failed to delete BW upcall for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
+    } else {
+        my_log(LOG_INFO, 0, "Deleted BW upcalls for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
+    }
 }
+#endif

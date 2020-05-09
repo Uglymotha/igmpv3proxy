@@ -32,238 +32,150 @@
 **
 */
 
-
 #include "igmpproxy.h"
 
-/* the code below implements a callout queue */
-static int id = 0;
-static struct timeOutQueue  *queue = 0; /* pointer to the beginning of timeout queue */
-
-struct timeOutQueue {
-    struct timeOutQueue    *next;   // Next event in queue
-    int                     id;
-    timer_f                 func;   // function to call
-    void                    *data;  // Data for function
-    int                     time;   // Time offset for next event
-};
+// Queue definition.
+static struct timeOutQueue {
+    uint64_t                id;
+    char                    name[40];   // name of the timer
+    timer_f                 func;       // function to call
+    void                   *data;       // Argument for function.
+    struct timespec         time;       // Time for event
+    struct timeOutQueue    *next;       // Next event in queue
+}     *queue = NULL;
+static uint64_t id = 1;
 
 // Method for dumping the Queue to the log.
 static void debugQueue(void);
 
 /**
-*   Initializes the callout queue
-*/
-void callout_init(void) {
-    queue = NULL;
-}
-
-/**
 *   Clears all scheduled timeouts...
 */
-void free_all_callouts(void) {
+void timer_freeQueue(void) {
     struct timeOutQueue *p;
 
-    while (queue) {
-        p = queue;
-        queue = queue->next;
-        free(p);
+    for (p = queue; queue; queue = p) {
+        p = p->next;
+        free(queue);        // Alloced by timer_setTimer()
     }
+    my_log(LOG_DEBUG, 0, "timer_freeQueue: All Timeouts removed, Queue is empty.");
 }
 
-
 /**
- * elapsed_time seconds have passed; perform all the events that should
- * happen.
- */
-void age_callout_queue(int elapsed_time) {
+*   Execute all expired timers, return time difference to next scheduled timer.
+*/
+struct timespec timer_ageQueue() {
     struct timeOutQueue *ptr;
-    struct timeOutQueue *_queue = NULL;
-    struct timeOutQueue *last = NULL;
-    int i = 0;
+    uint64_t i = 1;
 
-    for (ptr = queue; ptr; ptr = ptr->next) {
-        if (ptr->time > elapsed_time) {
-            ptr->time -= elapsed_time;
-            break;
-        } else {
-            elapsed_time -= ptr->time;
-            if (_queue == NULL)
-                _queue = ptr;
-            last = ptr;
-         }
+    for (ptr = queue; ptr && ((curtime.tv_sec > ptr->time.tv_sec) || (curtime.tv_sec == ptr->time.tv_sec && curtime.tv_nsec > ptr->time.tv_nsec)); ptr = queue) {
+        my_log(LOG_DEBUG, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", ptr->id, i++, ptr->name, (ptr->time.tv_nsec > curtime.tv_nsec ? 1000000000 - ptr->time.tv_nsec + curtime.tv_nsec: curtime.tv_nsec - ptr->time.tv_nsec) / 1000);
+        queue = ptr->next;
+        ptr->func(ptr->data);
+        free(ptr);     // Alloced by timer_setTimer()
     }
+    if (i > 1) debugQueue();
 
-    queue = ptr;
-    if (last) {
-        last->next = NULL;
-    }
-
-    /* process existing events */
-    for (ptr = _queue; ptr; ptr = _queue, i++) {
-        _queue = _queue->next;
-        my_log(LOG_DEBUG, 0, "About to call timeout %d (#%d)", ptr->id, i);
-        if (ptr->func)
-             ptr->func(ptr->data);
-        free(ptr);
-    }
+    return queue ? (struct timespec){ curtime.tv_nsec > queue->time.tv_nsec ? queue->time.tv_sec - curtime.tv_sec - 1 : queue->time.tv_sec - curtime.tv_sec,
+                                      curtime.tv_nsec > queue->time.tv_nsec ? 1000000000 - curtime.tv_nsec + queue->time.tv_nsec: queue->time.tv_nsec - curtime.tv_nsec }
+                 : (struct timespec){ -1, -1 };
 }
 
 /**
- * Return in how many seconds age_callout_queue() would like to be called.
- * Return -1 if there are no events pending.
- */
-int timer_nextTimer(void) {
-    if (queue) {
-        if (queue->time < 0) {
-            my_log(LOG_WARNING, 0, "timer_nextTimer top of queue says %d", 
-                queue->time);
-            return 0;
-        }
-        return queue->time;
+*   Inserts a timer in queue.
+*   @param timer_id - Timer to modify. 0 to create new timer.
+*   @param delay    - Timer delay in .1s.
+*   @param name     - Name for the timer.
+*   @param action   - The function to call on timeout.
+*   @param data     - Pointer to the function data to supply.
+*/
+uint64_t timer_setTimer(uint64_t timer_id, unsigned int delay, const char name[40], timer_f action, void *data) {
+    struct timeOutQueue  *ptr, *node;
+    uint64_t              i = 1;
+
+    if (timer_id) {
+        // If a timer is to be modified look it up in the queue.
+        for (ptr = NULL, node = queue; node && node->id != timer_id; ptr = node, node = node->next);
+        if (! node) return 0;
+        node->func = action ? action : node->func;
+        node->data = data ? data : node->data;
+    } else if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue)))) {  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
+        my_log(LOG_ERR, 0, "timer_setTimer: Out of memory.");
+    } else *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){0, 0}, NULL };
+    strcpy(node->name, ! timer_id || (timer_id && strlen(name) > 0) ? name : node->name);
+    if (! timer_id || (timer_id && delay)) {
+        // If the a timer's scheduled time is modified remove it from the list before reinserting.
+        if (timer_id && ptr) ptr->next = node->next;
+        else if (timer_id && ! ptr) queue = node->next;
+        clock_gettime(CLOCK_MONOTONIC, &curtime);
+        node->time.tv_sec  = curtime.tv_nsec + (delay % 10) * 100000000 > 1000000000 ? curtime.tv_sec + delay / 10 + 1 : curtime.tv_sec + delay / 10;
+        node->time.tv_nsec = curtime.tv_nsec + (delay % 10) * 100000000 > 1000000000 ? curtime.tv_nsec + (delay % 10) * 100000000 - 1000000000 : curtime.tv_nsec + (delay % 10) * 100000000;
     }
-    return -1;
-}
 
-/**
- *  Inserts a timer in queue.
- *  @param delay - Number of seconds the timeout should happen in.
- *  @param action - The function to call on timeout.
- *  @param data - Pointer to the function data to supply...
- */
-int timer_setTimer(int delay, timer_f action, void *data) {
-    struct timeOutQueue  *ptr, *node, *prev;
-    int i = 0;
-
-    /* create a node */
-    node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue));
-    if (node == 0) {
-        my_log(LOG_WARNING, 0, "Malloc Failed in timer_settimer\n");
-        return -1;
-    }
-    node->func = action;
-    node->data = data;
-    node->time = delay;
-    node->next = 0;
-    node->id   = ++id;
-
-    prev = ptr = queue;
-
-    /* insert node in the queue */
-
-    /* if the queue is empty, insert the node and return */
-    if (!queue) {
+    if (! queue) {
+        // if the queue is empty, insert the node and return.
         queue = node;
-    }
-    else {
-        /* chase the pointer looking for the right place */
-        while (ptr) {
-            if (delay < ptr->time) {
-                // We found the correct node
-                node->next = ptr;
-                if (ptr == queue) {
-                    queue = node;
-                }
-                else {
-                    prev->next = node;
-                }
-                ptr->time -= node->time;
-                my_log(LOG_DEBUG, 0,
-                    "Created timeout %d (#%d) - delay %d secs",
-                    node->id, i, node->time);
-                debugQueue();
-                return node->id;
-            } else {
-                // Continur to check nodes.
-                delay -= ptr->time; node->time = delay;
-                prev = ptr;
-                ptr = ptr->next;
-            }
-            i++;
+    } else if (! timer_id || (timer_id && delay)) {
+        // chase the queue looking for the right place.
+        for (ptr = queue, i++; ptr->next && (node->time.tv_sec > ptr->next->time.tv_sec ||
+                               (node->time.tv_sec == ptr->next->time.tv_sec && node->time.tv_nsec >= ptr->next->time.tv_nsec)); ptr = ptr->next, i++);
+        if (ptr == queue && (node->time.tv_sec < ptr->time.tv_sec || (node->time.tv_sec == ptr->time.tv_sec && node->time.tv_nsec < ptr->time.tv_nsec))) {
+           // Start of queue, insert.
+           i--;
+           queue = node;
+           node->next = ptr;
+        } else {
+           node->next = ptr->next;
+           ptr->next = node;
         }
-        prev->next = node;
     }
-    my_log(LOG_DEBUG, 0, "Created timeout %d (#%d) - delay %d secs",
-            node->id, i, node->time);
-    debugQueue();
 
+    my_log(LOG_DEBUG, 0, "%s timeout %d (#%d): %s - delay %d.%1d secs", timer_id ? "Modified" : "Created", node->id, i, node->name, delay / 10, delay % 10);
+    debugQueue();
     return node->id;
 }
 
 /**
-*   returns the time until the timer is scheduled
+*   Removes a timer from the queue.
 */
-int timer_leftTimer(int timer_id) {
-    struct timeOutQueue *ptr;
-    int left = 0;
+void *timer_clearTimer(uint64_t timer_id) {
+    struct timeOutQueue *ptr = NULL, *fptr = NULL;
+    void *data = NULL;
+    uint64_t i = 1;
 
-    if (!timer_id)
-        return -1;
+    // If no queue or timer_id is zero return.
+    if (! queue || timer_id == 0) return NULL;
 
-    for (ptr = queue; ptr; ptr = ptr->next) {
-        left += ptr->time;
-        if (ptr->id == timer_id) {
-            return left;
-        }
+    // Search queue for timer and remove.
+    if (queue->id == timer_id) {
+        fptr = queue;
+        queue = queue->next;
+    } else {
+        for (i++, ptr = queue; ptr->next && ptr->next->id != timer_id; ptr = ptr->next, i++);
+        fptr = ptr->next;
+        ptr->next = ptr->next ? ptr->next->next : NULL;
     }
-    return -1;
+    if (fptr) {
+        clock_gettime(CLOCK_MONOTONIC, &curtime);
+        debugQueue();
+        my_log(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", i, fptr->id, fptr->name);
+        data = fptr->data;
+        free(fptr);        // Alloced by timer_setTimer()
+    }
+
+    // Return pointer to the cleared timer's data, the caller may need it.
+    return data;
 }
 
 /**
-*   clears the associated timer.  Returns 1 if succeeded.
+*   Debugging utility
 */
-int timer_clearTimer(int  timer_id) {
-    struct timeOutQueue  *ptr, *prev;
-    int i = 0;
-
-    if (!timer_id)
-        return 0;
-
-    prev = ptr = queue;
-
-    /*
-     * find the right node, delete it. the subsequent node's time
-     * gets bumped up
-     */
-
-    debugQueue();
-    while (ptr) {
-        if (ptr->id == timer_id) {
-            /* got the right node */
-
-            /* unlink it from the queue */
-            if (ptr == queue)
-                queue = queue->next;
-            else
-                prev->next = ptr->next;
-
-            /* increment next node if any */
-            if (ptr->next != 0)
-                (ptr->next)->time += ptr->time;
-
-            if (ptr->data)
-                free(ptr->data);
-            my_log(LOG_DEBUG, 0, "deleted timer %d (#%d)", ptr->id, i);
-            free(ptr);
-            debugQueue();
-            return 1;
-        }
-        prev = ptr;
-        ptr = ptr->next;
-        i++;
-    }
-    // If we get here, the timer was not deleted.
-    my_log(LOG_DEBUG, 0, "failed to delete timer %d (#%d)", timer_id, i);
-    debugQueue();
-    return 0;
-}
-
-/**
- * debugging utility
- */
 static void debugQueue(void) {
     struct timeOutQueue  *ptr;
+    uint64_t i;
 
-    for (ptr = queue; ptr; ptr = ptr->next) {
-        my_log(LOG_DEBUG, 0, "(Id:%d, Time:%d) ", ptr->id, ptr->time);
+    my_log(LOG_DEBUG, 0, "--------------------------------------------------------");
+    for (i = 1, ptr = queue; ptr; ptr = ptr->next, i++) {
+        my_log(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, ptr->time.tv_nsec < curtime.tv_nsec ? ptr->time.tv_sec - curtime.tv_sec - 1 : ptr->time.tv_sec - curtime.tv_sec, ptr->time.tv_nsec < curtime.tv_nsec ? (1000000000 - curtime.tv_nsec + ptr->time.tv_nsec) / 100000000 : (ptr->time.tv_nsec - curtime.tv_nsec) / 100000000, ptr->id, ptr->name);
     }
 }

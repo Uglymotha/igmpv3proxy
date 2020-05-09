@@ -17,9 +17,22 @@
 **  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **
 */
+
 /**
-*   igmpv3.h - Header file for common IGMPv3 includes.
+*   igmpv3.h - Header file for common IGMPv3 includes. Various OS dont provide common structs, so we just use our own.
 */
+
+struct igmpv3_query {
+    u_char          igmp_type;      /* version & type of IGMP message  */
+    u_char          igmp_code;      /* subtype for routing msgs        */
+    u_short         igmp_cksum;     /* IP-style checksum               */
+    struct in_addr  igmp_group;     /* group address being reported    */
+                                    /*  (zero for queries)             */
+    u_char          igmp_misc;      /* reserved/suppress/robustness    */
+    u_char          igmp_qqi;       /* querier's query interval        */
+    u_short         igmp_numsrc;    /* number of sources               */
+    /*struct in_addr        igmp_sources[1];*/ /* source addresses */
+};
 
 struct igmpv3_grec {
     u_int8_t grec_type;

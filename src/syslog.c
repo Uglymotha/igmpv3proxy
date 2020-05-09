@@ -34,30 +34,35 @@
 
 #include "igmpproxy.h"
 
-int LogLevel = LOG_WARNING;
-bool Log2Stderr = false;
-
-void my_log( int Severity, int Errno, const char *FmtSt, ... )
-{
-    char LogMsg[ 128 ];
-
+void my_log(int Severity, int Errno, const char *FmtSt, ...) {
+    struct timespec logtime;
+    char LogMsg[256];
+    FILE *lfp = NULL;
     va_list ArgPt;
     unsigned Ln;
-    va_start( ArgPt, FmtSt );
-    Ln = vsnprintf( LogMsg, sizeof( LogMsg ), FmtSt, ArgPt );
-    if( Errno > 0 )
-        snprintf( LogMsg + Ln, sizeof( LogMsg ) - Ln,
-                "; Errno(%d): %s", Errno, strerror(Errno) );
-    va_end( ArgPt );
 
-    if (Severity <= LogLevel) {
-        if (Log2Stderr)
-            fprintf(stderr, "%s\n", LogMsg);
-        else {
+    va_start(ArgPt, FmtSt);
+    Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
+    if (Errno > 0) {
+        snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
+    }
+    va_end(ArgPt);
+
+    if (Severity <= CONFIG->logLevel) {
+        if (CONFIG->log2Stderr || CONFIG->logFile) {
+            clock_gettime(CLOCK_REALTIME, &logtime);
+            long sec = logtime.tv_sec + utcoff.tv_sec, nsec = logtime.tv_nsec;
+            lfp = CONFIG->logFile ? freopen(CONFIG->logFilePath, "a", stderr) : NULL;
+            fprintf(stderr, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60, sec % 3600 % 60, nsec / 100000, LogMsg);
+            if (lfp) {
+                fclose(lfp);
+            }
+        } else {
             syslog(Severity, "%s", LogMsg);
         }
     }
 
-    if( Severity <= LOG_ERR )
-        exit( -1 );
+    if (Severity <= LOG_ERR) {
+        exit(-1);
+    }
 }
