@@ -48,7 +48,11 @@ static int joinleave( int Cmd, int UdpSock, struct IfDesc *IfDp, uint32_t mcasta
 
     memset(&CtlReq, 0, sizeof(CtlReq));
     CtlReq.imr_multiaddr.s_addr = mcastaddr;
-    CtlReq.imr_interface.s_addr = IfDp->InAdr.s_addr;
+    if (IfDp) {
+        CtlReq.imr_interface.s_addr = IfDp->InAdr.s_addr;
+    } else {
+        CtlReq.imr_interface.s_addr = INADDR_ANY;
+    }
 
     {
         my_log( LOG_NOTICE, 0, "%sMcGroup: %s on %s", CmdSt,

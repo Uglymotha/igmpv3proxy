@@ -59,6 +59,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 
 /*
  * Limit on length of route data
@@ -68,19 +69,13 @@
 #define MAX_IP_HEADER_LEN	60
 #define IP_HEADER_RAOPT_LEN	24
 
-#define MAX_MC_VIFS    32     // !!! check this const in the specific includes
 #define MAX_UPS_VIFS    8
-
-// Useful macros..
-#define VCMC( Vc )  (sizeof( Vc ) / sizeof( (Vc)[ 0 ] ))
-#define VCEP( Vc )  (&(Vc)[ VCMC( Vc ) ])
 
 // Bit manipulation macros...
 #define BIT_ZERO(X)      ((X) = 0)
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
 #define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
 #define BIT_TST(X,n)     ((X) & 1 << (n))
-
 
 //#################################################################################
 //  Globals
@@ -98,8 +93,6 @@ extern char     s2[];
 extern char		s3[];
 extern char		s4[];
 
-
-
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
@@ -113,14 +106,11 @@ void my_log( int Serverity, int Errno, const char *FmtSt, ... );
 
 /* ifvc.c
  */
-#define MAX_IF         40     // max. number of interfaces recognized
 
 // Interface states
 #define IF_STATE_DISABLED      0   // Interface should be ignored.
 #define IF_STATE_UPSTREAM      1   // Interface is the upstream interface
 #define IF_STATE_DOWNSTREAM    2   // Interface is a downstream interface
-#define IF_STATE_LOST          3   // aimwang: Temp from downstream to hidden
-#define IF_STATE_HIDDEN        4   // aimwang: Interface is hidden
 
 // Multicast default values...
 #define DEFAULT_ROBUSTNESS     2
@@ -136,8 +126,6 @@ void my_log( int Serverity, int Errno, const char *FmtSt, ... );
 #define ROUTESTATE_JOINED               1   // The group corresponding to route is joined
 #define ROUTESTATE_CHECK_LAST_MEMBER    2   // The router is checking for hosts
 
-
-
 // Linked list of networks...
 struct SubnetList {
     uint32_t            subnet_addr;
@@ -145,17 +133,26 @@ struct SubnetList {
     struct SubnetList   *next;
 };
 
+// List of interface.
 struct IfDesc {
     char                Name[IF_NAMESIZE];
     struct in_addr      InAdr;          /* == 0 for non IP interfaces */
     short               Flags;
     short               state;
     struct SubnetList*  allowednets;
+    struct SubnetList*  deniednets;
     struct SubnetList*  allowedgroups;
+    struct SubnetList*  deniedgroups;
     unsigned int        robustness;
     unsigned char       threshold;   /* ttl limit */
     unsigned int        ratelimit;
     unsigned int        index;
+};
+
+struct IfDescP {
+    struct IfDesc       *S;
+    struct IfDesc       *E;
+    unsigned int        nrint;
 };
 
 // Keeps common configuration settings
@@ -173,33 +170,43 @@ struct Config {
     unsigned short      fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
     unsigned int        downstreamHostsHashTableSize;
-    //~ aimwang added
     // Set if nneed to detect new interface.
-    unsigned short	rescanVif;
+    unsigned short      rescanVif;
+    // Set if nneed to detect config change.
+    unsigned short      rescanConf;
     // Set if not detect new interface for down stream.
     unsigned short	defaultInterfaceState;	// 0: disable, 2: downstream
-    //~ aimwang added done
+    // Set if need to proxy IANA local multicast range 224.0.0.0/8.
+    unsigned short      proxyLocalMc;
 };
 
-// Holds the indeces of the upstream IF...
-extern int upStreamIfIdx[MAX_UPS_VIFS];
+// Group specific query structs.
+typedef struct {
+    uint32_t        group;
+    struct IfDesc  *sourceVif;
+    short           started;
+} GroupVifDesc;
+
+struct gvDescL {
+    GroupVifDesc     *gvDesc;
+    struct gvDescL   *next;
+};
 
 /* ifvc.c
  */
 void rebuildIfVc( void );
 void buildIfVc( void );
-struct IfDesc *getIfByName( const char *IfName );
-struct IfDesc *getIfByIx( unsigned Ix );
+struct IfDesc *getIfByName(const char *IfName, struct IfDescP *RebuildP);
+struct IfDesc *getIfByIx(unsigned Ix, struct IfDescP *RebuildP);
 struct IfDesc *getIfByAddress( uint32_t Ix );
-struct IfDesc *getIfByVifIndex( unsigned vifindex );
-int isAdressValidForIf(struct IfDesc* intrface, uint32_t ipaddr);
+int isAdressValidForIf(struct IfDesc *IfDp, uint32_t ipaddr, int wl);
 
 /* mroute-api.c
  */
 struct MRouteDesc {
     struct in_addr  OriginAdr, McAdr;
     short           InVif;
-    uint8_t           TtlVc[ MAX_MC_VIFS ];
+    uint8_t         TtlVc[MAXVIFS];
 };
 
 // IGMP socket as interface for the mrouted API
@@ -208,16 +215,18 @@ extern int MRouterFD;
 
 int enableMRouter( void );
 void disableMRouter( void );
-void addVIF( struct IfDesc *Dp );
+void addVIF( struct IfDesc *Dp, struct IfDesc *oDp );
 void delVIF( struct IfDesc *Dp );
 int addMRoute( struct MRouteDesc * Dp );
 int delMRoute( struct MRouteDesc * Dp );
-int getVifIx( struct IfDesc *IfDp );
 
 /* config.c
  */
+char *configFilePath;
+void reloadConfig(void);
 int loadConfig(char *configFile);
 void configureVifs(void);
+void createVifs(struct IfDescP *RebuildP);
 struct Config *getCommonConfig(void);
 
 /* igmp.c
@@ -260,32 +269,29 @@ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
 
 /* rttable.c
  */
-void initRouteTable(void);
-void clearAllRoutes(void);
+struct gvDescL *clearRoutes(struct IfDesc *IfDp, struct IfDescP *RebuildP);
 int insertRoute(uint32_t group, int ifx, uint32_t src);
 int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif);
 void ageActiveRoutes(void);
-void setRouteLastMemberMode(uint32_t group, uint32_t src);
+void setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp);
 int lastMemberGroupAge(uint32_t group);
 int interfaceInRoute(int32_t group, int Ix);
 int getMcGroupSock(void);
 
 /* request.c
  */
+void sendGroupSpecificMemberQuery(void *argument);
 void acceptGroupReport(uint32_t src, uint32_t group);
 void acceptLeaveMessage(uint32_t src, uint32_t group);
 void sendGeneralMembershipQuery(void);
 
-/* callout.c 
+/* callout.c
 */
 typedef void (*timer_f)(void *);
 
-void callout_init(void);
 void free_all_callouts(void);
-void age_callout_queue(int);
-int timer_nextTimer(void);
+void age_callout_queue(struct timespec curtime);
 int timer_setTimer(int, timer_f, void *);
-int timer_clearTimer(int);
 int timer_leftTimer(int);
 
 /* confread.c

@@ -40,11 +40,6 @@
 
 #include "igmpproxy.h"
 
-// MAX_MC_VIFS from mclab.h must have same value as MAXVIFS from mroute.h
-#if MAX_MC_VIFS != MAXVIFS
-# error "constants don't match, correct mclab.h"
-#endif
-
 // need an IGMP socket as interface for the mrouted API
 // - receives the IGMP messages
 int         MRouterFD;          /* socket for all network I/O  */
@@ -53,9 +48,11 @@ char        *send_buf;          /* output packet buffer        */
 
 
 // my internal virtual interfaces descriptor vector
-static struct VifDesc {
+struct VifDesc {
     struct IfDesc *IfDp;
-} VifDescVc[ MAXVIFS ];
+    struct VifDesc *next;
+}; 
+struct VifDesc *VifDescVc = NULL;
 
 /*
 ** Initialises the mrouted API and locks it by this exclusively.
@@ -99,69 +96,111 @@ void disableMRouter(void)
 void delVIF( struct IfDesc *IfDp )
 {
     struct vifctl VifCtl;
+    struct VifDesc *VifDp, *FVifDp;
 
     if ((unsigned int)-1 == IfDp->index)
         return;
 
     VifCtl.vifc_vifi = IfDp->index;
 
-    my_log( LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
+    my_log(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
          IfDp->index, IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->threshold, IfDp->ratelimit);
 
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DEL_VIF,
-                     (char *)&VifCtl, sizeof( VifCtl ) ) )
+    if (setsockopt(MRouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
         my_log( LOG_WARNING, errno, "MRT_DEL_VIF" );
+    }
+
+    // Remove Vif from list.
+    if (VifDescVc->IfDp == IfDp) {
+        FVifDp = VifDescVc;
+        VifDescVc = VifDescVc->next;
+    } else {
+        for (VifDp = VifDescVc; VifDp->next && VifDp->next->IfDp != IfDp; VifDp = VifDp->next);
+        FVifDp = VifDp->next;
+        VifDp->next = VifDp->next->next;
+    }
+    free(FVifDp);   // Alloced by addVIF()
 }
 
 /*
 ** Adds the interface '*IfDp' as virtual interface to the mrouted API
 **
 */
-void addVIF( struct IfDesc *IfDp )
+void addVIF(struct IfDesc *IfDp, struct IfDesc *oDp)
 {
     struct vifctl VifCtl;
-    struct VifDesc *VifDp;
+    struct VifDesc *VifDp, *NewVifDp;
+    unsigned nrVif = 0, Ix = 0;
 
-    /* search free (aimwang: or exist) VifDesc
-     */
-    for ( VifDp = VifDescVc; VifDp < VCEP( VifDescVc ); VifDp++ ) {
-        if ( ! VifDp->IfDp || VifDp->IfDp == IfDp)
-            break;
+    // Search IfDescVc for available vif Ix and relink vifs during rebuild.
+    for (VifDp = VifDescVc; VifDp; VifDp=VifDp->next, nrVif++) {
+        if (oDp && VifDp->IfDp == oDp) {
+            // Relink vifindex during rebuild or SIGHUP
+            VifDp->IfDp = IfDp;
+            VifDp->IfDp->index = oDp->index;
+            my_log (LOG_DEBUG,0,"addVIF: relinking %s as vif Ix %d",VifDp->IfDp->Name, VifDp->IfDp->index);
+            return;
+        }
+        if (VifDp->next) {
+            // Middle of list if next Ix is free, set.
+            if (VifDp->IfDp->index == nrVif && VifDp->IfDp->index < VifDp->next->IfDp->index - 1) {
+                Ix = VifDp->IfDp->index + 1;
+            }
+        } else if (VifDp->IfDp->index == nrVif) {
+            // List in order set Ix to next. Otherwise Ix is already set above (or 0 if available).
+            Ix = nrVif + 1;
+        }
     }
 
-    /* no more space
-     */
-    if ( VifDp >= VCEP( VifDescVc ) )
-        my_log( LOG_ERR, ENOMEM, "addVIF, out of VIF space" );
+    // no more space
+    if (nrVif >= MAXVIFS) {
+        my_log(LOG_ERR, ENOMEM, "addVIF: out of VIF space");
+    }
 
-    VifDp->IfDp = IfDp;
+    // Allocate memory for new VifDesc. Freed by delVIF()
+    NewVifDp = (struct VifDesc*)malloc(sizeof(struct VifDesc));
+    if (! NewVifDp) {
+        my_log(LOG_ERR, 0, "addVIF: Out of memory.");
+    }
+    NewVifDp->next = NULL;
 
-    VifCtl.vifc_vifi  = VifDp - VifDescVc;
+    // Insert vif into the list at the correct spot.
+    if (! VifDescVc) {
+        // List is empty, new list.
+        VifDescVc = NewVifDp;
+    } else if (Ix == 0) {
+        // Insert at begin of list.
+        NewVifDp->next = VifDescVc;
+        VifDescVc = NewVifDp;
+    } else {
+        // Find spot for Ix.
+        for (VifDp = VifDescVc; VifDp->next && VifDp->next->IfDp->index < Ix; VifDp = VifDp->next);
+        NewVifDp->next = VifDp->next;
+        VifDp->next = NewVifDp;
+    }
+
+    // Set the index flags etc...
+    NewVifDp->IfDp = IfDp;
+    VifCtl.vifc_vifi = IfDp->index = Ix;
     VifCtl.vifc_flags = 0;        /* no tunnel, no source routing, register ? */
-    VifCtl.vifc_threshold  = VifDp->IfDp->threshold;    // Packet TTL must be at least 1 to pass them
-    VifCtl.vifc_rate_limit = VifDp->IfDp->ratelimit;    // Ratelimit
+    VifCtl.vifc_threshold  = IfDp->threshold;    // Packet TTL must be at least 1 to pass them
+    VifCtl.vifc_rate_limit = IfDp->ratelimit;    // Ratelimit
 
-    VifCtl.vifc_lcl_addr.s_addr = VifDp->IfDp->InAdr.s_addr;
+    VifCtl.vifc_lcl_addr.s_addr = IfDp->InAdr.s_addr;
     VifCtl.vifc_rmt_addr.s_addr = INADDR_ANY;
 
-    // Set the index...
-    VifDp->IfDp->index = VifCtl.vifc_vifi;
-
-    my_log( LOG_NOTICE, 0, "adding VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
-         VifCtl.vifc_vifi, VifCtl.vifc_flags,  VifCtl.vifc_lcl_addr.s_addr, VifDp->IfDp->Name,
+    my_log(LOG_NOTICE, 0, "adding VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
+         VifCtl.vifc_vifi, VifCtl.vifc_flags,  VifCtl.vifc_lcl_addr.s_addr, IfDp->Name,
          VifCtl.vifc_threshold, VifCtl.vifc_rate_limit);
 
     struct SubnetList *currSubnet;
     for(currSubnet = IfDp->allowednets; currSubnet; currSubnet = currSubnet->next) {
-        my_log(LOG_DEBUG, 0, "        Network for [%s] : %s",
-            IfDp->Name,
-            inetFmts(currSubnet->subnet_addr, currSubnet->subnet_mask, s1));
+        my_log(LOG_DEBUG, 0, "        Network for [%s] : %s", IfDp->Name, inetFmts(currSubnet->subnet_addr, currSubnet->subnet_mask, s1));
     }
 
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_ADD_VIF,
-                     (char *)&VifCtl, sizeof( VifCtl ) ) )
+    if (setsockopt(MRouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
         my_log( LOG_ERR, errno, "MRT_ADD_VIF" );
-
+    }
 }
 
 /*
@@ -237,22 +276,4 @@ int delMRoute( struct MRouteDesc *Dp )
         my_log( LOG_WARNING, errno, "MRT_DEL_MFC" );
 
     return rc;
-}
-
-/*
-** Returns for the virtual interface index for '*IfDp'
-**
-** returns: - the vitrual interface index if the interface is registered
-**          - -1 if no virtual interface exists for the interface
-**
-*/
-int getVifIx( struct IfDesc *IfDp )
-{
-    struct VifDesc *Dp;
-
-    for ( Dp = VifDescVc; Dp < VCEP( VifDescVc ); Dp++ )
-        if ( Dp->IfDp == IfDp )
-            return Dp - VifDescVc;
-
-    return -1;
 }

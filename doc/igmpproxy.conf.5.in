@@ -43,6 +43,13 @@ Any line in the configuration file starting with
 is treated as a comment. Keywords and parameters can be distributed over many lines.
 The configuration file has two main keywords:
 
+.B proxylocalmc
+.RS
+IANA defines the range 224.0.0.0/8 as local multicast range, which should not be forwarded.
+Setting this options enables forwarding of this range if needed. If enabled the range will
+be checked just like other groups against the black- and whitelists for interfaces.
+.RE
+
 .B quickleave
 .RS 
 Enables quickleave mode. In this mode the daemon will send a Leave IGMP message
@@ -55,6 +62,23 @@ interface, this function should not be used. Disabling this function increases
 the risk of bandwidth saturation.
 .RE
 
+.B rescanvif
+.I secs
+.RS
+Enables periodic rescanning of interfaces in system. Interfaces which have dissapeared are removed and new interfaces added to the proxy interfaces. The value is a timer (in seconds) with a minimun of 10 seconds, 0 means disabled.
+.RE
+
+.B rescanconf
+.I secs
+.RS
+Enables periodic rescanning of configuration file. Implies rescanvif. The value is a timer (in seconds) with a minimun of 10 seconds, 0 means disabled.
+.RE
+
+.B loglevel
+.I level
+.RS
+Sets the Unix loglevel for the daemon, value 1 - 7.
+.RE
 
 .B phyint 
 .I interface
@@ -63,9 +87,16 @@ the risk of bandwidth saturation.
 .I limit
 ] [ threshold 
 .I ttl
-] [ altnet 
+] [ allowdnet / altnet 
 .I networkaddr ... 
+] [ deniednet
+.I networkaddr ...
+] [ whitelist
+.I networkaddr ...
+] [ blacklist
+.I networkaddr ...
 ]
+
 .RS
 Defines the state and settings of a network interface.
 .RE
@@ -103,7 +134,7 @@ Defines the TTL threshold for the network interface. Packets with a lower TTL th
 threshols value will be ignored. This setting is optional, and by default the threshold is 1.
 .RE
 
-.B altnet
+.B allowednet (or altnet)
 .I networkaddr
 \&...
 .RS
@@ -116,13 +147,32 @@ This is especially useful for the upstream interface, since the source for multi
 traffic is often from a remote location. Any number of altnet parameters can be specified.
 .RE
 
+.B deniednet
+.I networkaddr
+\&...
+.RS
+Defines explicitly blacklisted sources for interface. The network address must be on the 
+following format 'a.b.c.d/n'.
+.RE
+
 .B whitelist
 .I networkaddr
+\&...
 .RS
-Defines a whitelist for multicast groups. The network address must be in the following
+Defines a whitelist for multicast groups for interface. The network address must be in the following
 format 'a.b.c.d/n'. If you want to allow one single group use a network mask of /32,
 i.e. 'a.b.c.d/32'. 
+.RE
 
+.B blacklist
+.I networkaddr
+\&...
+.RS
+Defines explicitly blacklisted multicast groups for interface. he network address must be in the following
+format 'a.b.c.d/n'.
+.RE
+
+.SH BLACK & WHITELISTS
 By default all multicast groups are allowed on any downstream interface. If at least one
 whitelist entry is defined, all igmp membership reports for not explicitly whitelisted
 multicast groups will be ignored and therefore not be served by igmpproxy. This is especially
@@ -139,9 +189,18 @@ You may also specify whitelist entries for the upstream interface. Only igmp mem
 for explicitly whitelisted multicast groups will be sent out on the upstream interface. This
 is useful if you want to use multicast groups only between your downstream interfaces, like SSDP
 from a UPnP server.
+
+Besides whitelist it is also possible to define blacklists for explicitely blakclisted sources and
+multicast groups on an interface. The blacklist / deniednet will be checked after the whilteist / allowednet.
+This makes it possible to define a large range as whitelist, while still being able to blacklist subranges.
+Even though it is possible to alternate between whilteists and blacklists in configuration of an interface, 
+both lists are parsed in it's entirety. Whitelist will always be checked before blacklist.
+See 
+.BI EXAMPLES
+on how to configure black and whitelists.
 .RE
 
-.SH EXAMPLE
+.SH EXAMPLES
 ## Enable quickleave
 quickleave
 .br
@@ -149,6 +208,9 @@ quickleave
 .br
 phyint eth0 upstream 
        altnet 10.0.0.0/8
+       deniednet 10.1.0.0/16
+       whitelist 224.0.0.0/8 225.0.0.0/8 239.255.255.0/24
+       blacklist 224.1.0.0/16 225.0.1.0/24 239.255.255.250/32
        
 ## Disable alternate IP on eth0 (eth0:0)
 .br
@@ -161,6 +223,14 @@ phyint eth1 downstream ratelimit 0 threshold 1
 ## Define settings for eth2 (also downstream)
 .br
 phyint eth2 downstream
+       allowednet 172.16.0.0/12
+                  10.0.0.0/8
+       deniednet  10.1.0.0/26 172.20.0.0/16
+                  172.21.0.0/16
+       allowednet 192.168.0.0/16
+       deniednet  192.168.1.0/24 192.168.2.0/24
+                  192.168.255.0/24 192.168.254.0/24
+       whitelist  224.0.0.0/4
 
 
 .SH SEE ALSO

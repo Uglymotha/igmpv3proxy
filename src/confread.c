@@ -74,7 +74,7 @@ int openConfigFile(char *filename) {
         return 0;
     }
 
-    // Allocate memory for inputbuffer...
+    // Allocate memory for inputbuffer... Freed by openConfigFile()
     iBuffer = (char*) malloc( sizeof(char) * READ_BUFFER_SIZE );
 
     if(iBuffer == NULL) {
@@ -99,7 +99,7 @@ void closeConfigFile(void) {
     }
     // Free input buffer memory...
     if(iBuffer != NULL) {
-        free(iBuffer);
+        free(iBuffer);   // Alloced by openConfigFile()
     }
 }
 
