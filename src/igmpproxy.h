@@ -72,10 +72,6 @@
 #define MAX_MC_VIFS    32     // !!! check this const in the specific includes
 #define MAX_UPS_VIFS    8
 
-// Useful macros..
-#define VCMC( Vc )  (sizeof( Vc ) / sizeof( (Vc)[ 0 ] ))
-#define VCEP( Vc )  (&(Vc)[ VCMC( Vc ) ])
-
 // Bit manipulation macros...
 #define BIT_ZERO(X)      ((X) = 0)
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
