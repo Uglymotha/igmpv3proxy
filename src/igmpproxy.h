@@ -69,7 +69,6 @@
 #define MAX_IP_HEADER_LEN	60
 #define IP_HEADER_RAOPT_LEN	24
 
-#define MAX_MC_VIFS    32     // !!! check this const in the specific includes
 #define MAX_UPS_VIFS    8
 
 // Bit manipulation macros...
@@ -201,7 +200,7 @@ int isAdressValidForIf(struct IfDesc* intrface, uint32_t ipaddr);
 struct MRouteDesc {
     struct in_addr  OriginAdr, McAdr;
     short           InVif;
-    uint8_t           TtlVc[ MAX_MC_VIFS ];
+    uint8_t         TtlVc[MAXVIFS];
 };
 
 // IGMP socket as interface for the mrouted API
