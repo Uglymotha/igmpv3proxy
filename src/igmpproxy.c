@@ -225,7 +225,7 @@ void igmpProxyRun(void) {
     struct Config *config = getCommonConfig();
     // Set some needed values.
     register int recvlen;
-    int     MaxFD, Rt, secs, rescanvif_timer = -1, rescanconf_timer = -1;
+    int     MaxFD, Rt, rescanvif_timer = -1, rescanconf_timer = -1;
     fd_set  ReadFDS;
     socklen_t dummy = 0;
     struct  timespec  curtime, lasttime, difftime, *timeout = &difftime;
