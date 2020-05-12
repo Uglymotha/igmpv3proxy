@@ -54,7 +54,7 @@ struct RouteTable {
 
     // Keeps the upstream membership state...
     short               upstrState;     // Upstream membership state.
-    int                 upstrVif;       // Upstream Vif Index.
+    unsigned            upstrVif;       // Upstream Vif Index.
 
     // These parameters contain aging details.
     uint32_t            ageVifBits;     // Bits representing aging VIFs.
