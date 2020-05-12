@@ -1,3 +1,11 @@
+#define _POSIX_C_SOURCE_TMP _POSIX_C_SOURCE
+#undef _POSIX_C_SOURCE
+#include <sys/param.h>
+#define _POSIX_C_SOURCE _POSIX_C_SOURCE_TMP
+#undef _POSIX_C_SOURCE_TMP
+
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <net/route.h>
 #include <netinet/in_systm.h>
 #include <netinet/ip_mroute.h>
