@@ -35,10 +35,8 @@
 *   igmpproxy.h - Header file for common includes.
 */
 
-#ifndef __FreeBSD__
-    #include "config.h"
-    #include "os.h"
-#endif
+#include "config.h"
+#include "os.h"
 
 #include <errno.h>
 #include <stdarg.h>
@@ -62,11 +60,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <ifaddrs.h>
-
-#ifdef __FreeBSD__
-    #include "config.h"
-    #include "os.h"
-#endif
 
 /*
  * Limit on length of route data
