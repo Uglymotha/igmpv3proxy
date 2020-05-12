@@ -384,23 +384,23 @@ void createVifs(struct IfDescP *RebuildP) {
                 switch (oDp->state) {
                 case IF_STATE_DISABLED:
                     switch (Dp->state) {
-                    case IF_STATE_DISABLED:   {                                          continue; }
-                    case IF_STATE_DOWNSTREAM: {                               oDp=NULL;  break; }
-                    case IF_STATE_UPSTREAM:   {                               oDp=NULL;  break; }
+                    case IF_STATE_DISABLED:   {                                             continue; }
+                    case IF_STATE_DOWNSTREAM: {                                  oDp=NULL;  break; }
+                    case IF_STATE_UPSTREAM:   {                                  oDp=NULL;  break; }
                     }
                     break;
                 case IF_STATE_DOWNSTREAM:
                     switch (Dp->state) {
-                    case IF_STATE_DISABLED:   {                 delVIF(oDp);             continue; }
-                    case IF_STATE_DOWNSTREAM: {                                          break; }
-                    case IF_STATE_UPSTREAM:   {                 delVIF(oDp);  oDp=NULL;  break; }
+                    case IF_STATE_DISABLED:   {                    delVIF(oDp);             continue; }
+                    case IF_STATE_DOWNSTREAM: {                                             break; }
+                    case IF_STATE_UPSTREAM:   {                    delVIF(oDp);  oDp=NULL;  break; }
                     }
                     break;
                 case IF_STATE_UPSTREAM:
                     switch (Dp->state) {
-                    case IF_STATE_DISABLED:   { clearRoutes();  delVIF(oDp);              continue; }
-                    case IF_STATE_DOWNSTREAM: { clearRoutes();  delVIF(oDp);  oDp=NULL;   break; }
-                    case IF_STATE_UPSTREAM:   {                                           break; }
+                    case IF_STATE_DISABLED:   { clearRoutes(oDp);  delVIF(oDp);              continue; }
+                    case IF_STATE_DOWNSTREAM: { clearRoutes(oDp);  delVIF(oDp);  oDp=NULL;   break; }
+                    case IF_STATE_UPSTREAM:   {                                              break; }
                     }
                     break;
                 }
