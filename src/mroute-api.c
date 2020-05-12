@@ -143,7 +143,7 @@ void addVIF( struct IfDesc *IfDp, struct IfDesc *oDp )
 {
     struct vifctl VifCtl;
     struct VifDesc *VifDp, *NewVifDp;
-    int nrVif = 0, Ix = 0;
+    unsigned nrVif = 0, Ix = 0;
 
     // Search IfDescVc for available vif Ix and relink vifs during rebuild.
     for (VifDp = VifDescVc; VifDp; VifDp=VifDp->next) {
