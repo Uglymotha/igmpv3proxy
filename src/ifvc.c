@@ -49,7 +49,7 @@ struct IfDescP IfDescP = { NULL, NULL, 0 };
  *          For example: /etc/ppp/ip-up & ip-down can touch a file /tmp/ppp_changed
  *          So I can check if the file exist then run me and delete the file.
  ***************************************************/
-void rebuildIfVc () {
+void rebuildIfVc() {
     // Build new IfDesc Table. Keep Copy of Old.
     struct IfDescP OldIfDescP=IfDescP, TmpIfDescP=IfDescP;
     buildIfVc();
@@ -62,7 +62,7 @@ void rebuildIfVc () {
     createVifs(&OldIfDescP);
 
     // Free the old IfDesc Table.
-    if ( OldIfDescP.S != NULL ) {
+    if (OldIfDescP.S != NULL) {
         for (struct IfDesc *Dp = TmpIfDescP.S; Dp < TmpIfDescP.E; Dp++) free(Dp->allowednets);
         free(OldIfDescP.S);
     }
@@ -86,7 +86,7 @@ void buildIfVc() {
     }
 
     // Check nr of interfaces in system.
-    for ( TmpIfAddrsP=IfAddrsP; TmpIfAddrsP; NrInt++) TmpIfAddrsP = TmpIfAddrsP->ifa_next;
+    for (TmpIfAddrsP=IfAddrsP; TmpIfAddrsP; NrInt++) TmpIfAddrsP = TmpIfAddrsP->ifa_next;
     IfDescP.nrint=NrInt;
     my_log (LOG_DEBUG, 0 , "buildIfVc: Found %u interface(s) on system", NrInt);
 
@@ -100,14 +100,14 @@ void buildIfVc() {
     for (TmpIfAddrsP=IfAddrsP; TmpIfAddrsP; TmpIfAddrsP=TmpIfAddrsP->ifa_next) {
         // Temp keepers of interface params...
         uint32_t addr, subnet, mask;
-        char FmtBu[ 32 ];
+        char FmtBu[32];
 
         // don't create IfDesc for non-IP interfaces.
-        if ( TmpIfAddrsP->ifa_addr->sa_family != AF_INET ) continue;
+        if (TmpIfAddrsP->ifa_addr->sa_family != AF_INET) continue;
 
         // Copy the interface name.
         int sz = strlen(TmpIfAddrsP->ifa_name) < sizeof(IfDescP.E->Name) ? strlen(TmpIfAddrsP->ifa_name) : sizeof(IfDescP.E->Name);
-        memcpy( IfDescP.E->Name, TmpIfAddrsP->ifa_name, sz ); IfDescP.E->Name[sz]='\0';
+        memcpy(IfDescP.E->Name, TmpIfAddrsP->ifa_name, sz); IfDescP.E->Name[sz]='\0';
 
         // Set the index to -1 by default.
         IfDescP.E->index = (unsigned int)-1;
@@ -156,7 +156,7 @@ void buildIfVc() {
         // Debug log the result...
         my_log( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, Network: %s",
              IfDescP.E->Name,
-             fmtInAdr( FmtBu, IfDescP.E->InAdr ),
+             fmtInAdr(FmtBu, IfDescP.E->InAdr),
              IfDescP.E->Flags,
              inetFmts(subnet,mask, s1));
 
