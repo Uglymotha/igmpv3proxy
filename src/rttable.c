@@ -715,7 +715,7 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
     int i;
 
     for (i = 0; i < MAX_ORIGINS; i++) {
-        if (route->originAddrs[i] == 0 || route->upstrVif == -1) {
+        if (route->originAddrs[i] == 0 || route->upstrVif == (unsigned int)-1) {
             continue;
         }
 
