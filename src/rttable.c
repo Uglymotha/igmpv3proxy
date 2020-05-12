@@ -223,7 +223,7 @@ void clearRoutes(struct IfDesc *IfDp) {
 
         // Send Leave message upstream.
         if ( IfDp ) leaveMcGroup( getMcGroupSock(), IfDp, croute->group );
-        else if ( croute->upstrVif != (unsinged int)-1 ) leaveMcGroup( getMcGroupSock(), getIfByIx(croute->upstrVif), croute->group );
+        else if ( croute->upstrVif != (unsigned int)-1 ) leaveMcGroup( getMcGroupSock(), getIfByIx(croute->upstrVif), croute->group );
 
         // Clear memory, and set pointer to next route...
         free(croute);
