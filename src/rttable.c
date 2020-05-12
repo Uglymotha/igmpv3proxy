@@ -54,7 +54,7 @@ struct RouteTable {
 
     // Keeps the upstream membership state...
     short               upstrState;     // Upstream membership state.
-    int                 upstrVif;       // Upstream Vif Index.
+    unsigned            upstrVif;       // Upstream Vif Index.
 
     // These parameters contain aging details.
     uint32_t            ageVifBits;     // Bits representing aging VIFs.
@@ -68,7 +68,7 @@ struct RouteTable {
 
 
 // Keeper for the routing table...
-static struct RouteTable   *routing_table;
+static struct RouteTable   *routing_table = NULL;
 
 // Prototypes
 void logRouteTable(const char *header);
@@ -124,33 +124,6 @@ int getMcGroupSock(void) {
         mcGroupSock = openUdpSocket( INADDR_ANY, 0 );;
     }
     return mcGroupSock;
-}
-
-/**
-*   Initializes the routing table.
-*/
-void initRouteTable(void) {
-    unsigned Ix;
-    struct IfDesc *Dp;
-
-    // Clear routing table...
-    routing_table = NULL;
-
-    // Join the all routers group on downstream vifs...
-    for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
-        // If this is a downstream vif, we should join the All routers group...
-        if( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) && Dp->state == IF_STATE_DOWNSTREAM) {
-            my_log(LOG_DEBUG, 0, "Joining all-routers group %s on vif %s",
-                         inetFmt(allrouters_group,s1),inetFmt(Dp->InAdr.s_addr,s2));
-
-            //k_join(allrouters_group, Dp->InAdr.s_addr);
-            joinMcGroup( getMcGroupSock(), Dp, allrouters_group );
-
-            my_log(LOG_DEBUG, 0, "Joining all igmpv3 multicast routers group %s on vif %s",
-                         inetFmt(alligmp3_group,s1),inetFmt(Dp->InAdr.s_addr,s2));
-            joinMcGroup( getMcGroupSock(), Dp, alligmp3_group );
-        }
-    }
 }
 
 /**
@@ -227,14 +200,17 @@ static void sendJoinLeaveUpstream(struct RouteTable* route, int join) {
 
 /**
 *   Clear all routes from routing table, and alerts Leaves upstream.
+*   If argument is pointer to interface clear routes for corresponding if.
 */
-void clearAllRoutes(void) {
+void clearRoutes(struct IfDesc *IfDp) {
     struct RouteTable   *croute, *remainroute;
 
     // Loop through all routes...
     for(croute = routing_table; croute; croute = remainroute) {
 
         remainroute = croute->nextroute;
+
+        if ( IfDp && croute->upstrVif != IfDp->index ) continue;
 
         // Log the cleanup in debugmode...
         my_log(LOG_DEBUG, 0, "Removing route entry for %s",
@@ -246,15 +222,18 @@ void clearAllRoutes(void) {
         }
 
         // Send Leave message upstream.
-        sendJoinLeaveUpstream(croute, 0);
+        if ( IfDp ) leaveMcGroup( getMcGroupSock(), IfDp, croute->group );
+        else if ( croute->upstrVif != (unsigned int)-1 ) leaveMcGroup( getMcGroupSock(), getIfByIx(croute->upstrVif), croute->group );
 
         // Clear memory, and set pointer to next route...
         free(croute);
     }
-    routing_table = NULL;
+    if ( ! IfDp ) { 
+        routing_table = NULL;
 
-    // Send a notice that the routing table is empty...
-    my_log(LOG_NOTICE, 0, "All routes removed. Routing table is empty.");
+        // Send a notice that the routing table is empty...
+        my_log(LOG_NOTICE, 0, "All routes removed. Routing table is empty.");
+    }
 }
 
 /**
@@ -603,7 +582,7 @@ int lastMemberGroupAge(uint32_t group) {
 *   Remove a specified route. Returns 1 on success,
 *   and 0 if route was not found.
 */
-static int removeRoute(struct RouteTable*  croute) {
+int removeRoute(struct RouteTable*  croute) {
     struct Config       *conf = getCommonConfig();
     int result = 1;
 
@@ -736,7 +715,7 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
     int i;
 
     for (i = 0; i < MAX_ORIGINS; i++) {
-        if (route->originAddrs[i] == 0 || route->upstrVif == -1) {
+        if (route->originAddrs[i] == 0 || route->upstrVif == (unsigned int)-1) {
             continue;
         }
 
