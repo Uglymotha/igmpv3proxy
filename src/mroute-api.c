@@ -116,10 +116,10 @@ void delVIF( struct IfDesc *IfDp )
         my_log( LOG_WARNING, errno, "MRT_DEL_VIF" );
 
     // Remove Vif from list.
-    for ( VifDp = VifDescVc; VifDp; VifDp=VifDp->next) {
-        if ( VifDp->IfDp == IfDp ) {
-            if ( PrevVifDp == NULL ) {
-                if (VifDp->next == NULL ) { 
+    for (VifDp = VifDescVc; VifDp; VifDp=VifDp->next) {
+        if (VifDp->IfDp == IfDp) {
+            if (PrevVifDp == NULL) {
+                if (VifDp->next == NULL) { 
                     VifDescVc = NULL;
                 } else {
                     VifDescVc = VifDp->next;
@@ -146,17 +146,17 @@ void addVIF( struct IfDesc *IfDp, struct IfDesc *oDp )
     int nrVif = 0, Ix = 0;
 
     // Search IfDescVc for available vif Ix and relink vifs during rebuild.
-    for ( VifDp = VifDescVc; VifDp; VifDp=VifDp->next ) {
+    for (VifDp = VifDescVc; VifDp; VifDp=VifDp->next) {
         if ( oDp != NULL && VifDp->IfDp == oDp ) {
             // Relink vifindex during rebuild or SIGHUP
             VifDp->IfDp = IfDp; VifDp->IfDp->index = oDp->index;
-            my_log (LOG_DEBUG,0,"addVIF: relinking %s as vif Ix %d",VifDp->IfDp->Name, VifDp->IfDp->index );
+            my_log (LOG_DEBUG,0,"addVIF: relinking %s as vif Ix %d",VifDp->IfDp->Name, VifDp->IfDp->index);
             return;
         }
         if ( VifDp->next != NULL ) {
             // Middle of list if next Ix is free, set.
-            if ( VifDp->IfDp->index == nrVif && VifDp->IfDp->index < VifDp->next->IfDp->index - 1 ) Ix = VifDp->IfDp->index + 1;
-        } else if ( VifDp->IfDp->index == nrVif ) {
+            if (VifDp->IfDp->index == nrVif && VifDp->IfDp->index < VifDp->next->IfDp->index - 1) Ix = VifDp->IfDp->index + 1;
+        } else if (VifDp->IfDp->index == nrVif) {
             // End of list, if in order set Ix to next. Otherwise Ix is already set above (or 0 if available).
             Ix = nrVif + 1;
         }
@@ -172,25 +172,25 @@ void addVIF( struct IfDesc *IfDp, struct IfDesc *oDp )
     if ( ! NewVifDp ) my_log(LOG_ERR, 0, "Out of memory.");
 
     // Insert vif into the list at the correct spot.
-    if ( VifDescVc == NULL ) {
+    if (VifDescVc == NULL) {
         // List is empty, new list.
         VifDescVc = NewVifDp;
         NewVifDp->next = NULL;
     } else {
-        if ( Ix == 0 ) {
+        if (Ix == 0) {
             // Insert at begin of list.
             NewVifDp->next = VifDescVc;
             VifDescVc = NewVifDp;
         } else {
             // Find spot for Ix and insert.
-            for ( VifDp = VifDescVc; VifDp; VifDp=VifDp->next ) {
-                if ( VifDp->next == NULL ) {
+            for (VifDp = VifDescVc; VifDp; VifDp=VifDp->next) {
+                if (VifDp->next == NULL) {
                     // Append to end of list.
                     NewVifDp->next = NULL;
                     VifDp->next = NewVifDp;
                     break;
                 }
-                if ( VifDp->next->IfDp->index > Ix ) {
+                if (VifDp->next->IfDp->index > Ix) {
                     // Found correct spot, insert.
                     NewVifDp->next = VifDp->next;
                     VifDp->next = NewVifDp;
