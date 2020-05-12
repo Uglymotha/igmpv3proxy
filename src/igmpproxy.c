@@ -201,7 +201,7 @@ int igmpProxyInit(void) {
     // Initialize IGMP
     initIgmp();
     // Initialize Routing table
-    initRouteTable();
+    clearRoutes(NULL);
     // Initialize timer
     free_all_callouts();
 
@@ -274,12 +274,13 @@ void igmpProxyRun(void) {
         // this will become less accurate by about the time it takes to age the queue + time to process a request.
         clock_gettime(CLOCK_MONOTONIC, &curtime);
         difftime.tv_sec = curtime.tv_sec - lasttime.tv_sec;
-        if (curtime.tv_nsec >= lasttime.tv_nsec ) {
+        if (curtime.tv_nsec >= lasttime.tv_nsec) {
             timeout->tv_nsec = 999999999 - (curtime.tv_nsec - lasttime.tv_nsec);
         } else {
-            timeout->tv_nsec = 999999999 - (1000000000 - lasttime.tv_nsec + curtime.tv_nsec); difftime.tv_sec--;
+            timeout->tv_nsec = 999999999 - (1000000000 - lasttime.tv_nsec + curtime.tv_nsec);
+            difftime.tv_sec--;
         }
-        if ( difftime.tv_sec > 0 || timeout->tv_nsec < 10000000 ) {
+        if (difftime.tv_sec > 0 || timeout->tv_nsec < 10000000) {
             timeout->tv_nsec = 999999999; timeout->tv_sec = 0;
             lasttime = curtime;
             age_callout_queue(curtime);

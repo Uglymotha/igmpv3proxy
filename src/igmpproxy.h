@@ -230,10 +230,10 @@ int getVifIx( struct IfDesc *IfDp );
 /* config.c
  */
 char *configFilePath;
-void reloadConfig();
+void reloadConfig(void);
 int loadConfig(char *configFile);
 void configureVifs(void);
-void createVifs(struct IfDescP *rebuildP);
+void createVifs(struct IfDescP *RebuildP);
 struct Config *getCommonConfig(void);
 
 /* igmp.c
@@ -276,8 +276,6 @@ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
 
 /* rttable.c
  */
-void initRouteTable(void);
-void joinMcRoutersGroup(struct IfDesc *Dp);
 void clearRoutes(struct IfDesc *IfDp);
 int insertRoute(uint32_t group, int ifx, uint32_t src);
 int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif);
@@ -297,7 +295,6 @@ void sendGeneralMembershipQuery(void);
 */
 typedef void (*timer_f)(void *);
 
-void callout_init(void);
 void free_all_callouts(void);
 void age_callout_queue(struct timespec curtime);
 int timer_setTimer(int, timer_f, void *);
