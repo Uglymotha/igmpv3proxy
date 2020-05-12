@@ -300,21 +300,3 @@ int delMRoute( struct MRouteDesc *Dp )
 
     return rc;
 }
-
-/*
-** Returns for the virtual interface index for '*IfDp'
-**
-** returns: - the vitrual interface index if the interface is registered
-**          - -1 if no virtual interface exists for the interface
-**
-*/
-int getVifIx( struct IfDesc *IfDp )
-{
-    struct VifDesc *Dp;
-
-    for ( Dp = VifDescVc; Dp < VCEP( VifDescVc ); Dp++ )
-        if ( Dp->IfDp == IfDp )
-            return Dp - VifDescVc;
-
-    return -1;
-}
