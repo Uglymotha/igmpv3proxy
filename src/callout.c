@@ -55,10 +55,10 @@ static void debugQueue(void);
 */
 void free_all_callouts(void) {
     struct timeOutQueue *p;
-
-    for (p = queue ? queue->next : NULL; queue; queue = p, p = queue->next) {
+    for (p = queue ? queue->next : NULL; queue; queue = p, p = p ? p->next : NULL) {
         free(queue);   // Alloced by timer_setTimer()
     }
+    my_log(LOG_DEBUG, 0, "free_all_callouts: All Timeouts removed, Queue is empty.");
 }
 
 /**
@@ -67,7 +67,6 @@ void free_all_callouts(void) {
 void age_callout_queue(struct timespec curtime) {
     struct timeOutQueue *ptr = queue;
     int i = 1;
- 
     if (curtime.tv_sec == 0) clock_gettime (CLOCK_MONOTONIC, &curtime);
     while (ptr && ((ptr->time <= curtime.tv_sec) || (curtime.tv_nsec >= 500000000 && ptr->time <= curtime.tv_sec-1))) {
         my_log(LOG_DEBUG, 0, "About to call timeout %d (#%d)", ptr->id, i);
@@ -120,6 +119,7 @@ int timer_setTimer(int delay, timer_f action, void *data) {
            ptr->next = node;
         }
     }
+
     debugQueue();
     my_log(LOG_DEBUG, 0, "Created timeout %d (#%d) - delay %d secs", node->id, i, delay);
     return node->id;
@@ -131,13 +131,10 @@ int timer_setTimer(int delay, timer_f action, void *data) {
 int timer_leftTimer(int timer_id) {
     struct timeOutQueue *ptr;
     struct timespec curtime;
-
-    if (!timer_id || !queue) return -1;
-    for (ptr = queue; ptr; ptr = ptr->next) {
-        if (ptr->id == timer_id) {
-            clock_gettime(CLOCK_MONOTONIC, &curtime);
-            return (ptr->time - curtime.tv_sec);
-        }
+    for (ptr = queue; ptr && ptr->id != timer_id; ptr = ptr->next);
+    if (ptr) {
+        clock_gettime(CLOCK_MONOTONIC, &curtime);
+        return (ptr->time - curtime.tv_sec);
     }
     return -1;
 }
@@ -148,7 +145,6 @@ int timer_leftTimer(int timer_id) {
 static void debugQueue(void) {
     struct timeOutQueue  *ptr;
     int i;
-
     for (i = 1, ptr = queue; ptr; ptr = ptr->next, i++) {
         my_log(LOG_DEBUG, 0, "(%d - Id:%d, Time:%d) ", i, ptr->id, ptr->time);
     }

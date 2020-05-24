@@ -58,7 +58,7 @@ void rebuildIfVc() {
     configureVifs();
 
     // Call createvifs with pointers  IfDesc tables for relinking vifs and removing or adding interfaces if required.
-    my_log (LOG_DEBUG,0,"RebuildIfVc: creating vifs, Old IfDescP: %x, New: %x", OldIfDescP.S, IfDescP.S);
+    my_log(LOG_DEBUG,0,"RebuildIfVc: creating vifs, Old IfDescP: %x, New: %x", OldIfDescP.S, IfDescP.S);
     createVifs(&OldIfDescP);
 
     // Free the old IfDesc Table and linked subnet lists.
@@ -191,12 +191,8 @@ void buildIfVc() {
 struct IfDesc *getIfByName(const char *IfName, struct IfDescP *RebuildP) {
     struct IfDescP *checkIfDescP = RebuildP ? RebuildP : &IfDescP;
     struct IfDesc *Dp;
-
-    for (Dp = checkIfDescP->S; Dp < checkIfDescP->E; Dp++)
-        if (! strcmp(IfName, Dp->Name))
-            return Dp;
-
-    return NULL;
+    for (Dp = checkIfDescP->S; Dp < checkIfDescP->E && strcmp(IfName, Dp->Name); Dp++);
+    return Dp < checkIfDescP->E ? Dp : NULL;
 }
 
 /*
@@ -217,14 +213,10 @@ struct IfDesc *getIfByIx(unsigned Ix, struct IfDescP *RebuildP) {
 *   the supplied IP adress. The IP must match a interfaces
 *   subnet, or any configured allowed subnet on a interface.
 */
-struct IfDesc *getIfByAddress( uint32_t ipaddr ) {
+struct IfDesc *getIfByAddress(uint32_t ipaddr) {
     struct IfDesc       *Dp;
-    for (Dp = IfDescP.S; Dp < IfDescP.E; Dp++) {
-        if (isAdressValidForIf(Dp, ipaddr, 0)) {
-            return Dp;
-        }
-    }
-    return NULL;
+    for (Dp = IfDescP.S; Dp < IfDescP.E && ! isAdressValidForIf(Dp, ipaddr, 0); Dp++);
+    return Dp < IfDescP.E ? Dp : NULL;
 }
 
 /**
@@ -232,27 +224,21 @@ struct IfDesc *getIfByAddress( uint32_t ipaddr ) {
 *   address for the supplied VIF.
 */
 int isAdressValidForIf(struct IfDesc* IfDp, uint32_t ipaddr, int wl) {
-    struct SubnetList   *currsubnet;
+    struct SubnetList   *sn;
 
-    // Check allowednets or whitelist if set if interface.
+    // Check allowednets or whitelist if wl is set.
     if (! wl || (wl && IfDp->allowedgroups)) {
-        // Loop through all registered allowed and denied nets of the VIF...
-        for(currsubnet = wl ? IfDp->allowedgroups : IfDp->allowednets; currsubnet != NULL; currsubnet = currsubnet->next) {
-            // Check if the ip address is whitelisted.
-            if ((ipaddr & currsubnet->subnet_mask) == currsubnet->subnet_addr) {
-                break;
-            }
-        }
-        if (! currsubnet) {
+        // Loop through all registered allowed and denied nets of the VIF, and check if ip is allowed.
+        for (sn = wl ? IfDp->allowedgroups : IfDp->allowednets; sn && (ipaddr & sn->subnet_mask) != sn->subnet_addr; sn = sn->next);
+        if (! sn) {
             return 0;
         }
     }
 
     // Check if the ip address is blacklisted.
-    for (currsubnet = wl ? IfDp->deniedgroups : IfDp->deniednets; currsubnet; currsubnet = currsubnet->next) {
-        if ((ipaddr & currsubnet->subnet_mask) == currsubnet->subnet_addr) {
-            return 0;
-        }
+    for (sn = wl ? IfDp->deniedgroups : IfDp->deniednets; sn && (ipaddr & sn->subnet_mask) != sn->subnet_addr; sn = sn->next);
+    if (sn) {
+        return 0;
     }
 
     return 1;

@@ -48,30 +48,26 @@ void acceptGroupReport(uint32_t src, uint32_t group) {
     struct IfDesc  *sourceVif;
 
     // Sanitycheck the group adress...
-    if(!IN_MULTICAST( ntohl(group) )) {
+    if (! IN_MULTICAST(ntohl(group))) {
         my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group.",
             inetFmt(group, s1));
         return;
     }
 
     // Find the interface on which the report was received.
-    sourceVif = getIfByAddress( src );
-    if(sourceVif == NULL) {
-        my_log(LOG_WARNING, 0, "No valid interface found for source %s",
-            inetFmt(src,s1));
+    if (! (sourceVif = getIfByAddress(src))) {
+        my_log(LOG_WARNING, 0, "No valid interface found for source %s", inetFmt(src,s1));
         return;
     }
 
-    if(sourceVif->InAdr.s_addr == src) {
+    if (sourceVif->InAdr.s_addr == src) {
         my_log(LOG_NOTICE, 0, "The IGMP message was from myself. Ignoring.");
         return;
     }
 
     // We have a IF so check that it's an downstream IF.
-    if(sourceVif->state == IF_STATE_DOWNSTREAM) {
-
-        my_log(LOG_DEBUG, 0, "Should insert group %s (from: %s) to route table. Vif Ix : %d",
-            inetFmt(group,s1), inetFmt(src,s2), sourceVif->index);
+    if (sourceVif->state == IF_STATE_DOWNSTREAM) {
+        my_log(LOG_DEBUG, 0, "Should insert group %s (from: %s) to route table. Vif Ix : %d", inetFmt(group,s1), inetFmt(src,s2), sourceVif->index);
 
         // Check if this Request is legit on this interface
         if (isAdressValidForIf(sourceVif, group, 1)) {
@@ -82,8 +78,7 @@ void acceptGroupReport(uint32_t src, uint32_t group) {
         my_log(LOG_INFO, 0, "The group address %s may not be requested on interface %s. Ignoring.", inetFmt(group, s1), sourceVif->Name);
     } else {
         // Log the state of the interface the report was received on.
-        my_log(LOG_INFO, 0, "Mebership report was received on %s interface. Ignoring.",
-            sourceVif->state==IF_STATE_UPSTREAM?"the upstream":"a disabled");
+        my_log(LOG_INFO, 0, "Mebership report was received on %s interface. Ignoring.", sourceVif->state == IF_STATE_UPSTREAM ? "the upstream" : "a disabled");
     }
 }
 
@@ -93,27 +88,22 @@ void acceptGroupReport(uint32_t src, uint32_t group) {
 void acceptLeaveMessage(uint32_t src, uint32_t group) {
     struct IfDesc   *sourceVif;
 
-    my_log(LOG_DEBUG, 0,
-        "Got leave message from %s to %s. Starting last member detection.",
-        inetFmt(src, s1), inetFmt(group, s2));
+    my_log(LOG_DEBUG, 0, "Got leave message from %s to %s. Starting last member detection.", inetFmt(src, s1), inetFmt(group, s2));
 
     // Sanitycheck the group adress...
-    if(!IN_MULTICAST( ntohl(group) )) {
-        my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group.",
-            inetFmt(group, s1));
+    if (! IN_MULTICAST(ntohl(group))) {
+        my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group.", inetFmt(group, s1));
         return;
     }
 
     // Find the interface on which the report was received.
-    sourceVif = getIfByAddress( src );
-    if(sourceVif == NULL) {
-        my_log(LOG_WARNING, 0, "No interfaces found for source %s",
-            inetFmt(src,s1));
+    if (! (sourceVif = getIfByAddress(src))) {
+        my_log(LOG_WARNING, 0, "No interfaces found for source %s", inetFmt(src,s1));
         return;
     }
 
     // We have a IF so check that it's an downstream IF.
-    if(sourceVif->state == IF_STATE_DOWNSTREAM) {
+    if (sourceVif->state == IF_STATE_DOWNSTREAM) {
         GroupVifDesc   *gvDesc;
 
         // Check if this Request is legit on this interface
@@ -127,6 +117,9 @@ void acceptLeaveMessage(uint32_t src, uint32_t group) {
 
         // Allocate GroupVifDesc and set. Freed by creatVifs() and sendGroupSpecificMemberQuery();
         gvDesc = (GroupVifDesc*)malloc(sizeof(GroupVifDesc));
+        if (! gvDesc) {
+            my_log(LOG_ERR, 0, "acceptLeaveMessage: Out of memory.");
+        }
         gvDesc->group = group;
         gvDesc->sourceVif = sourceVif;
         gvDesc->started = 0;
@@ -145,16 +138,13 @@ void acceptLeaveMessage(uint32_t src, uint32_t group) {
 */
 void sendGroupSpecificMemberQuery(void *argument) {
     struct  Config  *conf = getCommonConfig();
-    struct  IfDesc  *Dp;
-    struct  IfDesc  *ifqL[MAXVIFS] = { [0 ... MAXVIFS-1] = NULL };
-    int     Ix = 0, Lx = 0;
 
     // Cast argument to correct type...
     GroupVifDesc   *gvDesc = (GroupVifDesc*) argument;
 
-    if(gvDesc->started) {
+    if (gvDesc->started) {
         // If aging returns false, we don't do any further action...
-        if(!lastMemberGroupAge(gvDesc->group)) {
+        if (!lastMemberGroupAge(gvDesc->group)) {
             free(gvDesc);   // Alloced by clearRoutes() and acceptLeaveMessage()
             return;
         }
@@ -162,31 +152,9 @@ void sendGroupSpecificMemberQuery(void *argument) {
         gvDesc->started = 1;
     }
 
-    // If we have a source interface only query that interface.
-    if (gvDesc->sourceVif && interfaceInRoute(gvDesc->group, gvDesc->sourceVif->index)) {
-        ifqL[Lx] = gvDesc->sourceVif;
-    } else {
-        // Loop through all downstream interfaces and build a list of interfaces to query.
-        for (Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
-            if (Dp->state == IF_STATE_DOWNSTREAM && interfaceInRoute(gvDesc->group ,Dp->index) && isAdressValidForIf(gvDesc->sourceVif ,gvDesc->group, 1)) {
-                ifqL[Lx++]=Dp;
-            }
-        }
-    }
-
     // Send group specific membership query on downstream interfaces.
-    Lx = 0;
-    while (ifqL[Lx]) {
-        sendIgmp(ifqL[Lx]->InAdr.s_addr, gvDesc->group,
-                 IGMP_MEMBERSHIP_QUERY,
-                 conf->lastMemberQueryInterval * IGMP_TIMER_SCALE,
-                 gvDesc->group, 0);
-
-        my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
-                 inetFmt(ifqL[Lx]->InAdr.s_addr,s1), inetFmt(gvDesc->group,s2),
-                 conf->lastMemberQueryInterval);
-        Lx++;
-    }
+    sendIgmp(gvDesc->sourceVif->InAdr.s_addr, gvDesc->group, IGMP_MEMBERSHIP_QUERY, conf->lastMemberQueryInterval * IGMP_TIMER_SCALE, gvDesc->group, 0);
+    my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d", inetFmt(gvDesc->sourceVif->InAdr.s_addr,s1), inetFmt(gvDesc->group,s2), conf->lastMemberQueryInterval);
 
     // Set timeout for next round...
     timer_setTimer(conf->lastMemberQueryInterval, sendGroupSpecificMemberQuery, gvDesc);
@@ -201,18 +169,11 @@ void sendGeneralMembershipQuery(void) {
     int             Ix;
 
     // Loop through all downstream vifs...
-    for ( Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++ ) {
-        if(Dp->state == IF_STATE_DOWNSTREAM) {
+    for (Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
+        if (Dp->state == IF_STATE_DOWNSTREAM) {
             // Send the membership query...
-            sendIgmp(Dp->InAdr.s_addr, allhosts_group,
-                     IGMP_MEMBERSHIP_QUERY,
-                     conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0);
-
-            my_log(LOG_DEBUG, 0,
-                "Sent membership query from %s to %s. Delay: %d",
-                inetFmt(Dp->InAdr.s_addr,s1),
-                inetFmt(allhosts_group,s2),
-                conf->queryResponseInterval);
+            sendIgmp(Dp->InAdr.s_addr, allhosts_group, IGMP_MEMBERSHIP_QUERY, conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0);
+            my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d", inetFmt(Dp->InAdr.s_addr,s1), inetFmt(allhosts_group,s2), conf->queryResponseInterval);
         }
     }
 
@@ -220,7 +181,7 @@ void sendGeneralMembershipQuery(void) {
     timer_setTimer(conf->queryResponseInterval, (timer_f)ageActiveRoutes, NULL);
 
     // Install timer for next general query...
-    if(conf->startupQueryCount>0) {
+    if (conf->startupQueryCount>0) {
         // Use quick timer...
         timer_setTimer(conf->startupQueryInterval, (timer_f)sendGeneralMembershipQuery, NULL);
         // Decrease startup counter...

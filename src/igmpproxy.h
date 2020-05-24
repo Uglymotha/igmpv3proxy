@@ -93,6 +93,12 @@ extern char     s2[];
 extern char		s3[];
 extern char		s4[];
 
+int sighandled;
+#define GOT_SIGINT  0x01
+#define GOT_SIGHUP  0x02
+#define GOT_SIGUSR1 0x04
+#define GOT_SIGUSR2 0x08
+
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
@@ -120,7 +126,6 @@ void my_log( int Serverity, int Errno, const char *FmtSt, ... );
 // Define timer constants (in seconds...)
 #define INTERVAL_QUERY          125
 #define INTERVAL_QUERY_RESPONSE  10
-//#define INTERVAL_QUERY_RESPONSE  10
 
 #define ROUTESTATE_NOTJOINED            0   // The group corresponding to route is not joined
 #define ROUTESTATE_JOINED               1   // The group corresponding to route is joined
@@ -252,10 +257,6 @@ void k_hdr_include(int hdrincl);
 void k_set_ttl(int t);
 void k_set_loop(int l);
 void k_set_if(uint32_t ifa);
-/*
-void k_join(uint32_t grp, uint32_t ifa);
-void k_leave(uint32_t grp, uint32_t ifa);
-*/
 
 /* udpsock.c
  */

@@ -108,6 +108,7 @@ struct Config *getCommonConfig(void) {
 
 // Reloads the configuration file and removes interfaces which were removed from config.
 void reloadConfig(void) {
+    sighandled |= GOT_SIGHUP;
     struct vifconfig *OldConfPtr, *TmpConfPtr;
 
     // Load the new configuration keep reference to the old.
@@ -119,12 +120,13 @@ void reloadConfig(void) {
     // Rebuild the interfaces config.
     rebuildIfVc();
 
-    my_log(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr %x, NewConfPtr, %x", OldConfPtr, vifconf);
-    
     // Free all the old mallocd vifconf list.
     for (TmpConfPtr = OldConfPtr->next; OldConfPtr; OldConfPtr = TmpConfPtr, TmpConfPtr = OldConfPtr->next) {
         free (OldConfPtr);   // Alloced by parsePhyintToken()
     }
+    
+    my_log(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr %x, NewConfPtr, %x", OldConfPtr, vifconf);
+    sighandled &= ~GOT_SIGHUP;
 }
 
 /**
@@ -140,24 +142,24 @@ int loadConfig(char *configFile) {
     initCommonConfig();
 
     // Test config file reader...
-    if(!openConfigFile(configFile)) {
+    if (!openConfigFile(configFile)) {
         my_log(LOG_ERR, 0, "Unable to open configfile from %s", configFile);
     }
 
     // Get first token...
     token = nextConfigToken();
-    if(token == NULL) {
+    if (! token) {
         my_log(LOG_ERR, 0, "Config file was empty.");
     }
 
     // Loop until all configuration is read.
-    while ( token != NULL ) {
+    while (token) {
         // Check token...
-        if(strcmp("phyint", token)==0) {
+        if (strcmp("phyint", token) == 0) {
             // Got a phyint token... Call phyint parser
             my_log(LOG_DEBUG, 0, "Config: Got a phyint token.");
             tmpPtr = parsePhyintToken();
-            if(tmpPtr == NULL) {
+            if (! tmpPtr) {
                 // Unparsable token... Exit...
                 closeConfigFile();
                 my_log(LOG_WARNING, 0, "Unknown token '%s' in configfile", token);
@@ -176,7 +178,7 @@ int loadConfig(char *configFile) {
                 currPtr = &tmpPtr->next;
             }
         }
-        else if(strcmp("quickleave", token)==0) {
+        else if (strcmp("quickleave", token) == 0) {
             // Got a quickleave token....
             my_log(LOG_DEBUG, 0, "Config: Quick leave mode enabled.");
             commonConfig.fastUpstreamLeave = 1;
@@ -185,17 +187,17 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("hashtablesize", token)==0) {
+        else if (strcmp("hashtablesize", token) == 0) {
             // Got a hashtablesize token...
             token = nextConfigToken();
             my_log(LOG_DEBUG, 0, "Config: hashtablesize for quickleave is %s.", token);
-            if(!commonConfig.fastUpstreamLeave) {
+            if (! commonConfig.fastUpstreamLeave) {
                 closeConfigFile();
                 my_log(LOG_ERR, 0, "Config: hashtablesize is specified but quickleave not enabled.");
                 return 0;
             }
             int intToken = atoi(token);
-            if(intToken < 1 || intToken > 536870912) {
+            if (intToken < 1 || intToken > 536870912) {
                 closeConfigFile();
                 my_log(LOG_ERR, 0, "Config: hashtablesize must be between 1 and 536870912 bytes.");
                 return 0;
@@ -206,7 +208,7 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("defaultdown", token)==0) {
+        else if (strcmp("defaultdown", token) == 0) {
             // Got a defaultdown token...
             my_log(LOG_DEBUG, 0, "Config: interface Default as down stream.");
             commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
@@ -215,12 +217,14 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("rescanvif", token)==0) {
+        else if (strcmp("rescanvif", token) == 0) {
             // Got a rescanvif token...
             token = nextConfigToken();
             int intToken = atoi(token);
-            if (intToken != 0 ) {
-                if (intToken<10) intToken=10;
+            if (intToken != 0) {
+                if (intToken < INTERVAL_QUERY_RESPONSE + 1) {
+                    intToken = INTERVAL_QUERY_RESPONSE + 1;
+                }
                 my_log(LOG_DEBUG, 0, "Config: Need detect new interface every %ds.", intToken);
             }
             commonConfig.rescanVif = intToken;
@@ -229,12 +233,14 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("rescanconf", token)==0) {
+        else if (strcmp("rescanconf", token) == 0) {
             // Got a rescanconf token...
             token = nextConfigToken();
             int intToken = atoi(token);
-            if (intToken != 0 ) {
-                if (intToken<10) intToken=10;
+            if (intToken != 0) {
+                if (intToken < INTERVAL_QUERY_RESPONSE + 1) {
+                    intToken = INTERVAL_QUERY_RESPONSE + 1;
+                }
                 my_log(LOG_DEBUG, 0, "Config: Need detect config change every %ds.", intToken);
             }
             commonConfig.rescanConf = intToken;
@@ -243,7 +249,7 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("loglevel", token)==0) {
+        else if (strcmp("loglevel", token) == 0) {
             // Got a loglevel token...
             token = nextConfigToken();
             int intToken = atoi(token);
@@ -258,8 +264,8 @@ int loadConfig(char *configFile) {
             token = nextConfigToken();
             continue;
         }
-        else if(strcmp("proxylocalmc", token)==0) {
-            // Got a quickleave token....
+        else if (strcmp("proxylocalmc", token) == 0) {
+            // Got a proxylocalmc token....
             my_log(LOG_DEBUG, 0, "Config: Will forward local multicast range 224.0.0.0/8.");
             commonConfig.proxyLocalMc = 1;
 
@@ -291,19 +297,19 @@ void configureVifs(void) {
     struct vifconfig *confPtr;
 
     // If no config is available, just return...
-    if(vifconf == NULL) {
+    if (! vifconf) {
         return;
     }
 
     // Loop through all VIFs...
     for (Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
-        if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
+        if (Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
 
             // Now try to find a matching config...
-            for(confPtr = vifconf; confPtr; confPtr = confPtr->next) {
+            for (confPtr = vifconf; confPtr; confPtr = confPtr->next) {
 
                 // I the VIF names match...
-                if(strcmp(Dp->Name, confPtr->name)==0) {
+                if (strcmp(Dp->Name, confPtr->name)==0) {
                     struct SubnetList *vifLast;
 
                     my_log(LOG_DEBUG, 0, "Found config for %s", Dp->Name);
@@ -363,24 +369,22 @@ void createVifs(struct IfDescP *RebuildP) {
     }
 
     // Loop through all new interfaces and check what has changed.
-    for(Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
+    for (Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
         AddgvDescL = NULL;
-        if (! RebuildP) {
+        if (! RebuildP && ((Dp->Flags & IFF_LOOPBACK) || Dp->state == IF_STATE_DISABLED)) {
             // Only add vif for valid interfaces on start-up.
-            if ((Dp->Flags & IFF_LOOPBACK) || (Dp->state != IF_STATE_DOWNSTREAM && Dp->state != IF_STATE_UPSTREAM)) {
-                continue;
-            }
+            continue;
         } else if ((oDp = getIfByName(Dp->Name, RebuildP))) {
             /* Need rebuild, check if interface is new or already exists (check table below).
                              old: disabled    new: disabled    -> do nothing
                              old: disabled    new: downstream  -> addVIF(new)
-                             old: disabled    new: upstream    -> addVIF(new)
-                             old: downstream  new: disabled    -> clear routes oldvif, delVIF(old)
-               state table   old: downstream  new: downstream  -> addvif(new,old)
-                             old: downstream  new: upstream    -> clear routes oldvif, delvif(old), addvif(new)
-                             old: upstream    new: disabled    -> clear routes oldvif, delVIF(old)
-                             old: upstream    new: downstream  -> clear routes oldvif, delvif(old)),addvif(new)
-                             old: upstream    new: upstream    -> addvif(new,old)
+                             old: disabled    new: upstream    -> clear routes new vif   ,addVIF(new)                              ,query groups
+                             old: downstream  new: disabled    -> clear routes old vif   ,delVIF(old)                              ,query groups
+               state table   old: downstream  new: downstream  ->                                                 addvif(new,old)
+                             old: downstream  new: upstream    -> clear routes old vif   ,delvif(old)            ,addvif(new)      ,query groups
+                             old: upstream    new: disabled    -> clear routes old vif   ,delVIF(old)                              ,query groups
+                             old: upstream    new: downstream  -> clear routes old vif   ,delvif(old)            ,addvif(new)      ,query groups
+                             old: upstream    new: upstream    -> On config reload, check routes for wl changes  ,addvif(new,old)  ,query groups
             */
             if (oDp->state != IF_STATE_UPSTREAM && Dp->state == IF_STATE_UPSTREAM) {
                 // If vif transitions to upstream set relevant routes to not joined.                               
@@ -390,38 +394,36 @@ void createVifs(struct IfDescP *RebuildP) {
             switch (oDp->state) {
             case IF_STATE_DISABLED:
                 switch (Dp->state) {
-                case IF_STATE_DISABLED:   {                                                                    continue; }
-                case IF_STATE_DOWNSTREAM: {                                                         oDp=NULL;  break; }
-                case IF_STATE_UPSTREAM:   {                                                         oDp=NULL;  break; }
+                case IF_STATE_DISABLED:   {                                                                              continue; }
+                case IF_STATE_DOWNSTREAM: {                                                         oDp=NULL;            break; }
+                case IF_STATE_UPSTREAM:   { AddgvDescL = clearRoutes(Dp, NULL);                     oDp=NULL;            break; }
                 }
                 break;
             case IF_STATE_DOWNSTREAM:
                 switch (Dp->state) {
-                case IF_STATE_DISABLED:   { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);             break; }
-                case IF_STATE_DOWNSTREAM: {                                                                    break; }
-                case IF_STATE_UPSTREAM:   { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);  oDp=NULL;  break; }
+                case IF_STATE_DISABLED:   { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);                       break; }
+                case IF_STATE_DOWNSTREAM: {                                                                              break; }
+                case IF_STATE_UPSTREAM:   { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);  oDp=NULL;            break; }
                 }
                 break;
             case IF_STATE_UPSTREAM:
                 switch (Dp->state) {
-                case IF_STATE_DISABLED:   { clearRoutes(oDp, RebuildP);               delVIF(oDp);             continue; }
-                case IF_STATE_DOWNSTREAM: { clearRoutes(oDp, RebuildP);               delVIF(oDp);  oDp=NULL;  break; }
-                case IF_STATE_UPSTREAM:   {                                                                    break; }
+                case IF_STATE_DISABLED:   { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);                       continue; }
+                case IF_STATE_DOWNSTREAM: { AddgvDescL = clearRoutes(oDp, RebuildP);  delVIF(oDp);  oDp=NULL;            break; }
+                case IF_STATE_UPSTREAM:   { AddgvDescL = (sighandled & GOT_SIGHUP) ? clearRoutes(oDp, RebuildP) : NULL;  break; }
                 }
                 break;
             }
 
             // For any removed downstream vif we may have a list of groups to be queried after we are done.
-            if (AddgvDescL) {
-                if (! gvDescL) {
-                    gvDescL = AddgvDescL;
-                } else {
-                    for (TmpgvDescL = gvDescL; TmpgvDescL && TmpgvDescL->next; TmpgvDescL = TmpgvDescL->next);
-                    TmpgvDescL->next = AddgvDescL;
-                }
+            if (AddgvDescL && ! gvDescL) {
+                gvDescL = AddgvDescL;
+            } else if (AddgvDescL && gvDescL) {
+                for (TmpgvDescL = gvDescL; TmpgvDescL && TmpgvDescL->next; TmpgvDescL = TmpgvDescL->next);
+                TmpgvDescL->next = AddgvDescL;
             }
 
-            // Do not call addvif for loopback or if switched from downstream to disabled.
+            // Do not call addvif for loopback or interface switched from downstream to disabled.
             if ((Dp->Flags & IFF_LOOPBACK) || (oDp && oDp->state == IF_STATE_DOWNSTREAM && Dp->state == IF_STATE_DISABLED)) {
                 continue;
             }
@@ -431,7 +433,7 @@ void createVifs(struct IfDescP *RebuildP) {
                 continue;
             }
             if (Dp->state == IF_STATE_UPSTREAM) {
-                // Set relevant routes to not joined.
+                // Join all relevant routes.
                 clearRoutes(Dp, NULL);
             }
             oDp=NULL;
@@ -463,7 +465,7 @@ void createVifs(struct IfDescP *RebuildP) {
 
         // The list may have duplicates, remove them
         for (TmpgvDescL = gvDescL; TmpgvDescL && TmpgvDescL->next; TmpgvDescL = TmpgvDescL->next) {
-            if (TmpgvDescL->next->gvDesc->group == gvDescL->gvDesc->group) {
+            if (TmpgvDescL->next->gvDesc->sourceVif == gvDescL->gvDesc->sourceVif && TmpgvDescL->next->gvDesc->group == gvDescL->gvDesc->group) {
                 TmpgvDescL->next = TmpgvDescL->next->next;
                 free(TmpgvDescL->next->gvDesc);  // Alloced by clearRoutes()
                 free(TmpgvDescL->next);          // Alloced by clearRoutes()
@@ -486,14 +488,15 @@ struct vifconfig *parsePhyintToken(void) {
     token = nextConfigToken();
 
     // Sanitycheck the name...
-    if(token == NULL) return NULL;
-    if(strlen(token) >= IF_NAMESIZE) return NULL;
+    if (! token || strlen(token) >= IF_NAMESIZE) {
+        return NULL;
+    }
     my_log(LOG_DEBUG, 0, "Config: IF: Config for interface %s.", token);
 
     // Allocate memory for configuration. Freed by reloadConfig().
     tmpPtr = (struct vifconfig*)malloc(sizeof(struct vifconfig));
-    if(tmpPtr == NULL) {
-        my_log(LOG_ERR, 0, "Out of memory.");
+    if (! tmpPtr) {
+        my_log(LOG_ERR, 0, "vifconfig: Out of memory.");
     }
 
     // Set default values...
@@ -507,8 +510,8 @@ struct vifconfig *parsePhyintToken(void) {
     tmpPtr->deniedgroups = NULL;
 
     // Make a copy of the token to store the IF name
-    tmpPtr->name = strdup( token );
-    if(tmpPtr->name == NULL) {
+    tmpPtr->name = strdup(token);
+    if (! tmpPtr->name) {
         my_log(LOG_ERR, 0, "Out of memory.");
     }
 
@@ -520,14 +523,14 @@ struct vifconfig *parsePhyintToken(void) {
 
     // Parse the rest of the config..
     token = nextConfigToken();
-    while(token != NULL) {
-        if(strcmp("altnet", token) == 0 || strcmp("allowednet", token) == 0 || strcmp("deniednet", token) == 0
-                                        || strcmp("whitelist", token) == 0 || strcmp("blacklist", token) == 0) {
+    while (token) {
+        if (strcmp("altnet", token) == 0 || strcmp("allowednet", token) == 0 || strcmp("deniednet", token) == 0
+                                         || strcmp("whitelist", token) == 0  || strcmp("blacklist", token) == 0) {
             // Black / Whitelist Parsing...
             uint32_t addr, mask;
             char list[255], tmptoken[255];
-            strcpy(list,token);
-            for (token = nextConfigToken(), strcpy(tmptoken,token); (parseSubnetAddress(token, &addr, &mask)); token = nextConfigToken(), strcpy(tmptoken,token)) {
+            strcpy(list, token);
+            for (token = nextConfigToken(), strcpy(tmptoken, token); (parseSubnetAddress(token, &addr, &mask)); token = nextConfigToken(), strcpy(tmptoken, token)) {
                 my_log(LOG_DEBUG, 0, "Config: IF: Got %s token %s.", list, tmptoken);
                 if ((addr | mask) != mask) {
                     my_log(LOG_WARNING, 0, "Config: IF: %s is not valid subnet/mask pair. Ignoring.", tmptoken);
@@ -537,38 +540,38 @@ struct vifconfig *parsePhyintToken(void) {
             }
             continue;
         }
-        else if(strcmp("upstream", token)==0) {
+        else if (strcmp("upstream", token) == 0) {
             // Upstream
             my_log(LOG_DEBUG, 0, "Config: IF: Got upstream token.");
             tmpPtr->state = IF_STATE_UPSTREAM;
         }
-        else if(strcmp("downstream", token)==0) {
+        else if (strcmp("downstream", token) == 0) {
             // Downstream
             my_log(LOG_DEBUG, 0, "Config: IF: Got downstream token.");
             tmpPtr->state = IF_STATE_DOWNSTREAM;
         }
-        else if(strcmp("disabled", token)==0) {
+        else if (strcmp("disabled", token) == 0) {
             // Disabled
             my_log(LOG_DEBUG, 0, "Config: IF: Got disabled token.");
             tmpPtr->state = IF_STATE_DISABLED;
         }
-        else if(strcmp("ratelimit", token)==0) {
+        else if (strcmp("ratelimit", token) == 0) {
             // Ratelimit
             token = nextConfigToken();
             my_log(LOG_DEBUG, 0, "Config: IF: Got ratelimit token '%s'.", token);
-            tmpPtr->ratelimit = atoi( token );
-            if(tmpPtr->ratelimit < 0) {
+            tmpPtr->ratelimit = atoi(token);
+            if (tmpPtr->ratelimit < 0) {
                 my_log(LOG_WARNING, 0, "Ratelimit must be 0 or more.");
                 parseError = 1;
                 break;
             }
         }
-        else if(strcmp("threshold", token)==0) {
+        else if (strcmp("threshold", token) == 0) {
             // Threshold
             token = nextConfigToken();
             my_log(LOG_DEBUG, 0, "Config: IF: Got threshold token '%s'.", token);
-            tmpPtr->threshold = atoi( token );
-            if(tmpPtr->threshold <= 0 || tmpPtr->threshold > 255) {
+            tmpPtr->threshold = atoi(token);
+            if (tmpPtr->threshold <= 0 || tmpPtr->threshold > 255) {
                 my_log(LOG_WARNING, 0, "Threshold must be between 1 and 255.");
                 parseError = 1;
                 break;
@@ -582,7 +585,7 @@ struct vifconfig *parsePhyintToken(void) {
     }
 
     // Clean up after a parseerror...
-    if(parseError) {
+    if (parseError) {
         free(tmpPtr->name);   // Alloced by self
         free(tmpPtr);         // Alloced by self
         tmpPtr = NULL;
@@ -623,10 +626,11 @@ int parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
 
 // Allocate and set the subnetlist for the requested list.
 void allocSubnet(char *list, uint32_t addr, uint32_t mask) {
-    struct SubnetList ***tmpSubnet = (strcmp("altnet", list) == 0 || strcmp("allowednet", list) == 0) ? &anetPtr :
-                                     (strcmp("deniednet", list) == 0) ? &dnetPtr :
-                                     (strcmp("whitelist", list) == 0) ? &agrpPtr :
-                                      &dgrpPtr;
+    struct SubnetList ***tmpSubnet = (strcmp("altnet", list) == 0)      ? &anetPtr :
+                                     (strcmp("allowednet", list) == 0)  ? &anetPtr :
+                                     (strcmp("deniednet", list) == 0)   ? &dnetPtr :
+                                     (strcmp("whitelist", list) == 0)   ? &agrpPtr :
+                                                                          &dgrpPtr;
 
     // Allocate memory for subnet list. Freed by rebuildIfvc().
     **tmpSubnet = (struct SubnetList*)malloc(sizeof(struct SubnetList));

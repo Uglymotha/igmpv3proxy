@@ -47,7 +47,6 @@
 */
 struct RouteTable {
     struct RouteTable   *nextroute;     // Pointer to the next group in line.
-    struct RouteTable   *prevroute;     // Pointer to the previous group in line.
     uint32_t            group;          // The group to route
     uint32_t            originAddrs[MAX_ORIGINS]; // The origin adresses (only set on activated routes)
     uint32_t            vifBits;        // Bits representing recieving VIFs.
@@ -120,8 +119,8 @@ static inline int testNoDownstreamHost(struct Config *conf, struct RouteTable *c
 *   Function for retrieving the Multicast Group socket.
 */
 int getMcGroupSock(void) {
-    if( ! mcGroupSock ) {
-        mcGroupSock = openUdpSocket( INADDR_ANY, 0 );;
+    if (! mcGroupSock) {
+        mcGroupSock = openUdpSocket(INADDR_ANY, 0);
     }
     return mcGroupSock;
 }
@@ -135,7 +134,7 @@ static void sendJoinLeaveUpstream(struct RouteTable* croute, int join, struct If
     int Ix;
 
     // Only join a group if there are listeners downstream. Only leave a group if joined.
-    if(join && croute->vifBits == 0) {
+    if (join && croute->vifBits == 0) {
         my_log(LOG_DEBUG, 0, "No downstream listeners for group %s. No join sent.", inetFmt(croute->group, s1));
         return;
     } else if (! join && croute->upstrState == ROUTESTATE_NOTJOINED) {
@@ -154,7 +153,7 @@ static void sendJoinLeaveUpstream(struct RouteTable* croute, int join, struct If
         }
 
         // Send join or leave request...
-        if(join) {
+        if (join) {
             my_log(LOG_DEBUG, 0, "Joining group %s upstream on IF address %s", inetFmt(croute->group, s1), inetFmt(checkVIF->InAdr.s_addr, s2));
             joinMcGroup(getMcGroupSock(), checkVIF, croute->group);
         } else {
@@ -164,54 +163,111 @@ static void sendJoinLeaveUpstream(struct RouteTable* croute, int join, struct If
     }
 
     // Set route state.
-    if (join) {
-        croute->upstrState = ROUTESTATE_JOINED;
-    } else {
-        croute->upstrState = ROUTESTATE_NOTJOINED;
-    }
+    croute->upstrState = join ? ROUTESTATE_JOINED : ROUTESTATE_NOTJOINED;
 }
 
 /**
 *   Clear all routes from routing table, and alerts Leaves upstream.
 *   If argument is pointer to interface clear routes for corresponding if.
-*   Function will return pointer to list of groups set to last memeber state
-*   if interface is down downstream.
+*   Function will return pointer to list of groups to query if states have changed.
 */
 struct gvDescL *clearRoutes(struct IfDesc *IfDp, struct IfDescP *RebuildP) {
-    struct RouteTable   *croute, *remainroute;
+    struct RouteTable   *croute, *remainroute, *prevroute;
     struct gvDescL *gvDescL = NULL;
     struct Config *conf = getCommonConfig();
 
     // Loop through all routes...
-    for (croute = routing_table; croute; croute = remainroute) {
+    for (prevroute = NULL, croute = routing_table; croute; croute = remainroute) {
+        struct IfDesc *nDp;
+        bool query = false, keep = false;
+        int i, j;
         remainroute = croute->nextroute;
 
         if (IfDp && ! RebuildP) {
-            // New upstream interface added, set all relevant groups to not joined.
+            // New upstream interface added, join all relevant groups.
             if (isAdressValidForIf(IfDp, croute->group, 1)) {
-                croute->upstrState = ROUTESTATE_NOTJOINED;
+                joinMcGroup(getMcGroupSock(), IfDp, croute->group);
             }
-            my_log(LOG_DEBUG, 0, "clearRoutes: Setting %s to not joined, upstream if %s added.", inetFmt(croute->group, s1), IfDp->Name);
-            continue;
-        } else if (IfDp && IfDp->state == IF_STATE_UPSTREAM && croute->upstrVif != IfDp->index) {
-            // Leave group if valid for removed upstream if.
-            if (isAdressValidForIf(IfDp, croute->group, 1)) {
+            my_log(LOG_DEBUG, 0, "clearRoutes: Joining %s on new upstream interface %s.", inetFmt(croute->group, s1), IfDp->Name);
+            keep = true;
+
+        } else if (IfDp && IfDp->state == IF_STATE_UPSTREAM) {
+            nDp = getIfByName(IfDp->Name, NULL);
+            if (nDp && nDp->state == IF_STATE_UPSTREAM) {
+                // Upstream to upstream during config reload, check route against wl / bl changes.
+                if (croute->upstrVif == IfDp->index) {
+                    // Route is active on interface, check origins and update.
+                    for (i = 0; i < MAX_ORIGINS; i++) {
+                        if (croute->originAddrs[i] != 0 && ! isAdressValidForIf(nDp, croute->originAddrs[i], 0) && isAdressValidForIf(IfDp, croute->originAddrs[i], 0)) {
+                            my_log(LOG_DEBUG, 0, "clearRoutes: Removing source %s from route %s, no longer allowed.",inetFmt (croute->originAddrs[i], s1), inetFmt(croute->group, s2));
+                            // Shift originAddrs. And clear.
+                            for (j = i + 1; j < MAX_ORIGINS && croute->originAddrs[j] != 0; croute->originAddrs[j - 1] = croute->originAddrs[j], j++);
+                            croute->originAddrs[j - 1] = 0;
+
+                            // if no more valid origins remove route and query all downstream interfaces.
+                            query = j = 1 ? true : false;  // Query all downstream ifs for route.
+                        }
+                    }
+                    keep = !query;
+                }
+
+                // Continue check bl / wl if route still valid or not active on interface.
+                if (croute->upstrVif != IfDp->index || keep) {
+                    my_log(LOG_DEBUG, 0, "clearRoutes: checking2 %d %d %s %s", croute->upstrVif, IfDp->index, IfDp->Name, inetFmt(croute->group, s1));
+                    if (IfDp->index && ! isAdressValidForIf(nDp, croute->group, 1) && isAdressValidForIf(IfDp, croute->group, 1)) {
+                        // Group is no longer allowed. Leave if not active on interface set to last member. If active on interface, remove.
+                        if (croute->upstrVif != IfDp->index) {
+                            leaveMcGroup(getMcGroupSock(), nDp, croute->group);
+                            croute->upstrState = ROUTESTATE_CHECK_LAST_MEMBER;
+                            keep = true;
+                        } else {
+                            keep = false;
+                        }
+                        query = true;
+                        my_log(LOG_DEBUG, 0, "clearRoutes: Leaving group %s on %s, no longer allowed.", inetFmt(croute->group, s1), IfDp->Name);
+                    } else if (isAdressValidForIf(nDp, croute->group, 1) && ! isAdressValidForIf(IfDp, croute->group, 1)) {
+                        // Group is now allowed on upstream interface, join.
+                        joinMcGroup(getMcGroupSock(), IfDp, croute->group);
+                        keep = true;
+                        my_log(LOG_DEBUG, 0, "clearRoutes: Joining group %s on %s, it is now allowed.", inetFmt(croute->group, s1), IfDp->Name);
+                    } else {
+                        // No change, continue.
+                        keep = true;
+                    }
+                }
+
+            } else if (croute->upstrVif != IfDp->index) {
+                // Transition from upstream to downstream or disabled. Leave group, set to last member and query.
                 leaveMcGroup(getMcGroupSock(), IfDp, croute->group);
+                croute->upstrState = ROUTESTATE_CHECK_LAST_MEMBER;
+                keep = query = true;
+                my_log(LOG_DEBUG, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.", inetFmt(croute->group, s1), IfDp->Name);
             }
-            continue;
+
         } else if (IfDp && IfDp->state == IF_STATE_DOWNSTREAM) {
-            // Check if downstream interface is part of route and clear vifbits.
+            // Downstream interface to disabled or upstream, check if part of route and clear vifbits, continue if not.
             if (! BIT_TST(croute->vifBits, IfDp->index)) { 
-                continue;
+                keep = true;
             } else {
+                my_log(LOG_DEBUG, 0, "clearRoutes: Vif %d If %s removed, removing from route %s.", IfDp->index, IfDp->Name, inetFmt(croute->group, s1));
                 BIT_CLR(croute->vifBits, IfDp->index);
                 BIT_CLR(croute->ageVifBits, IfDp->index);
-
-                // If there are still listeners, set route to last member mode and continue. If no more listeners remove the route.
+                // If there are still listeners, set route to last member mode and query. If no more listeners remove the route.
                 if (croute->vifBits > 0 || croute->ageVifBits > 0) {
-                    zeroDownstreamHosts(conf, croute);
                     croute->upstrState = ROUTESTATE_CHECK_LAST_MEMBER;
+                    zeroDownstreamHosts(conf, croute);
+                    keep = true;
+                }
+                query = true;
+            }
+        }
 
+        // We are interested in any route which is valid for an added upstream interface, so that it may be joined again.
+        // Also any route that was set to last memeber state or will actually be removed. 
+        // Build a list of downstream interfaces to query for the group.
+        if (query) {
+            for (i = 0; (nDp = getIfByIx(i, NULL)); i++) {
+                if (nDp->state == IF_STATE_DOWNSTREAM && isAdressValidForIf(nDp, croute->group, 1)) {
                     // Allocate memory for groupvifdesc and set. Freed by createVifs() and sendGroupSpecificMemberQuery().
                     struct gvDescL *AddgvDescL = (struct gvDescL *)malloc(sizeof(struct gvDescL));
                     GroupVifDesc *gvDesc = (GroupVifDesc *)malloc(sizeof(GroupVifDesc));
@@ -222,59 +278,45 @@ struct gvDescL *clearRoutes(struct IfDesc *IfDp, struct IfDescP *RebuildP) {
                     // Set the gvdesc for group specific query and add to list.
                     AddgvDescL->gvDesc = gvDesc;
                     AddgvDescL->gvDesc->group = croute->group;
-                    AddgvDescL->gvDesc->sourceVif = NULL;
+                    AddgvDescL->gvDesc->sourceVif = nDp;
                     AddgvDescL->gvDesc->started = 0;
                     AddgvDescL->next = gvDescL;
                     gvDescL = AddgvDescL;
-
-                    my_log(LOG_DEBUG, 0, "clearRoutes: Setting group %s to last member state, Vif %d If %s removed.",
-                         inetFmt(AddgvDescL->gvDesc->group, s1), IfDp->index, IfDp->Name);
-                    continue;
                 }
             }
         }
 
-        // Log the cleanup in debugmode...
-        my_log(LOG_DEBUG, 0, "clearRoutes: Removing route entry for %s",
-                     inetFmt(croute->group, s1));
-
-        // Uninstall current route
-        if(!internUpdateKernelRoute(croute, 0)) {
-            my_log(LOG_WARNING, 0, "clearRoutes: The removal from Kernel failed.");
+        // If the current route is not to be removed, continue.
+        if (keep) {
+            prevroute = croute;
+            continue;
         }
 
-        if (IfDp) {
-            // Send a leave message, try to get upstream interface on if downstream.
-            sendJoinLeaveUpstream(croute, 0, RebuildP);
+        // Route will be removed, send a leave message upstream on old interfaces.
+        sendJoinLeaveUpstream(croute, 0, RebuildP);
 
-            // Remove the route from routing table.
-            if (croute->prevroute && croute->nextroute) {
-                croute->nextroute->prevroute = croute->prevroute;
-                croute->prevroute->nextroute = croute->nextroute;
-            } else if (croute->nextroute) {
-                croute->nextroute->prevroute = NULL;
-                routing_table = croute->nextroute;
-            } else if (croute->prevroute) {
-                croute->prevroute->nextroute = NULL;
-            } else {
-                routing_table = NULL;
-            }
+        // Remove the route from routing table.
+        if (croute == routing_table) {
+            routing_table = croute->nextroute;
         } else {
-            // If called during shutdown, leave group.
-            sendJoinLeaveUpstream(croute, 0, NULL);
+            prevroute->nextroute = croute->nextroute;
+        } 
+
+        // Log the cleanup in debugmode...
+        my_log(LOG_DEBUG, 0, "clearRoutes: Removing route entry for %s", inetFmt(croute->group, s1));
+
+        // Uninstall current route
+        if (!internUpdateKernelRoute(croute, 0)) {
+            my_log(LOG_WARNING, 0, "clearRoutes: The removal from Kernel failed.");
         }
 
         // Clear memory, and set pointer to next route...
         free(croute);   // Alloced by insertRoute()
     }
 
-    if (! IfDp) { 
-        routing_table = NULL;
-    }
-
     if (! routing_table) {
         // Send a notice that the routing table is empty...
-        my_log(LOG_NOTICE, 0, "clearRoutes: All routes removed. Routing table is empty.");
+        my_log(LOG_NOTICE, 0, "clearRoutes: Routing table is empty.");
     }
 
     return gvDescL;
@@ -286,14 +328,8 @@ struct gvDescL *clearRoutes(struct IfDesc *IfDp, struct IfDescP *RebuildP) {
 */
 static struct RouteTable *findRoute(uint32_t group) {
     struct RouteTable*  croute;
-
-    for(croute = routing_table; croute; croute = croute->nextroute) {
-        if(croute->group == group) {
-            return croute;
-        }
-    }
-
-    return NULL;
+    for (croute = routing_table; croute && croute->group != group; croute = croute->nextroute);
+    return croute;
 }
 
 /**
@@ -302,39 +338,32 @@ static struct RouteTable *findRoute(uint32_t group) {
 *   is updated...
 */
 int insertRoute(uint32_t group, int ifx, uint32_t src) {
-
     struct Config *conf = getCommonConfig();
     struct RouteTable*  croute;
 
     // Sanitycheck the group adress...
-    if( ! IN_MULTICAST( ntohl(group) )) {
-        my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group. Table insert failed.",
-            inetFmt(group, s1));
+    if (! IN_MULTICAST(ntohl(group))) {
+        my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group. Table insert failed.", inetFmt(group, s1));
         return 0;
-    }
-
     // Santiycheck the VIF index...
-    if(ifx >= MAXVIFS) {
+    } else if (ifx >= MAXVIFS) {
         my_log(LOG_WARNING, 0, "The VIF Ix %d is out of range (0-%d). Table insert failed.", ifx, MAXVIFS-1);
         return 0;
     }
 
     // Try to find an existing route for this group...
-    croute = findRoute(group);
-    if(croute==NULL) {
+    if (! (croute = findRoute(group))) {
         struct RouteTable*  newroute;
 
-        my_log(LOG_DEBUG, 0, "No existing route for %s. Create new.",
-                     inetFmt(group, s1));
-
+        my_log(LOG_DEBUG, 0, "No existing route for %s. Create new.", inetFmt(group, s1));
 
         // Create and initialize the new route table entry. Freed by clearRoutes() and removeRoute().
         newroute = (struct RouteTable*)malloc(sizeof(struct RouteTable) + (conf->fastUpstreamLeave ? conf->downstreamHostsHashTableSize : 0));
+
         // Insert the route desc and clear all pointers...
         newroute->group      = group;
         memset(newroute->originAddrs, 0, MAX_ORIGINS * sizeof(newroute->originAddrs[0]));
         newroute->nextroute  = NULL;
-        newroute->prevroute  = NULL;
         newroute->upstrVif   = -1;
 
         if(conf->fastUpstreamLeave) {
@@ -351,69 +380,39 @@ int insertRoute(uint32_t group, int ifx, uint32_t src) {
         // The route is not active yet, so the age is unimportant.
         newroute->ageValue    = conf->robustnessValue;
         newroute->ageActivity = 0;
-
         BIT_ZERO(newroute->ageVifBits);     // Initially we assume no listeners.
 
         // Set the listener flag...
         BIT_ZERO(newroute->vifBits);    // Initially no listeners...
-        if(ifx >= 0) {
+        if (ifx >= 0) {
             BIT_SET(newroute->vifBits, ifx);
         }
 
         // Check if there is a table already....
-        if(routing_table == NULL) {
+        if (! routing_table) {
             // No location set, so insert in on the table top.
             routing_table = newroute;
             my_log(LOG_DEBUG, 0, "No routes in table. Insert at beginning.");
         } else {
-
             my_log(LOG_DEBUG, 0, "Found existing routes. Find insert location.");
+            for (croute = routing_table; croute->nextroute && croute->nextroute->group < group; croute = croute->nextroute);
 
-            // Check if the route could be inserted at the beginning...
-            if(routing_table->group > group) {
-                my_log(LOG_DEBUG, 0, "Inserting at beginning, before route %s",inetFmt(routing_table->group,s1));
-
-                // Insert at beginning...
-                newroute->nextroute = routing_table;
-                newroute->prevroute = NULL;
+            // Check if the route could be inserted at the beginning or other position.
+            if (croute == routing_table && croute->group > group) {
+                my_log(LOG_DEBUG, 0, "Inserting at beginning, before route %s", inetFmt(croute->group, s1));
+                newroute->nextroute = croute;
                 routing_table = newroute;
-
-                // If the route has a next node, the previous pointer must be updated.
-                if(newroute->nextroute != NULL) {
-                    newroute->nextroute->prevroute = newroute;
-                }
-
             } else {
-
-                // Find the location which is closest to the route.
-                for( croute = routing_table; croute->nextroute != NULL; croute = croute->nextroute ) {
-                    // Find insert position.
-                    if(croute->nextroute->group > group) {
-                        break;
-                    }
-                }
-
-                my_log(LOG_DEBUG, 0, "Inserting after route %s",inetFmt(croute->group,s1));
-
-                // Insert after current...
+                my_log(LOG_DEBUG, 0, "Inserting after route %s", inetFmt(croute->group, s1));
                 newroute->nextroute = croute->nextroute;
-                newroute->prevroute = croute;
-                if(croute->nextroute != NULL) {
-                    croute->nextroute->prevroute = newroute;
-                }
                 croute->nextroute = newroute;
             }
         }
 
         // Set the new route as the current...
         croute = newroute;
-
-        // Log the cleanup in debugmode...
-        my_log(LOG_INFO, 0, "Inserted route table entry for %s on VIF #%d",
-            inetFmt(croute->group, s1),ifx);
-
-    } else if(ifx >= 0) {
-
+        my_log(LOG_INFO, 0, "Inserted route table entry for %s on VIF #%d", inetFmt(croute->group, s1),ifx);
+    } else {
         // The route exists already, so just update it.
         BIT_SET(croute->vifBits, ifx);
 
@@ -421,24 +420,22 @@ int insertRoute(uint32_t group, int ifx, uint32_t src) {
         BIT_SET(croute->ageVifBits, ifx);
 
         // Register dwnstrHosts for host tracking if fastleave is enabled
-        if(conf->fastUpstreamLeave) {
+        if (conf->fastUpstreamLeave) {
             setDownstreamHost(conf, croute, src);
         }
 
         // Log the cleanup in debugmode...
-        my_log(LOG_INFO, 0, "Updated route entry for %s on VIF #%d",
-            inetFmt(croute->group, s1), ifx);
+        my_log(LOG_INFO, 0, "Updated route entry for %s on VIF #%d", inetFmt(croute->group, s1), ifx);
 
         // Update route in kernel...
-        if(!internUpdateKernelRoute(croute, 1)) {
+        if (!internUpdateKernelRoute(croute, 1)) {
             my_log(LOG_WARNING, 0, "The insertion into Kernel failed.");
             return 0;
         }
     }
 
     // Send join message upstream, if the route has no joined flag...
-    if(croute->upstrState != ROUTESTATE_JOINED) {
-        // Send Join request upstream
+    if (croute->upstrState != ROUTESTATE_JOINED) {
         sendJoinLeaveUpstream(croute, 1, NULL);
     }
 
@@ -454,58 +451,35 @@ int insertRoute(uint32_t group, int ifx, uint32_t src) {
 */
 int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif) {
     struct RouteTable*  croute;
-    int result = 0;
+    int result = 0, i;
 
     // Find the requested route.
-    croute = findRoute(group);
-    if(croute == NULL) {
-        my_log(LOG_DEBUG, 0,
-            "No table entry for %s [From: %s]. Inserting route.",
-            inetFmt(group, s1),inetFmt(originAddr, s2));
+    if (! (croute = findRoute(group))) {
+        my_log(LOG_DEBUG, 0, "No table entry for %s [From: %s]. Inserting route.", inetFmt(group, s1),inetFmt(originAddr, s2));
 
         // Insert route, but no interfaces have yet requested it downstream.
         insertRoute(group, -1, 0);
 
         // Retrieve the route from table...
         croute = findRoute(group);
-    }
-
-    if(croute != NULL) {
+    } else if (originAddr > 0) {
         // If the origin address is set, update the route data.
-        if(originAddr > 0) {
-            // find this origin, or an unused slot
-            int i;
-            for (i = 0; i < MAX_ORIGINS; i++) {
-                // unused slots are at the bottom, so we can't miss this origin
-                if (croute->originAddrs[i] == originAddr || croute->originAddrs[i] == 0) {
-                    break;
-                }
-            }
-
-            if (i == MAX_ORIGINS) {
-                i = MAX_ORIGINS - 1;
-
-                my_log(LOG_WARNING, 0, "Too many origins for route %s; replacing %s with %s",
-                    inetFmt(croute->group, s1),
-                    inetFmt(croute->originAddrs[i], s2),
-                    inetFmt(originAddr, s3));
-            }
-
-            // set origin
-            croute->originAddrs[i] = originAddr;
-
-            // move it to the top
-            while (i > 0) {
-                uint32_t t = croute->originAddrs[i - 1];
-                croute->originAddrs[i - 1] = croute->originAddrs[i];
-                croute->originAddrs[i] = t;
-                i--;
-            }
+        // find this origin, or an unused slot. Unused slots are at the bottom, so we can't miss this origin.
+        for (i = 0; i < MAX_ORIGINS && (croute->originAddrs[i] != originAddr && croute->originAddrs[i] != 0); i++);
+        if (i == MAX_ORIGINS) {
+            my_log(LOG_WARNING, 0, "Too many origins for route %s; replacing %s with %s",
+                inetFmt(croute->group, s1),
+                inetFmt(croute->originAddrs[i], s2),
+                inetFmt(originAddr, s3));
         }
+
+        // Shift originAddrs set origin to top and set upstrvif.
+        for (int j = i == MAX_ORIGINS ? i - 2 : i - 1; j >= 0; croute->originAddrs[j + 1] = croute->originAddrs[j], j--);
+        croute->originAddrs[0] = originAddr;
         croute->upstrVif = upstrVif;
 
         // Only update kernel table if there are listeners !
-        if(croute->vifBits > 0) {
+        if (croute->vifBits > 0) {
             result = internUpdateKernelRoute(croute, 1);
         }
     }
@@ -513,7 +487,6 @@ int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif) {
 
     return result;
 }
-
 
 /**
 *   This function loops through all routes, and updates the age
@@ -525,11 +498,7 @@ void ageActiveRoutes(void) {
     my_log(LOG_DEBUG, 0, "Aging routes in table.");
 
     // Scan all routes...
-    for( croute = routing_table; croute != NULL; croute = nroute ) {
-
-        // Keep the next route (since current route may be removed)...
-        nroute = croute->nextroute;
-
+    for (nroute = routing_table ? routing_table->nextroute : NULL, croute = routing_table; croute; croute = nroute, nroute = croute->nextroute) {
         // Run the aging round algorithm.
         if(croute->upstrState != ROUTESTATE_CHECK_LAST_MEMBER) {
             // Only age routes if Last member probe is not active...
@@ -537,24 +506,6 @@ void ageActiveRoutes(void) {
         }
     }
     logRouteTable("Age active routes");
-}
-
-/**
-*   Counts the number of interfaces a given route is active on
-*/
-int numberOfInterfaces(struct RouteTable *croute) {
-    int Ix;
-    struct IfDesc *Dp;
-    int result = 0;
-    // Loop through all interfaces
-    for ( Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++ ) {
-        // If the interface is used by the route, increase counter
-        if(BIT_TST(croute->vifBits, Dp->index)) {
-            result++;
-        }
-    }
-    my_log(LOG_DEBUG, 0, "counted %d interfaces", result);
-    return result;
 }
 
 /**
@@ -567,15 +518,15 @@ void setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp) {
     int                 routeStateCheck = 1;
 
     // Find route and clear vifbits on interface the leave request was received on.
-    croute = findRoute(group);
-    if(!croute)
+    if (! (croute = findRoute(group))) {
         return;
+    }
     BIT_CLR(croute->vifBits, IfDp->index);
     BIT_CLR(croute->ageVifBits, IfDp->index);
 
     // Check for fast leave mode...
-    if(conf->fastUpstreamLeave) {
-        if(croute->upstrState == ROUTESTATE_JOINED) {
+    if (conf->fastUpstreamLeave) {
+        if (croute->upstrState == ROUTESTATE_JOINED) {
             // Remove downstream host from route
             clearDownstreamHost(conf, croute, src);
         }
@@ -584,10 +535,11 @@ void setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp) {
         // This host does not have to been the last downstream host if hash collision occurred
         routeStateCheck = testNoDownstreamHost(conf, croute);
 
-        if(croute->upstrState == ROUTESTATE_JOINED) {
+        if (croute->upstrState == ROUTESTATE_JOINED) {
             // Send a leave message right away but only when the route is not active anymore on any downstream host
             // It is possible that there are still some interfaces active but no downstream host in hash table due to hash collision
-            if (routeStateCheck && numberOfInterfaces(croute) == 0) {
+            // Also possible is still downstream hosts but no active interfaces, due to leave messages not being sent/recieved.
+            if (routeStateCheck && croute->vifBits == 0) {
                 my_log(LOG_DEBUG, 0, "quickleave is enabled and this was the last downstream host, leaving group %s now", inetFmt(croute->group, s1));
                 sendJoinLeaveUpstream(croute, 0, NULL);
             } else {
@@ -597,7 +549,7 @@ void setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp) {
     }
 
     // Set the routingstate to last member check if we have no known downstream host left or if fast leave mode is disabled...
-    if(routeStateCheck) {
+    if (routeStateCheck) {
         croute->upstrState = ROUTESTATE_CHECK_LAST_MEMBER;
 
         // Set the count value for expiring... (-1 since first aging)
@@ -605,23 +557,13 @@ void setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp) {
     }
 }
 
-
 /**
 *   Ages groups in the last member check state. If the
 *   route is not found, or not in this state, 0 is returned.
 */
 int lastMemberGroupAge(uint32_t group) {
     struct RouteTable   *croute;
-
-    croute = findRoute(group);
-    if(croute!=NULL) {
-        if(croute->upstrState == ROUTESTATE_CHECK_LAST_MEMBER) {
-            return !internAgeRoute(croute);
-        } else {
-            return 0;
-        }
-    }
-    return 0;
+    return ((croute = findRoute(group)) && croute->upstrState == ROUTESTATE_CHECK_LAST_MEMBER) ? !internAgeRoute(croute) : 0;
 }
 
 /**
@@ -630,54 +572,44 @@ int lastMemberGroupAge(uint32_t group) {
 */
 int removeRoute(struct RouteTable*  croute) {
     struct Config       *conf = getCommonConfig();
+    struct RouteTable *rt;
     int result = 1;
 
     // If croute is null, no routes was found.
-    if(croute==NULL) {
+    if (! croute) {
         return 0;
     }
 
     // Log the cleanup in debugmode...
-    my_log(LOG_DEBUG, 0, "Removed route entry for %s from table.",
-                 inetFmt(croute->group, s1));
+    my_log(LOG_DEBUG, 0, "Removed route entry for %s from table.", inetFmt(croute->group, s1));
 
     // Uninstall current route from kernel
-    if(!internUpdateKernelRoute(croute, 0)) {
+    if (! internUpdateKernelRoute(croute, 0)) {
         my_log(LOG_WARNING, 0, "The removal from Kernel failed.");
         result = 0;
     }
 
     // Send Leave request upstream if group is joined or no more listeners.
-    if(croute->upstrState == ROUTESTATE_JOINED || 
-       (croute->upstrState == ROUTESTATE_CHECK_LAST_MEMBER && !conf->fastUpstreamLeave) ||
-       croute->vifBits == 0) 
-    {
+    if (croute->upstrState == ROUTESTATE_JOINED || 
+       (croute->upstrState == ROUTESTATE_CHECK_LAST_MEMBER && ! conf->fastUpstreamLeave) ||
+        croute->vifBits == 0) {
         sendJoinLeaveUpstream(croute, 0, NULL);
     }
 
     // Update pointers...
-    if(croute->prevroute == NULL) {
-        // Topmost node...
-        if(croute->nextroute != NULL) {
-            croute->nextroute->prevroute = NULL;
-        }
+    if (croute == routing_table) {
         routing_table = croute->nextroute;
-
     } else {
-        croute->prevroute->nextroute = croute->nextroute;
-        if(croute->nextroute != NULL) {
-            croute->nextroute->prevroute = croute->prevroute;
-        }
+        for (rt = routing_table; rt->nextroute && rt->nextroute != croute; rt = rt->nextroute);
+        rt->nextroute = croute->nextroute;
     }
-    // Free the memory, and set the route to NULL...
-    free(croute);   // Alloced by insertRoute()
-    croute = NULL;
 
+    // Free the memory, and return.
+    free(croute);   // Alloced by insertRoute()
     logRouteTable("Remove route");
 
     return result;
 }
-
 
 /**
 *   Ages a specific route
@@ -690,9 +622,9 @@ int internAgeRoute(struct RouteTable*  croute) {
     croute->ageValue--;
 
     // Check if there has been any activity...
-    if( croute->ageVifBits > 0 && croute->ageActivity == 0 ) {
+    if (croute->ageVifBits > 0 && croute->ageActivity == 0) {
         // There was some activity, check if all registered vifs responded.
-        if(croute->vifBits == croute->ageVifBits) {
+        if (croute->vifBits == croute->ageVifBits) {
             // Everything is in perfect order, so we just update the route age.
             croute->ageValue = conf->robustnessValue;
         } else {
@@ -704,10 +636,10 @@ int internAgeRoute(struct RouteTable*  croute) {
         }
     }
     // Check if there have been activity in aging process...
-    else if( croute->ageActivity > 0 ) {
+    else if (croute->ageActivity > 0) {
 
         // If the bits are different in this round, we must
-        if(croute->vifBits != croute->ageVifBits) {
+        if (croute->vifBits != croute->ageVifBits) {
             // Or the bits together to insure we don't lose any listeners.
             croute->vifBits |= croute->ageVifBits;
 
@@ -717,12 +649,11 @@ int internAgeRoute(struct RouteTable*  croute) {
     }
 
     // If the aging counter has reached zero, its time for updating...
-    if(croute->ageValue == 0) {
+    if (croute->ageValue == 0) {
         // Check for activity in the aging process,
-        if(croute->ageActivity>0) {
+        if (croute->ageActivity > 0) {
 
-            my_log(LOG_DEBUG, 0, "Updating route after aging : %s",
-                         inetFmt(croute->group,s1));
+            my_log(LOG_DEBUG, 0, "Updating route after aging : %s", inetFmt(croute->group,s1));
 
             // Just update the routing settings in kernel...
             internUpdateKernelRoute(croute, 1);
@@ -732,8 +663,7 @@ int internAgeRoute(struct RouteTable*  croute) {
             croute->ageActivity = 0;
         } else {
 
-            my_log(LOG_DEBUG, 0, "Removing group %s. Died of old age.",
-                         inetFmt(croute->group,s1));
+            my_log(LOG_DEBUG, 0, "Removing group %s. Died of old age.", inetFmt(croute->group,s1));
 
             // No activity was registered within the timelimit, so remove the route.
             removeRoute(croute);
@@ -769,30 +699,30 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
         mrDesc.OriginAdr.s_addr = route->originAddrs[i];
 
         // clear output interfaces
-        memset( mrDesc.TtlVc, 0, sizeof( mrDesc.TtlVc ) );
+        memset(mrDesc.TtlVc, 0, sizeof(mrDesc.TtlVc));
 
         my_log(LOG_DEBUG, 0, "Vif bits : 0x%08x", route->vifBits);
 
         mrDesc.InVif = route->upstrVif;
 
         // Set the TTL's for the route descriptor...
-        for ( Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++ ) {
-            if(Dp->state == IF_STATE_UPSTREAM) {
+        for (Ix = 0; (Dp = getIfByIx(Ix, NULL)); Ix++) {
+            if (Dp->state == IF_STATE_UPSTREAM) {
                 continue;
             }
-            else if(BIT_TST(route->vifBits, Dp->index)) {
+            else if (BIT_TST(route->vifBits, Dp->index)) {
                 my_log(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", Dp->index, Dp->threshold);
-                mrDesc.TtlVc[ Dp->index ] = Dp->threshold;
+                mrDesc.TtlVc[Dp->index] = Dp->threshold;
             }
         }
 
         // Do the actual Kernel route update...
-        if(activate) {
+        if (activate) {
             // Add route in kernel...
-            addMRoute( &mrDesc );
+            addMRoute(&mrDesc);
         } else {
             // Delete the route from Kernel...
-            delMRoute( &mrDesc );
+            delMRoute(&mrDesc);
         }
     }
 
@@ -804,55 +734,50 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
 *   to the log.
 */
 void logRouteTable(const char *header) {
-        struct Config       *conf = getCommonConfig();
-        struct RouteTable   *croute = routing_table;
-        unsigned            rcount = 0;
+    struct Config       *conf = getCommonConfig();
+    struct RouteTable   *croute = routing_table;
+    unsigned            rcount = 0;
 
-        my_log(LOG_DEBUG, 0, "");
-        my_log(LOG_DEBUG, 0, "Current routing table (%s):", header);
-        my_log(LOG_DEBUG, 0, "-----------------------------------------------------");
-        if(croute==NULL) {
-            my_log(LOG_DEBUG, 0, "No routes in table...");
-        } else {
-            do {
-                char st = 'I';
-                char src[MAX_ORIGINS * 30 + 1];
-                src[0] = '\0';
-                int i;
+    my_log(LOG_DEBUG, 0, "");
+    my_log(LOG_DEBUG, 0, "Current routing table (%s):", header);
+    my_log(LOG_DEBUG, 0, "-----------------------------------------------------");
+    if (! croute) {
+        my_log(LOG_DEBUG, 0, "No routes in table...");
+    } else do {
+        char st = 'I';
+        char src[MAX_ORIGINS * 30 + 1];
+        src[0] = '\0';
+        int i;
 
-                for (i = 0; i < MAX_ORIGINS; i++) {
-                    if (croute->originAddrs[i] == 0) {
-                        continue;
-                    }
-                    st = 'A';
-                    sprintf(src + strlen(src), "Src%d: %s, ", i, inetFmt(croute->originAddrs[i], s1));
-                }
-
-                my_log(LOG_DEBUG, 0, "#%d: %sDst: %s, Age:%d, St: %c, state: %d OutVifs: 0x%08x, dHosts: %s",
-                    rcount, src, inetFmt(croute->group, s2),
-                    croute->ageValue, st, croute->upstrState,
-                    croute->vifBits,
-                    !conf->fastUpstreamLeave ? "not tracked" : testNoDownstreamHost(conf, croute) ? "no" : "yes");
-
-                croute = croute->nextroute;
-
-                rcount++;
-            } while ( croute != NULL );
+        for (i = 0; i < MAX_ORIGINS; i++) {
+            if (croute->originAddrs[i] == 0) {
+                continue;
+            }
+            st = 'A';
+            sprintf(src + strlen(src), "Src%d: %s, ", i, inetFmt(croute->originAddrs[i], s1));
         }
 
-        my_log(LOG_DEBUG, 0, "-----------------------------------------------------");
+        my_log(LOG_DEBUG, 0, "#%d: %sDst: %s, Age:%d, St: %c, state: %d OutVifs: 0x%08x, dHosts: %s",
+            rcount, src, inetFmt(croute->group, s2),
+            croute->ageValue, st, croute->upstrState,
+            croute->vifBits,
+            !conf->fastUpstreamLeave ? "not tracked" : testNoDownstreamHost(conf, croute) ? "no" : "yes");
+
+        croute = croute->nextroute;
+        rcount++;
+    } while (croute);
+
+    my_log(LOG_DEBUG, 0, "-----------------------------------------------------");
 }
 
 /**
 *   Returns true when the given group belongs to the given interface
 */
 int interfaceInRoute(int32_t group, int Ix) {
-    struct RouteTable*  croute;
-    croute = findRoute(group);
-    if (croute != NULL) {
+    struct RouteTable *croute;
+    if ((croute = findRoute(group))) {
         my_log(LOG_DEBUG, 0, "Interface id %d is in group %s - %s", Ix, inetFmt(group,s1), BIT_TST(croute->vifBits, Ix) ? "Yes" : "No");
         return BIT_TST(croute->vifBits, Ix);
-    } else {
-        return 0;
     }
+    return 0;
 }

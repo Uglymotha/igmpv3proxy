@@ -61,21 +61,14 @@ int     igmpProxyInit(void);
 void    igmpProxyCleanUp(void);
 void    igmpProxyRun(void);
 
-// Global vars...
-static int sighandled = 0;
-#define GOT_SIGINT  0x01
-#define GOT_SIGHUP  0x02
-#define GOT_SIGUSR1 0x04
-#define GOT_SIGUSR2 0x08
-
 /**
 *   Program main method. Is invoked when the program is started
 *   on commandline. The number of commandline arguments, and a
 *   pointer to the arguments are received on the line...
 */
-int main( int ArgCn, char *ArgVc[] ) {
+int main(int ArgCn, char *ArgVc[]) {
 
-    int c;
+    int c, sighandled = 0;
     bool NotAsDaemon = false;
 
     srand(time(NULL) * getpid());
@@ -124,26 +117,27 @@ int main( int ArgCn, char *ArgVc[] ) {
     my_log(LOG_DEBUG, 0, "Searching for config file at '%s'" , configFilePath);
 
     // Loads the config file...
-    if( ! loadConfig( configFilePath ) ) {
+    if (! loadConfig( configFilePath)) {
         my_log(LOG_ERR, 0, "Unable to load config file...");
         exit(1);
     }
 
     // Initializes the deamon.
-    if ( !igmpProxyInit() ) {
+    if (! igmpProxyInit()) {
         my_log(LOG_ERR, 0, "Unable to initialize IGMPproxy.");
         exit(1);
     }
 
-    if ( !NotAsDaemon ) {
+    if (! NotAsDaemon) {
         // Only daemon goes past this line...
-        if (fork()) exit(0);
+        if (fork()) {
+            exit(0);
+        }
 
         // Detach daemon from terminal
-        if ( close( 0 ) < 0 || close( 1 ) < 0 || close( 2 ) < 0
-            || open( "/dev/null", 0 ) != 0 || dup2( 0, 1 ) < 0 || dup2( 0, 2 ) < 0
-            || setpgid( 0, 0 ) < 0
-        ) {
+        if (close(0) < 0 || close(1) < 0 || close(2) < 0
+            || open("/dev/null", 0) != 0 || dup2(0, 1) < 0 || dup2(0, 2) < 0
+            || setpgid(0, 0) < 0) {
             my_log( LOG_ERR, errno, "failed to detach daemon" );
         }
     }
@@ -180,21 +174,17 @@ int igmpProxyInit(void) {
     // Configures IF states and settings
     configureVifs();
 
-    switch ( Err = enableMRouter() ) {
+    switch (Err = enableMRouter()) {
     case 0: break;
-    case EADDRINUSE: my_log( LOG_ERR, EADDRINUSE, "MC-Router API already in use" ); break;
-    default: my_log( LOG_ERR, Err, "MRT_INIT failed" );
+    case EADDRINUSE: my_log(LOG_ERR, EADDRINUSE, "MC-Router API already in use"); break;
+    default: my_log(LOG_ERR, Err, "MRT_INIT failed");
     }
 
     createVifs(NULL);
     
     // Initialize IGMP
     initIgmp();
-    // Initialize Routing table
-    clearRoutes(NULL,NULL);
-    // Initialize timer
-    free_all_callouts();
-
+    
     return 1;
 }
 
@@ -213,11 +203,8 @@ void igmpProxyCleanUp(void) {
 *   Main daemon loop.
 */
 void igmpProxyRun(void) {
-    // Get the config.
     struct Config *config = getCommonConfig();
-    // Set some needed values.
     register int recvlen;
-
     int     MaxFD, Rt, rescanvif_timer = -1, rescanconf_timer = -1;
     fd_set  ReadFDS;
     socklen_t dummy = 0;
@@ -241,21 +228,11 @@ void igmpProxyRun(void) {
                 break;
             }
             if (sighandled & GOT_SIGHUP) {
-                sighandled &= ~GOT_SIGHUP;
-
                 // Write debug notice with file path...
                 my_log(LOG_DEBUG, 0, "SIGHUP: Reloading config file at '%s'" , configFilePath);
-
                 reloadConfig();
+                sighandled &= ~GOT_SIGHUP;
             }
-        }
-
-        // Set rescanvif or rescanconf timer.
-        if (!config->rescanConf && config->rescanVif > 0 && timer_leftTimer(rescanvif_timer) == -1) {
-            rescanvif_timer=timer_setTimer(config->rescanVif, (timer_f)rebuildIfVc, NULL);
-        }
-        if (config->rescanConf > 0 && timer_leftTimer(rescanconf_timer) == -1) {
-            rescanconf_timer=timer_setTimer(config->rescanConf, (timer_f)reloadConfig, NULL);
         }
 
         // Timeout = 1s - difference between current and last time age_callout queue with .01s grace.
@@ -271,37 +248,44 @@ void igmpProxyRun(void) {
             difftime.tv_sec--;
         }
         if (difftime.tv_sec > 0 || timeout->tv_nsec < 10000000) {
-            timeout->tv_nsec = 999999999; timeout->tv_sec = 0;
+            timeout->tv_nsec = 999999999;
+            timeout->tv_sec = 0;
             lasttime = curtime;
             age_callout_queue(curtime);
+        }
+
+        // Set rescanvif or rescanconf timer.
+        if (!config->rescanConf && config->rescanVif > 0 && timer_leftTimer(rescanvif_timer) == -1) {
+            rescanvif_timer=timer_setTimer(config->rescanVif, (timer_f)rebuildIfVc, NULL);
+        }
+        if (config->rescanConf > 0 && timer_leftTimer(rescanconf_timer) == -1) {
+            rescanconf_timer=timer_setTimer(config->rescanConf, (timer_f)reloadConfig, NULL);
         }
 
         // Prepare for select.
         MaxFD = MRouterFD;
 
-        FD_ZERO( &ReadFDS );
-        FD_SET( MRouterFD, &ReadFDS );
+        FD_ZERO(&ReadFDS);
+        FD_SET(MRouterFD, &ReadFDS);
 
         // wait for input
-        Rt = pselect( MaxFD +1, &ReadFDS, NULL, NULL, timeout, NULL );
+        Rt = pselect(MaxFD +1, &ReadFDS, NULL, NULL, timeout, NULL);
 
         // log and ignore failures
-        if( Rt < 0 ) {
+        if (Rt < 0) {
             my_log( LOG_WARNING, errno, "select() failure" );
             continue;
         }
-        else if( Rt > 0 ) {
-
+        else if (Rt > 0) {
             // Read IGMP request, and handle it...
-            if( FD_ISSET( MRouterFD, &ReadFDS ) ) {
-
-                recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE,
-                                   0, NULL, &dummy);
+            if (FD_ISSET( MRouterFD, &ReadFDS)) {
+                recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE, 0, NULL, &dummy);
                 if (recvlen < 0) {
-                    if (errno != EINTR) my_log(LOG_ERR, errno, "recvfrom");
+                    if (errno != EINTR) {
+                        my_log(LOG_ERR, errno, "recvfrom");
+                    }
                     continue;
                 }
-
                 acceptIgmp(recvlen);
             }
         }
@@ -325,7 +309,6 @@ static void signalHandler(int sig) {
         case SIGUSR1:
             sighandled |= GOT_SIGUSR1;
             break;
-
         case SIGUSR2:
             sighandled |= GOT_SIGUSR2;
             break;

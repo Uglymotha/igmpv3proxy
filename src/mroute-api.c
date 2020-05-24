@@ -64,12 +64,13 @@ int enableMRouter(void)
 {
     int Va = 1;
 
-    if ( (MRouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0 )
+    if ((MRouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0) {
         my_log( LOG_ERR, errno, "IGMP socket open" );
+    }
 
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_INIT,
-                     (void *)&Va, sizeof( Va ) ) )
+    if (setsockopt(MRouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va))) {
         return errno;
+    }
 
     return 0;
 }
@@ -80,11 +81,8 @@ int enableMRouter(void)
 */
 void disableMRouter(void)
 {
-    if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DONE, NULL, 0 )
-         || close( MRouterFD )
-    ) {
-        MRouterFD = 0;
-        my_log( LOG_ERR, errno, "MRT_DONE/close" );
+    if (setsockopt(MRouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) || close(MRouterFD)) {
+        my_log(LOG_ERR, errno, "MRT_DONE/close");
     }
 
     MRouterFD = 0;
@@ -98,14 +96,13 @@ void delVIF( struct IfDesc *IfDp )
     struct vifctl VifCtl;
     struct VifDesc *VifDp, *FVifDp;
 
-    if ((unsigned int)-1 == IfDp->index)
+    if ((unsigned int)-1 == IfDp->index) {
         return;
-
+    }
     VifCtl.vifc_vifi = IfDp->index;
 
     my_log(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d",
          IfDp->index, IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->threshold, IfDp->ratelimit);
-
     if (setsockopt(MRouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
         my_log( LOG_WARNING, errno, "MRT_DEL_VIF" );
     }
@@ -199,7 +196,7 @@ void addVIF(struct IfDesc *IfDp, struct IfDesc *oDp)
     }
 
     if (setsockopt(MRouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&VifCtl, sizeof(VifCtl))) {
-        my_log( LOG_ERR, errno, "MRT_ADD_VIF" );
+        my_log(LOG_ERR, errno, "MRT_ADD_VIF");
     }
 }
 
@@ -220,23 +217,15 @@ int addMRoute( struct MRouteDesc *Dp )
 
     /* copy the TTL vector
      */
+    memcpy(CtlReq.mfcc_ttls, Dp->TtlVc, sizeof(CtlReq.mfcc_ttls));
 
-    memcpy( CtlReq.mfcc_ttls, Dp->TtlVc, sizeof( CtlReq.mfcc_ttls ) );
+    char FmtBuO[32], FmtBuM[32];
+    my_log(LOG_NOTICE, 0, "Adding MFC: %s -> %s, InpVIf: %d", fmtInAdr(FmtBuO, CtlReq.mfcc_origin), fmtInAdr(FmtBuM, CtlReq.mfcc_mcastgrp), (int)CtlReq.mfcc_parent);
 
-    {
-        char FmtBuO[ 32 ], FmtBuM[ 32 ];
-
-        my_log( LOG_NOTICE, 0, "Adding MFC: %s -> %s, InpVIf: %d",
-             fmtInAdr( FmtBuO, CtlReq.mfcc_origin ),
-             fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
-             (int)CtlReq.mfcc_parent
-           );
-    }
-
-    rc = setsockopt( MRouterFD, IPPROTO_IP, MRT_ADD_MFC,
-                    (void *)&CtlReq, sizeof( CtlReq ) );
-    if (rc)
+    rc = setsockopt(MRouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq));
+    if (rc) {
         my_log( LOG_WARNING, errno, "MRT_ADD_MFC" );
+    }
 
     return rc;
 }
@@ -258,22 +247,15 @@ int delMRoute( struct MRouteDesc *Dp )
 
     /* clear the TTL vector
      */
-    memset( CtlReq.mfcc_ttls, 0, sizeof( CtlReq.mfcc_ttls ) );
+    memset(CtlReq.mfcc_ttls, 0, sizeof(CtlReq.mfcc_ttls));
 
-    {
-        char FmtBuO[ 32 ], FmtBuM[ 32 ];
+    char FmtBuO[32], FmtBuM[32];
+    my_log(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", fmtInAdr(FmtBuO, CtlReq.mfcc_origin), fmtInAdr(FmtBuM, CtlReq.mfcc_mcastgrp), (int)CtlReq.mfcc_parent);
 
-        my_log( LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d",
-             fmtInAdr( FmtBuO, CtlReq.mfcc_origin ),
-             fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
-             (int)CtlReq.mfcc_parent
-           );
-    }
-
-    rc = setsockopt( MRouterFD, IPPROTO_IP, MRT_DEL_MFC,
-                    (void *)&CtlReq, sizeof( CtlReq ) );
-    if (rc)
+    rc = setsockopt(MRouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq ));
+    if (rc) {
         my_log( LOG_WARNING, errno, "MRT_DEL_MFC" );
+    }
 
     return rc;
 }

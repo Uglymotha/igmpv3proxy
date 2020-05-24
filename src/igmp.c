@@ -113,8 +113,7 @@ void acceptIgmp(int recvlen) {
     struct Config *config = getCommonConfig();
 
     if (recvlen < (int)sizeof(struct ip)) {
-        my_log(LOG_WARNING, 0,
-            "received packet too short (%u bytes) for IP header", recvlen);
+        my_log(LOG_WARNING, 0, "received packet too short (%u bytes) for IP header", recvlen);
         return;
     }
 
@@ -123,8 +122,7 @@ void acceptIgmp(int recvlen) {
     dst       = ip->ip_dst.s_addr;
 
     /* filter local multicast 224.0.0.0/8 */
-    if (! config->proxyLocalMc && (htonl(dst) & 0xFFFFFF00) == 0xE0000000)
-    {
+    if (! config->proxyLocalMc && (htonl(dst) & 0xFFFFFF00) == 0xE0000000) {
         my_log(LOG_NOTICE, 0, "The IGMP message was local multicast and proxylocalmc is not set. Discarding.");
         return;
     }
@@ -161,24 +159,18 @@ void acceptIgmp(int recvlen) {
     ipdatalen = ip_data_len(ip);
 
     if (iphdrlen + ipdatalen != recvlen) {
-        my_log(LOG_WARNING, 0,
-            "received packet from %s shorter (%u bytes) than hdr+data length (%u+%u)",
-            inetFmt(src, s1), recvlen, iphdrlen, ipdatalen);
+        my_log(LOG_WARNING, 0, "received packet from %s shorter (%u bytes) than hdr+data length (%u+%u)", inetFmt(src, s1), recvlen, iphdrlen, ipdatalen);
         return;
     }
 
     igmp = (struct igmp *)(recv_buf + iphdrlen);
     if ((ipdatalen < IGMP_MINLEN) ||
         (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN)) {
-        my_log(LOG_WARNING, 0,
-            "received IP data field too short (%u bytes) for IGMP, from %s",
-            ipdatalen, inetFmt(src, s1));
+        my_log(LOG_WARNING, 0, "received IP data field too short (%u bytes) for IGMP, from %s", ipdatalen, inetFmt(src, s1));
         return;
     }
 
-    my_log(LOG_NOTICE, 0, "RECV %s from %-15s to %s",
-        igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
-        inetFmt(src, s1), inetFmt(dst, s2) );
+    my_log(LOG_NOTICE, 0, "RECV %s from %-15s to %s", igmpPacketKind(igmp->igmp_type, igmp->igmp_code), inetFmt(src, s1), inetFmt(dst, s2) );
 
     switch (igmp->igmp_type) {
     case IGMP_V1_MEMBERSHIP_REPORT:
@@ -211,14 +203,10 @@ void acceptIgmp(int recvlen) {
             case IGMPV3_BLOCK_OLD_SOURCES:
                 break;
             default:
-                my_log(LOG_INFO, 0,
-                    "ignoring unknown IGMPv3 group record type %x from %s to %s for %s",
-                    grec->grec_type, inetFmt(src, s1), inetFmt(dst, s2),
-                    inetFmt(group, s3));
+                my_log(LOG_INFO, 0, "ignoring unknown IGMPv3 group record type %x from %s to %s for %s", grec->grec_type, inetFmt(src, s1), inetFmt(dst, s2), inetFmt(group, s3));
                 break;
             }
-            grec = (struct igmpv3_grec *)
-                (&grec->grec_src[nsrcs] + grec->grec_auxwords * 4);
+            grec = (struct igmpv3_grec *)(&grec->grec_src[nsrcs] + grec->grec_auxwords * 4);
         }
         return;
 
@@ -231,14 +219,10 @@ void acceptIgmp(int recvlen) {
         return;
 
     default:
-        my_log(LOG_INFO, 0,
-            "ignoring unknown IGMP message type %x from %s to %s",
-            igmp->igmp_type, inetFmt(src, s1),
-            inetFmt(dst, s2));
+        my_log(LOG_INFO, 0, "ignoring unknown IGMP message type %x from %s to %s", igmp->igmp_type, inetFmt(src, s1), inetFmt(dst, s2));
         return;
     }
 }
-
 
 /*
  * Construct an IGMP message in the output packet buffer.  The caller may
@@ -302,15 +286,12 @@ void sendIgmp(uint32_t src, uint32_t dst, int type, int code, uint32_t group, in
     sdst.sin_len = sizeof(sdst);
 #endif
     sdst.sin_addr.s_addr = dst;
-    if (sendto(MRouterFD, send_buf,
-               IP_HEADER_RAOPT_LEN + IGMP_MINLEN + datalen, 0,
-               (struct sockaddr *)&sdst, sizeof(sdst)) < 0) {
-        if (errno == ENETDOWN)
+    if (sendto(MRouterFD, send_buf, IP_HEADER_RAOPT_LEN + IGMP_MINLEN + datalen, 0, (struct sockaddr *)&sdst, sizeof(sdst)) < 0) {
+        if (errno == ENETDOWN) {
             my_log(LOG_NOTICE, errno, "Sender VIF was down.");
-        else
-            my_log(LOG_INFO, errno,
-                "sendto to %s on %s",
-                inetFmt(dst, s1), inetFmt(src, s2));
+        } else {
+            my_log(LOG_INFO, errno, "sendto to %s on %s", inetFmt(dst, s1), inetFmt(src, s2));
+        }
     }
 
     if(setigmpsource) {
@@ -321,7 +302,5 @@ void sendIgmp(uint32_t src, uint32_t dst, int type, int code, uint32_t group, in
         k_set_if(INADDR_ANY);
     }
 
-    my_log(LOG_DEBUG, 0, "SENT %s from %-15s to %s",
-        igmpPacketKind(type, code),
-        src == INADDR_ANY ? "INADDR_ANY" : inetFmt(src, s1), inetFmt(dst, s2));
+    my_log(LOG_DEBUG, 0, "SENT %s from %-15s to %s", igmpPacketKind(type, code), src == INADDR_ANY ? "INADDR_ANY" : inetFmt(src, s1), inetFmt(dst, s2));
 }

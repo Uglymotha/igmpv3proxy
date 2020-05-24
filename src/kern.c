@@ -47,26 +47,25 @@ void k_set_rcvbuf(int bufsize, int minsize) {
      * value.  The highest acceptable value being smaller than
      * minsize is a fatal error.
      */
-    if (setsockopt(MRouterFD, SOL_SOCKET, SO_RCVBUF,
-                   (char *)&bufsize, sizeof(bufsize)) < 0) {
+    if (setsockopt(MRouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
         bufsize -= delta;
         while (1) {
             iter++;
-            if (delta > 1)
+            if (delta > 1) {
                 delta /= 2;
+            }
 
-            if (setsockopt(MRouterFD, SOL_SOCKET, SO_RCVBUF,
-                           (char *)&bufsize, sizeof(bufsize)) < 0) {
+            if (setsockopt(MRouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
                 bufsize -= delta;
             } else {
-                if (delta < 1024)
+                if (delta < 1024) {
                     break;
+                }
                 bufsize += delta;
             }
         }
         if (bufsize < minsize) {
-            my_log(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",
-                bufsize, minsize);
+            my_log(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
             /*NOTREACHED*/
         }
     }
@@ -74,9 +73,9 @@ void k_set_rcvbuf(int bufsize, int minsize) {
 }
 
 void k_hdr_include(int hdrincl) {
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_HDRINCL,
-                   (char *)&hdrincl, sizeof(hdrincl)) < 0)
+    if (setsockopt(MRouterFD, IPPROTO_IP, IP_HDRINCL, (char *)&hdrincl, sizeof(hdrincl)) < 0) {
         my_log(LOG_WARNING, errno, "setsockopt IP_HDRINCL %u", hdrincl);
+    }
 }
 
 
@@ -85,9 +84,9 @@ void k_set_ttl(int t) {
     unsigned char ttl;
 
     ttl = t;
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_TTL,
-                   (char *)&ttl, sizeof(ttl)) < 0)
+    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0) {
         my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
+    }
 #endif
     curttl = t;
 }
@@ -96,44 +95,16 @@ void k_set_loop(int l) {
     unsigned char loop;
 
     loop = l;
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_LOOP,
-                   (char *)&loop, sizeof(loop)) < 0)
+    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0) {
         my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
+    }
 }
 
 void k_set_if(uint32_t ifa) {
     struct in_addr adr;
 
     adr.s_addr = ifa;
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_IF,
-                   (char *)&adr, sizeof(adr)) < 0)
-        my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s",
-            inetFmt(ifa, s1));
+    if (setsockopt(MRouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0) {
+        my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(ifa, s1));
+    }
 }
-
-/*
-void k_join(uint32_t grp, uint32_t ifa) {
-    struct ip_mreq mreq;
-
-    mreq.imr_multiaddr.s_addr = grp;
-    mreq.imr_interface.s_addr = ifa;
-
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-                   (char *)&mreq, sizeof(mreq)) < 0)
-        my_log(LOG_WARNING, errno, "can't join group %s on interface %s",
-            inetFmt(grp, s1), inetFmt(ifa, s2));
-}
-
-
-void k_leave(uint32_t grp, uint32_t ifa) {
-    struct ip_mreq mreq;
-
-    mreq.imr_multiaddr.s_addr = grp;
-    mreq.imr_interface.s_addr = ifa;
-
-    if (setsockopt(MRouterFD, IPPROTO_IP, IP_DROP_MEMBERSHIP,
-                   (char *)&mreq, sizeof(mreq)) < 0)
-        my_log(LOG_WARNING, errno, "can't leave group %s on interface %s",
-            inetFmt(grp, s1), inetFmt(ifa, s2));
-}
-*/
