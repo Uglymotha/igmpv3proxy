@@ -49,34 +49,26 @@ void k_set_rcvbuf(int bufsize, int minsize) {
         bufsize -= delta;
         while (1) {
             iter++;
-            if (delta > 1) {
-                delta /= 2;
-            }
+            if (delta > 1) delta /= 2;
 
             if (setsockopt(getMrouterFD(), SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
-                if (bufsize < minsize) {
-                    my_log(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
-                }
+                if (bufsize < minsize) myLog(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
                 bufsize -= delta;
             } else {
-                if (delta < 1024) {
-                    break;
-                }
+                if (delta < 1024) break;
                 bufsize += delta;
             }
         }
     }
 
-    my_log(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, iter);
+    myLog(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, iter);
 }
 
 int k_set_ttl(int t) {
 #ifndef RAW_OUTPUT_IS_RAW
     unsigned char ttl = t;
 
-    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0) {
-        my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
-    }
+    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0) myLog(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
 #endif
     curttl = t;
     return curttl;
@@ -85,17 +77,13 @@ int k_set_ttl(int t) {
 void k_set_loop(int l) {
     unsigned char loop = l;
 
-    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0) {
-        my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
-    }
+    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0) myLog(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
 }
 
 void k_set_if(struct IfDesc *IfDp) {
     struct in_addr adr = { IfDp ? IfDp->InAdr.s_addr : INADDR_ANY };
 
-    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0) {
-        my_log(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
-    }
+    if (setsockopt(getMrouterFD(), IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0) myLog(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
 }
 
 /**
@@ -119,12 +107,12 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t mcastaddr) {
 
     if (setsockopt(getMrouterFD(), IPPROTO_IP, Cmd == 'j' ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq))) {
         int mcastGroupExceeded = (Cmd == 'j' && errno == ENOBUFS);
-        my_log(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE", inetFmt(mcastaddr, 1), IfDp->Name)
+        myLog(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE", inetFmt(mcastaddr, 1), IfDp->Name)
 ;
         if (mcastGroupExceeded) {
-            my_log(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
+            myLog(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
 #ifdef __linux__
-            my_log(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships'");
+            myLog(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships'");
 #endif
         }
         return false;

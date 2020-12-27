@@ -68,15 +68,10 @@ char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
         return(s[pos - 1]);
     }
 
-    if (m[3] != 0) {
-        sprintf(s[pos -1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
-    } else if (m[2] != 0) {
-        sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
-	} else if (m[1] != 0) {
-        sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
-	} else {
-        sprintf(s[pos - 1], "%u/%d",          a[0], bits);
-    }
+    if      (m[3] != 0) sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
+    else if (m[2] != 0) sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
+    else if (m[1] != 0) sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
+    else                sprintf(s[pos - 1], "%u/%d",          a[0], bits);
 
     return s[pos - 1];
 }

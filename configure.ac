@@ -36,6 +36,22 @@ AC_CHECK_MEMBERS([struct group_req.gr_interface], [], [], [[
 #include <sys/un.h>
 #include <netinet/in.h>
 ]])
+AC_CHECK_MEMBERS([struct vifctl.vifc_lcl_ifindex], [], [], [[
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <net/route.h>
+#include <netinet/igmp.h>
+#if defined __linux__
+#include <linux/types.h>
+#include <linux/mroute.h>
+#elif defined __DragonFly__
+#include <net/ip_mroute/ip_mroute.h>
+#else
+#include <netinet/ip_mroute.h>
+#endif
+]])
 AC_CHECK_MEMBERS([struct mfcctl2.mfcc_ttls], [], [], [[
 #include <sys/param.h>
 #include <sys/socket.h>

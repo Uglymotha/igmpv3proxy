@@ -58,14 +58,14 @@ int openCliSock(void) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = (char *)malloc(strlen(path) + 12))) my_log(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
+            if (! (CONFIG->runPath = (char *)malloc(strlen(path) + 12))) myLog(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
             strcpy(CONFIG->runPath, strcat(path, "/igmpproxy/"));
             break;
         }
     }
 
     // Open the socket after directory exists / created etc.
-    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && mkdir(cliSockAddr.sun_path, 0750))
+    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770) || chmod(cliSockAddr.sun_path, S_ISVTX | S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH)))
         || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)
         || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
@@ -75,7 +75,7 @@ int openCliSock(void) {
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
         || (chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)) || chmod(cliSockAddr.sun_path, 0660)) {
-        my_log(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
+        myLog(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
         cliSock = -1;
     }
 
@@ -116,25 +116,21 @@ void processCliCon(int fd) {
     unsigned int s = sizeof(cliSockAddr);
     int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
     if (len <= 0) return;
-    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0) {
-        logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    } else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0) {
-        getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    } else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0) {
-        getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    } else if (strcmp("c", buf) == 0) {
+    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0) logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0) getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0) getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("t", buf) == 0 || strcmp("th", buf) == 0) debugQueue("", strcmp("t", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("c", buf) == 0) {
         sighandled |= GOT_SIGUSR1;
         sendto(fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
     } else if (strcmp("b", buf) == 0) {
         sighandled |= GOT_SIGUSR2;
         sendto(fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    } else {
-        sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    }
+    } else sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
 
     // Close connection by sending 1 byte.
     sendto(fd, ".", 1, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    my_log(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
+    myLog(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
 }
 
 // Below are functions and definitions for client connections.
@@ -166,17 +162,20 @@ void cliCmd(char *cmd) {
 
     // Check for daemon socket.
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
-    for (path = strtok(paths, " "), strcpy(tpath, path); path; path = strtok(NULL, " "), strcpy(tpath,path)) {
-        if (stat(strcat(tpath, "/igmpproxy/cli.sock"), &st) != -1) {
+    path = strtok(paths, " ");
+    while (path) {
+        strcat(strcpy(tpath, path), "/igmpproxy/cli.sock");
+        if (stat(tpath, &st) != -1) {
             strcpy(srvSockAddr.sun_path, tpath);
             sprintf(ownSockAddr.sun_path, "%s.%d", tpath, getpid());
             break;
         }
+        path = strtok(NULL, " ");
     }
 
     // Open and bind socket for receiving answers from daemon.
-    if ((srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
-        fprintf(stdout, "Cannot open socket. %s\n", strerror(errno));
+    if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
+        fprintf(stdout, "Cannot open socket %s. %s\n", srvSockAddr.sun_path, strerror(errno));
         exit(1);
     }
 

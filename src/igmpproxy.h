@@ -112,9 +112,11 @@ struct Config {
     // Max origins for route when bw control is disabled.
     unsigned int        maxOrigins;
     // Set default interface status and parameters.
-    unsigned short      defaultInterfaceState;   // 0: disable, 2: downstream
+    unsigned short      defaultInterfaceState;
     unsigned char       defaultThreshold;
     unsigned int        defaultRatelimit;
+    bool                defaultFilterAny;
+    bool                nodefaultFilter;
     // Logging Parameters.
     int                 logLevel;
     bool                logFile;
@@ -135,19 +137,21 @@ struct Config {
 // Linked list of filters.
 #define ALLOW 1
 #define BLOCK 0
+struct subnet {
+    uint32_t  ip;
+    uint32_t  mask;
+};
 
 struct filters {
-    struct subnet {
-        uint32_t  ip;
-        uint32_t  mask;
-    }                     src, dst;
+    struct subnet         src, dst;
     uint64_t              action;
+    uint8_t               dir;
     struct filters       *next;
 };
 
 // Keeps configured Querier parameters.
 struct queryParam {
-    uint32_t            ip;
+    uint32_t            ip;                      // Configured querier IP
     bool                election;                // Configured querier election mode
     uint8_t             robustness;              // Configured robustness value
     unsigned int        interval;                // Configured query interval
@@ -157,57 +161,67 @@ struct queryParam {
 };
 
 // Structure to keep configuration for VIFs.
-struct vifconfig {
+struct vifConfig {
     char                name[IF_NAMESIZE];
-    unsigned short      state;
-    unsigned int        threshold;
+    uint8_t             state;                   // Configured interface state
+    uint8_t             threshold;
     uint64_t            ratelimit;
     struct queryParam   qry;
-    unsigned int       *index;                   // Pointer to matching IfDesc->index
     bool                compat;                  // Compatibility with old altnet/whitelist
+    bool                nodefaultfilter;         // Create default aliases -> any allow filter
     struct filters     *filters;
-    struct vifconfig   *next;
+    struct vifConfig   *next;
 };
 
-// Limits on vifs / routes
-#define MAX_UPS_VIFS    8
+// Running querier status for interface.
+struct querier {                                        // igmp querier status for interface
+    uint32_t       ip;                                  // Querier IP
+    uint8_t        ver;                                 // Querier version
+    uint8_t        qqi;                                 // Queriers query interval
+    uint8_t        qrv;                                 // Queriers robustness value
+    uint8_t        mrc;                                 // Queriers max response code
+    uint64_t       v1Timer;                             // v1 Querier timer
+    uint64_t       v2Timer;                             // v2 Querier timer
+    uint64_t       v3Timer;                             // v3 Querier timer
+    uint64_t       ageTimer;                            // Route aging timer
+};
 
-// Interface states
-#define IF_STATE_DISABLED      0   // Interface should be ignored.
-#define IF_STATE_UPSTREAM      1   // Interface is the upstream interface
-#define IF_STATE_DOWNSTREAM    2   // Interface is a downstream interface
+// Operational IGMP status for interfaces.
+struct Igmp {
+    uint8_t        ver;                                 // Version
+    uint64_t       v1Timer;                             // V1 timer
+    uint64_t       v2Timer;                             // V2 timer
+};
 
 // Interfaces configuration.
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
-    struct in_addr                InAdr;
-    unsigned short                Flags;
-    unsigned short                state;
-    struct queryParam             *qry;
-    struct querier {                                        // igmp querier for interface
-        uint32_t       ip;
-        uint8_t        ver;                                 // Querier version
-        uint8_t        qqi;                                 // Queriers query interval
-        uint8_t        qrv;                                 // Queriers robustness value
-        uint8_t        mrc;                                 // Queriers max response code
-        uint64_t       v1Timer;                             // v1 Querier timer
-        uint64_t       v2Timer;                             // v2 Querier timer
-        uint64_t       v3Timer;                             // v3 Querier timer
-        uint64_t       ageTimer;                            // Route aging timer
-    }                             querier;
-    struct Igmp {
-        uint8_t        ver;
-        uint64_t       v1Timer;                             // V1 timer.
-        uint64_t       v2Timer;                             // V2 timer.
-    }                             igmp;
-    struct filters               *aliases;                  // All aliases / subnets for interface
-    struct filters               *filters;                  // Interface filters (linked to configed filters)
+    struct in_addr                InAdr;                    // Primary IP
+    struct filters               *aliases;                  // Secondary IPs
+    unsigned short                Flags;                    // Operational flags
+    uint8_t                       state;                    // Operational state
+    struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
+    struct querier                querier;                  // igmp querier for interface
+    struct Igmp                   igmp;                     // Operational IGMP status
     unsigned char                 threshold;                // ttl limit
     unsigned int                  startupQueryInterval;     // Interface startup query interval
     uint8_t                       startupQueryCount;        // Interface startup query count
-    uint64_t                      bytes, rate, ratelimit;   // bw control
-    unsigned int                  index;
+    uint64_t                      bytes, rate, ratelimit;   // Counters for bandwith control
+    unsigned int                  index;                    // MCast vif index
+    struct IfDesc                *next;
 };
+
+// Interface states
+#define IF_STATE_DISABLED      0                              // Interface should be ignored.
+#define IS_DISABLED(x)         ((x & 0x3) == 0)
+#define IF_STATE_UPSTREAM      1                              // Interface is the upstream interface
+#define IS_UPSTREAM(x)         (x & 0x1)
+#define IF_STATE_DOWNSTREAM    2                              // Interface is a downstream interface
+#define IS_DOWNSTREAM(x)       (x & 0x2)
+#define IF_STATE_UPDOWNSTREAM  3
+#define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
+#define IF_OLDSTATE(x)         x ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED
+#define IF_NEWSTATE(x)         x ? x->state          & ~0x80 : IF_STATE_DISABLED
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -278,33 +292,14 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 //#################################################################################
 
 /**
-*   syslog.c
+*   callout.c
 */
-void my_log(int Serverity, int Errno, const char *FmtSt, ...);
-
-/**
-*   ifvc.c
-*/
-void           freeIfDescP(int old);
-void           rebuildIfVc(uint64_t *tid);
-void           buildIfVc(void);
-struct IfDesc *getIfByName(const char *IfName, int old);
-void           getNextIf(struct IfDesc **IfDp);
-uint64_t       isAddressValidForIf(void *Dp, register int ifdesc, register uint32_t src, register uint32_t group);
-void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
-void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
-
-/**
-*   mroute-api.c
-*/
-int  getMrouterFD(void);
-int  enableMRouter(void);
-void disableMRouter(void);
-void addVIF(struct IfDesc *Dp);
-void delVIF(struct IfDesc *Dp);
-int  addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
-int  delMRoute(uint32_t src, uint32_t group, int vif);
-void deleteUpcalls(uint32_t src, uint32_t group);
+typedef void  (*timer_f)(void *);
+void            timer_freeQueue(void);
+struct timespec timer_ageQueue();
+uint64_t        timer_setTimer(uint64_t timer_id, unsigned int delay, const char name[40], timer_f action, void *);
+void           *timer_clearTimer(uint64_t timer_id);
+void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 
 /**
 *   config.c
@@ -315,7 +310,6 @@ void           freeConfig(int old);
 void           reloadConfig(uint64_t *tid);
 bool           loadConfig(void);
 void           configureVifs(void);
-void           createVifs(void);
 
 /**
 *   cli.c
@@ -324,6 +318,32 @@ int  openCliSock(void);
 int  cliSetGroup(int gid);
 void processCliCon(int fd);
 void cliCmd(char *cmd);
+
+/**
+*   ifvc.c
+*/
+#define GETIFL(x) x = getIfL(); x; x = x->next
+void           freeIfDescL(bool clean);
+void           rebuildIfVc(uint64_t *tid);
+void           buildIfVc(void);
+struct IfDesc *getIfByName(const char *IfName);
+struct IfDesc *getIfByIx(unsigned int ix);
+struct IfDesc *getIfL(void);
+uint64_t       isAddressValidForIf(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group);
+void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
+void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
+
+/**
+*   mroute-api.c
+*/
+int  getMrouterFD(void);
+int  enableMRouter(void);
+void disableMRouter(void);
+bool addVIF(struct IfDesc *Dp);
+void delVIF(struct IfDesc *Dp);
+int  addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
+int  delMRoute(uint32_t src, uint32_t group, int vif);
+void deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
 *   igmp.c
@@ -357,12 +377,12 @@ bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr);
 /**
 *   rttable.c
 */
-uint64_t           getGroupBw(struct subnet group, void *Dp, register int ifdesc);
+uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void               processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
 void               bwControl(uint64_t *tid);
-struct gvDescL    *clearRoutes(void *Dp1, void *Dp2);
+void               clearRoutes(void *Dp1);
 uint32_t           getRouteVifbits(register uint32_t group);
 struct RouteTable *insertRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
 void               activateRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
@@ -372,10 +392,6 @@ bool               lastMemberGroupAge(uint32_t group, struct IfDesc *IfDp);
 void               logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 
 /**
-*   callout.c
+*   syslog.c
 */
-typedef void  (*timer_f)(void *);
-void            timer_freeQueue(void);
-struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(uint64_t timer_id, unsigned int delay, const char name[40], timer_f action, void *);
-void           *timer_clearTimer(uint64_t timer_id);
+void myLog(int Serverity, int Errno, const char *FmtSt, ...);

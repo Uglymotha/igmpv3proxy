@@ -41,7 +41,7 @@
 #include "igmpproxy.h"
 
 static const char Usage[] =
-"Usage: igmpproxy [-h | -v] [-c [-cbrif...] [-h]] [[-n | -d] <configfile>]\n"
+"Usage: igmpproxy [-h | -v] [-c [-cbrift...] [-h]] [[-n | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
 "   -v   Display version.\n"
@@ -49,10 +49,11 @@ static const char Usage[] =
 "   -d   Run in debug mode. Output all messages on stderr. Implies -n.\n"
 "   -c   Daemon control and statistics.\n"
 "        -c   Reload Configuration.\n"
-"        -r   Rebuild Interfaces.\n"
+"        -b   Rebuild Interfaces.\n"
 "        -r   Display routing table.\n"
 "        -i   Display interface statistics.\n"
 "        -f   Display configured filters.\n"
+"        -t   Display running timers.\n"
 "        -h   Do not display headers.\n"
 "\n"
 PACKAGE_STRING "\n";
@@ -97,10 +98,10 @@ int main(int ArgCn, char *ArgVc[]) {
             fputs(Usage, stderr);
             exit(0);
         case 'c':
-            c = getopt(ArgCn, ArgVc, "cbrifh");
+            c = getopt(ArgCn, ArgVc, "cbrifth");
             while (c != -1) {
                 char cmd[2] = "";
-                h = getopt(ArgCn, ArgVc, "cbrifh");
+                h = getopt(ArgCn, ArgVc, "cbrifth");
                 switch (c) {
                 case 'b':
                 case 'c':
@@ -108,10 +109,11 @@ int main(int ArgCn, char *ArgVc[]) {
                     break;
                 case 'f':
                 case 'i':
+                case 't':
                 case 'r':
                     cliCmd(h == 'h' ? strcat(strcat(cmd, (char *)&c), (char *)&h) : (char *)&c);
                 }
-                c = h == 'h' ? getopt(ArgCn, ArgVc, "rifcvdnh") : h;
+                c = h == 'h' ? getopt(ArgCn, ArgVc, "riftcvdnh") : h;
                 if (c == -1) exit(0);
             }
             cliCmd("cli");
@@ -165,7 +167,7 @@ int main(int ArgCn, char *ArgVc[]) {
     } while (sighandled & GOT_SIGURG);
 
     // Inform that we are exiting, we should never get here.
-    my_log(LOG_INFO, 0, "igmpproxy: Unexpected Termination.");
+    myLog(LOG_INFO, 0, "igmpproxy: Unexpected Termination.");
 
     exit(0);
 }
@@ -188,10 +190,7 @@ static void igmpProxyInit(void) {
     sigaction(SIGPIPE, &sa, NULL);
 
     // Load the config file.
-    if (! loadConfig()) {
-        my_log(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
-        exit(1);
-    }
+    if (! loadConfig()) myLog(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
 
     // Enable mroute api open cli socket and set pollFD.
     pollFD[0] = (struct pollfd){ enableMRouter(), POLLIN, 0 };
@@ -200,26 +199,22 @@ static void igmpProxyInit(void) {
     // Initialize IGMP.
     recv_buf = initIgmp();
 
-    // Loads configuration for Physical interfaces.
-    buildIfVc();
-
-    // Configures IF states and settings.
-    configureVifs();
-
-    // Create vifs for multicast traffic.
-    createVifs();
+    // Loads configuration for Physical interfaces and mcast vifs.
+    rebuildIfVc(NULL);
 }
 
 /**
 *   Clean up all on exit...
 */
 static void igmpProxyCleanUp(void) {
-    my_log(LOG_DEBUG, 0, "clean handler called");
+    myLog(LOG_DEBUG, 0, "clean handler called");
 
+    struct IfDesc *IfDp;
+    for (GETIFL(IfDp)) ctrlQuerier(0, IfDp);
     freeQueriers();         // Free all group queriers.
     timer_freeQueue();      // Free all timeouts.
-    clearRoutes(NULL,NULL); // Remove all routes.
-    freeIfDescP(0);         // Free IfDesc table.
+    clearRoutes(NULL); // Remove all routes.
+    freeIfDescL(false);     // Free IfDesc table.
     freeConfig(0);          // Free config.
     disableMRouter();       // Disable the MRouter API.
     if (strstr(CONFIG->runPath, "/igmpproxy/")) {
@@ -240,17 +235,17 @@ static void igmpProxyRun(void) {
         // Process signaling...
         if (sighandled & GOT_SIGHUP) {
             sigstatus = GOT_SIGHUP;
-            my_log(LOG_DEBUG, 0, "SIGHUP: Rebuilding interfaces and reloading config.");
+            myLog(LOG_DEBUG, 0, "SIGHUP: Rebuilding interfaces and reloading config.");
             reloadConfig(NULL);
             sighandled &= ~GOT_SIGHUP;
         } else if (sighandled & GOT_SIGUSR1) {
             sigstatus = GOT_SIGUSR1;
-            my_log(LOG_DEBUG, 0, "SIGUSR1: Reloading config.");
+            myLog(LOG_DEBUG, 0, "SIGUSR1: Reloading config.");
             reloadConfig(NULL);
             sighandled &= ~GOT_SIGUSR1;
         } else if (sighandled & GOT_SIGUSR2) {
             sigstatus = GOT_SIGUSR2;
-            my_log(LOG_DEBUG, 0, "SIGUSR2: Rebuilding interfaces.");
+            myLog(LOG_DEBUG, 0, "SIGUSR2: Rebuilding interfaces.");
             rebuildIfVc(NULL);
             sighandled &= ~GOT_SIGUSR2;
         }
@@ -263,7 +258,7 @@ static void igmpProxyRun(void) {
         int Rt = ppoll(pollFD, 2, timeout.tv_sec != -1 ? &timeout : NULL, NULL);
 
         // log and ignore failures
-        if (Rt < 0) my_log(LOG_WARNING, errno, "select() failure");
+        if (Rt < 0 && errno != EINTR) myLog(LOG_WARNING, errno, "select() failure");
         else if (Rt > 0) {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
@@ -279,13 +274,9 @@ static void igmpProxyRun(void) {
                 struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
 
                 int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
-                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) {
-                    my_log(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
-                } else if ((msgHdr.msg_flags & MSG_CTRUNC)) {
-                    my_log(LOG_WARNING, errno, "recvmsg() truncated control message received");
-                } else {
-                    acceptIgmp(recvlen, msgHdr);
-                }
+                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) myLog(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
+                else if ((msgHdr.msg_flags & MSG_CTRUNC)) myLog(LOG_WARNING, errno, "recvmsg() truncated control message received");
+                else acceptIgmp(recvlen, msgHdr);
             }
 
             // Check if any cli connection needs to be handled.
@@ -303,15 +294,15 @@ static void signalHandler(int sig) {
         if (!CONFIG->notAsDaemon) break;  // Daemon ignores SIGINT
         /* FALLTHRU */
     case SIGTERM:
-        my_log(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
+        myLog(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
         igmpProxyCleanUp();
         exit(0);
     case SIGURG:
-        my_log(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
+        myLog(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
         sighandled |= GOT_SIGURG;
         return;
     case SIGPIPE:
-        my_log(LOG_NOTICE, 0, "SIGPIPE: Continueing.");
+        myLog(LOG_NOTICE, 0, "SIGPIPE: Continueing.");
         /* FALLTHRU */
     case SIGHUP:
     case SIGUSR1:
@@ -319,5 +310,5 @@ static void signalHandler(int sig) {
         sighandled |= sig == SIGHUP ? GOT_SIGHUP : sig == SIGUSR1 ? GOT_SIGUSR1 : sig == SIGUSR2 ? GOT_SIGUSR2 : 0;
         return;
     }
-    my_log(LOG_INFO, 0, "Caught unhandled signal %d", sig);
+    myLog(LOG_INFO, 0, "Caught unhandled signal %d", sig);
 }
