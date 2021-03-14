@@ -68,7 +68,7 @@ struct timespec timer_ageQueue() {
     for (ptr = queue; ptr && ((curtime.tv_sec > ptr->time.tv_sec) || (curtime.tv_sec == ptr->time.tv_sec && curtime.tv_nsec > ptr->time.tv_nsec)); ptr = queue) {
         myLog(LOG_DEBUG, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", ptr->id, i++, ptr->name, (ptr->time.tv_nsec > curtime.tv_nsec ? 1000000000 - ptr->time.tv_nsec + curtime.tv_nsec: curtime.tv_nsec - ptr->time.tv_nsec) / 1000);
         queue = ptr->next;
-        ptr->func(ptr->data);
+        ptr->func(ptr->data, ptr->id);
         free(ptr);     // Alloced by timer_setTimer()
     }
     if (i > 1) debugQueue("Age Queue", 1, NULL, 0);

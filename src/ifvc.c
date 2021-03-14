@@ -79,9 +79,7 @@ void rebuildIfVc(uint64_t *tid) {
     sigstatus = NOSIG ? GOT_IFREB : sigstatus;
 
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if (!CONFRELOAD) {
-        buildIfVc();
-    }
+    if (!CONFRELOAD) buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
     myLog(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
@@ -101,11 +99,9 @@ void rebuildIfVc(uint64_t *tid) {
 */
 void buildIfVc(void) {
     // Get the system interface list.
+    struct ifreq ifr;
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
-    if ((getifaddrs (&IfAddrsP)) == -1) {
-        myLog(LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
-        if (STARTUP) exit(-1);
-    }
+    if ((getifaddrs (&IfAddrsP)) == -1) myLog(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
 
     // Loop over interfaces. Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
@@ -135,20 +131,9 @@ void buildIfVc(void) {
             continue;
 
         } else if (! IfDp) {
-            // New interface. First enable multicast if necessary.
-            if (! (tmpIfAddrsP->ifa_flags & IFF_MULTICAST)) {
-                struct ifreq ifr;
-                memset(&ifr, 0, sizeof(struct ifreq));
-                memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
-                ifr.ifr_flags = tmpIfAddrsP->ifa_flags | IFF_MULTICAST;
-                if (ioctl(getMrouterFD(), SIOCSIFFLAGS, &ifr) < 0) {
-                    myLog(LOG_WARNING, errno, "buildIfVc: Failed to enable multicast on %s.", tmpIfAddrsP->ifa_name);
-                    continue;
-                }
-                myLog(LOG_INFO, 0, "buildIfVc: Multicast Enabled on %s.", tmpIfAddrsP->ifa_name);
-            }
+            // New interface, allocate and initialize.
             if (! (IfDp  = (struct IfDesc *)malloc(sizeof(struct IfDesc)))) myLog(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
-            *IfDp = (struct IfDesc){ "", {0}, NULL, 0, 0x80, NULL, NULL, {0, 0, 0, 0, 0, 0, 0, 0, 0}, {3, 0, 0}, CONFIG->defaultThreshold, 0, 0, 0, 0, 0, (unsigned int)-1, IfDescL };
+            *IfDp = (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0,(unsigned int)-1, IfDescL };
             IfDescL = IfDp;
             // Copy the interface name. Make 100% sure it is NULL terminated.
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
@@ -167,16 +152,32 @@ void buildIfVc(void) {
         }
 
         // Set the interface flags and IP.
-        IfDp->Flags        = tmpIfAddrsP->ifa_flags | IFF_MULTICAST;
+        IfDp->Flags        = tmpIfAddrsP->ifa_flags;
         IfDp->InAdr.s_addr = addr;
+
+        // Get interface mtu.
+        memset(&ifr, 0, sizeof(struct ifreq));
+        memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
+        if (ioctl(getMrouterFD(), SIOCGIFMTU, &ifr) < 0) myLog(LOG_WARNING, errno, "buildIfVc: Failed to get MTU for %s, disabling.", IfDp->Name);
+        else IfDp->mtu = ifr.ifr_mtu;
+
+        // Enable multicast if necessary.
+        if (! (IfDp->Flags & IFF_MULTICAST)) {
+            ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
+            if (ioctl(getMrouterFD(), SIOCSIFFLAGS, &ifr) < 0) myLog(LOG_WARNING, errno, "buildIfVc: Failed to enable multicast on %s, disabling.", IfDp->Name);
+            else {
+                IfDp->Flags = ifr.ifr_flags;
+                myLog(LOG_NOTICE, 0, "buildIfVc: Multicast Enabled on %s.", IfDp->Name);
+            }
+        }
 
         // Insert the verified subnet as first alias.
         if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters)))) myLog(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
         // Debug log the result...
-        myLog( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, Network: %s, Ptr: %p",
-             IfDp->Name, fmtInAdr(IfDp->InAdr, 1), IfDp->Flags, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
+        myLog( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
+             IfDp->Name, fmtInAdr(IfDp->InAdr, 1), IfDp->Flags, IfDp->mtu, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
     }
     
     // Free the getifadds struct.
@@ -187,14 +188,14 @@ void buildIfVc(void) {
 *   Sets the supplied pointer to the next interface in the array.
 *   If called with NULL pointer walk current table, if called with pointer to self walk old table.
 */
-struct IfDesc *getIfL(void) {
+inline struct IfDesc *getIfL(void) {
     return IfDescL;
 }
 
 /**
 *   Returns pointer to interface based on given name or NULL if not found.
 */
-struct IfDesc *getIfByName(const char *IfName) {
+inline struct IfDesc *getIfByName(const char *IfName) {
     struct IfDesc *IfDp;
     for (IfDp = IfDescL; IfDp && strcmp(IfName, IfDp->Name) != 0; IfDp = IfDp->next);
     return IfDp;
@@ -203,7 +204,7 @@ struct IfDesc *getIfByName(const char *IfName) {
 /**
 *   Returns pointer to interface based on given vif index or NULL if not found.
 */
-struct IfDesc *getIfByIx(unsigned int ix) {
+inline struct IfDesc *getIfByIx(unsigned int ix) {
     struct IfDesc *IfDp;
     for (IfDp = IfDescL; IfDp && IfDp->index != ix; IfDp = IfDp->next);
     return IfDp;
@@ -264,12 +265,12 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
 
     for (IfDp = IfDescL; IfDp; IfDp = IfDp->next, i++) {
         if (h) {
-            total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->ratelimit };
+            total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| v%1d|%15s| %12s  |%15s/v%1d|%14lld B | %10lld B/s | %10lld B/s\n");
-            sprintf(buf, msg, i, IfDp->Name, IfDp->igmp.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->querier.ver, IfDp->bytes, IfDp->rate, IfDp->ratelimit);
+            sprintf(buf, msg, i, IfDp->Name, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->querier.ver, IfDp->bytes, IfDp->rate, IfDp->conf->ratelimit);
         } else {
             strcpy(msg, "%d %s %d %s %s %s %d %lld %lld %lld\n");
-            sprintf(buf, msg, i, IfDp->Name, IfDp->igmp.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->querier.ver, IfDp->bytes, IfDp->rate, IfDp->ratelimit);
+            sprintf(buf, msg, i, IfDp->Name, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->querier.ver, IfDp->bytes, IfDp->rate, IfDp->conf->ratelimit);
         }
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }

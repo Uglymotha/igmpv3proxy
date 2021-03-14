@@ -43,17 +43,20 @@
 /**
 *   Routing table structure definition.
 */
+struct originAddrs {
+    uint32_t            src;                                  // Stream source IP
+    unsigned int        vif;                                  // Incoming vif index
+    uint64_t            bytes, ageBytes, rate;                // Bwcontrol counters
+    uint8_t             ageValue;                             // Aging Value for source
+    struct originAddrs *next;
+};
+
 struct RouteTable {
     struct RouteTable              *next;                     // Pointer to the next group in line.
     uint32_t                        group;                    // The group to route
-    uint32_t                        vifBits;                  // Bits representing recieving VIFs.
-    struct originAddrs {                                      // The origin adresses (only set on activated routes)
-        uint32_t            src;                              // Stream source IP
-        unsigned int        vif;                              // Incoming vif index
-        uint64_t            bytes, ageBytes, rate;            // Bwcontrol counters
-        uint8_t             ageValue;                         // Aging Value for source
-        struct originAddrs *next;
-    }                              *origins;
+    uint32_t                        vifBits;                  // Bits representing recieving VIFs
+    uint64_t                        v1Timer, v2Timer;         // Other hosts present timers
+    struct originAddrs             *origins;                  // The origin adresses (only set on activated routes)
 
     // Keeps the group states. Per vif flag.
     uint32_t                        mode;                     // Mode (include/exclude) for group
@@ -270,8 +273,8 @@ static void sendJoinLeaveUpstream(struct RouteTable* croute, struct IfDesc *IfDp
             myLog(LOG_DEBUG, 0, "Not joining group %s on interface that received request (%s)", inetFmt(croute->group, 1), IfDp->Name);
         } else if (! (bw = isAddressValidForIf(checkVIF, 0, IF_STATE_UPSTREAM, 0, croute->group))) {
             myLog(LOG_INFO, 0, "The group address %s may not be forwarded to upstream if %s.", inetFmt(croute->group, 1), checkVIF->Name);
-        } else if (CONFIG->bwControlInterval && checkVIF->ratelimit > 0 && checkVIF->rate > checkVIF->ratelimit) {
-            myLog(LOG_WARNING, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.", checkVIF->Name, checkVIF->rate, checkVIF->ratelimit, inetFmt(croute->group, 1));
+        } else if (CONFIG->bwControlInterval && checkVIF->conf->ratelimit > 0 && checkVIF->rate > checkVIF->conf->ratelimit) {
+            myLog(LOG_WARNING, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.", checkVIF->Name, checkVIF->rate, checkVIF->conf->ratelimit, inetFmt(croute->group, 1));
         } else if (bw > ALLOW) {
             myLog(LOG_WARNING, 0, "Group %s bandwidth over limit (%lld) on %s. Not joining.", inetFmt(croute->group, 1), bw, checkVIF->Name);
         } else {
@@ -714,8 +717,8 @@ static bool internUpdateKernelRoute(struct RouteTable *croute, int activate) {
             // Set the TTL's for the route descriptor...
             for (GETIFL(IfDp)) {
                 if (IS_DOWNSTREAM(IfDp->state) && BIT_TST(croute->vifBits, IfDp->index)) {
-                    myLog(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", IfDp->index, IfDp->threshold);
-                    ttlVc[IfDp->index] = IfDp->threshold;
+                    myLog(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", IfDp->index, IfDp->conf->threshold);
+                    ttlVc[IfDp->index] = IfDp->conf->threshold;
                 }
             }
         } else {

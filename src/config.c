@@ -52,8 +52,8 @@ static void              allocFilter(struct filters fil);
 static struct Config commonConfig, oldcommonConfig;
 
 // All valid configuration options.
-static const char *options = "phyint quickleave maxorigins hashtablesize defaultdown defaultup defaultupdown defaultthreshold defaultratelimit querierip robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc noquerierelection upstream downstream disabled ratelimit threshold defaultfilterany nodefaultfilter filter altnet whitelist";
-static const char *phyintopt = "updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *options = "phyint quickleave maxorigins hashtablesize defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist";
+static const char *phyintopt = "updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Configuration file reading.
 static FILE           *confFilePtr = NULL;                                      // File handle pointer.
@@ -71,10 +71,12 @@ static struct timers {
     uint64_t bwControl;
 } timers = { 0, 0, 0 };
 
+#define INTTOKEN ((intToken = atoi(nextConfigToken())) || !intToken)
+
 /**
 *   Returns pointer to the configuration.
 */
-struct Config *getConfig(void) {
+inline struct Config *getConfig(void) {
     return &commonConfig;
 }
 
@@ -221,7 +223,7 @@ static bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
     // First get the network part of the address...
     char *tmpStr = strtok(addrstr, "/");
     *addr = inet_addr(tmpStr);
-    if (*addr == (uint32_t)-1) return false;
+    if (*addr == (in_addr_t)-1) return false;
 
     // Next parse the subnet mask.
     tmpStr = strtok(NULL, "/");
@@ -243,9 +245,6 @@ static void initCommonConfig(void) {
     commonConfig.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
     commonConfig.bwControlInterval = 0;
 
-    // The defaults are calculated from other settings.
-    commonConfig.startupQueryInterval = STARTUP ? (unsigned int)(DEFAULT_INTERVAL_QUERY / 4) : commonConfig.startupQueryInterval;
-
     // Default values for leave intervals...
     commonConfig.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
     commonConfig.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
@@ -253,9 +252,8 @@ static void initCommonConfig(void) {
     // If 1, a leave message is sent upstream on leave messages from downstream.
     commonConfig.fastUpstreamLeave = false;
 
-    // Defaul maximum nr of sources for route. Always a minimum of 4 sources is allowed
+    // Defaul maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
-    // Only applicable when BW control is not enabled, in which case sources will be aged if no data is received.
     commonConfig.maxOrigins = DEFAULT_MAX_ORIGINS;
 
     // Default size of hash table is 32 bytes (= 256 bits) and can store
@@ -279,7 +277,9 @@ static void initCommonConfig(void) {
     // Do not proxy local mc by default.
     commonConfig.proxyLocalMc = false;
 
-    // Participate in querier election by default.
+    // Default igmpv3 and participate in querier election by default.
+    commonConfig.querierIp = (uint32_t)-1;
+    commonConfig.querierVer = 3;
     commonConfig.querierElection = true;
 
     // Default no group for socket (use root's).
@@ -319,6 +319,7 @@ void reloadConfig(uint64_t *tid) {
 */
 bool loadConfig(void) {
     struct vifConfig  *tmpPtr, **currPtr = &vifConf;
+    int    intToken;
 
     // Initialize common config
     initCommonConfig();
@@ -331,7 +332,6 @@ bool loadConfig(void) {
     while (token) {
         if (strcasecmp("phyint", token) == 0) {
             // Got a phyint token... Call phyint parser
-            myLog(LOG_DEBUG, 0, "Config: Got a phyint token.");
             tmpPtr = parsePhyintToken();
             if (tmpPtr) {
                 myLog(LOG_NOTICE, 0, "Config: IF name : %s", tmpPtr->name);
@@ -351,20 +351,16 @@ bool loadConfig(void) {
             myLog(LOG_NOTICE, 0, "Config: Quick leave mode enabled.");
             commonConfig.fastUpstreamLeave = true;
 
-        } else if (strcasecmp("maxorigins", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("maxorigins", token) == 0 && INTTOKEN) {
             // Got a maxorigins token...
-            unsigned int intToken = atoi(token);
             commonConfig.maxOrigins = intToken < DEFAULT_MAX_ORIGINS ? DEFAULT_MAX_ORIGINS : intToken;
             myLog(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
 
-        } else if (strcasecmp("hashtablesize", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("hashtablesize", token) == 0 && INTTOKEN) {
             // Got a hashtablesize token...
-            unsigned int intToken = atoi(token);
-            if (! commonConfig.fastUpstreamLeave) {
-                myLog(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
-            } else if (intToken < 1 || intToken > 536870912) {
-                myLog(LOG_WARNING, 0, "Config: hashtablesize must be between 1 and 536870912 bytes, using default %d.", commonConfig.downstreamHostsHashTableSize);
-            } else {
+            if (! commonConfig.fastUpstreamLeave) myLog(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
+            else if (intToken < 1 || intToken > 536870912) myLog(LOG_WARNING, 0, "Config: hashtablesize must be between 1 and 536870912 bytes, using default %d.", commonConfig.downstreamHostsHashTableSize);
+            else {
                 commonConfig.downstreamHostsHashTableSize = intToken;
                 myLog(LOG_NOTICE, 0, "Config: Got hashtablesize for quickleave is %d.", commonConfig.downstreamHostsHashTableSize);
             }
@@ -374,7 +370,7 @@ bool loadConfig(void) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED) myLog(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
-                myLog(LOG_NOTICE, 0, "Config: Interface default to updownstream.");
+                myLog(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
             }
 
         } else if (strcasecmp("defaultup", token) == 0) {
@@ -382,7 +378,7 @@ bool loadConfig(void) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED) myLog(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPSTREAM;
-                myLog(LOG_NOTICE, 0, "Config: Interface default to upstream.");
+                myLog(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
             }
 
         } else if (strcasecmp("defaultdown", token) == 0) {
@@ -390,7 +386,7 @@ bool loadConfig(void) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED) myLog(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
-                myLog(LOG_NOTICE, 0, "Config: Interface default to downstream.");
+                myLog(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
             }
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
@@ -398,7 +394,7 @@ bool loadConfig(void) {
             if (commonConfig.defaultFilterAny == true) myLog(LOG_WARNING, 0, "Config: Nodefaultfilter or defaultfilterany can only be specified once. Ignoring %s.", token);
             else {
                 commonConfig.nodefaultFilter = true;
-                myLog(LOG_NOTICE, 0, "Config: Interface no default filter.");
+                myLog(LOG_NOTICE, 0, "Config: Interfaces no default filter.");
             }
 
         } else if (strcasecmp("defaultfilterany", token) == 0) {
@@ -409,114 +405,92 @@ bool loadConfig(void) {
                 myLog(LOG_NOTICE, 0, "Config: Interface default filter any.");
             }
 
-        } else if (strcasecmp("defaultratelimit", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultratelimit", token) == 0 && INTTOKEN) {
             // Default Ratelimit
-            myLog(LOG_NOTICE, 0, "Config: Got defaultratelimit token '%s'.", token);
-            if (atoi(token) < 0) {
-                myLog(LOG_WARNING, 0, "Ratelimit must be 0 or more.");
-            } else {
-                commonConfig.defaultRatelimit = atoi(token);
+            if (intToken < 0) myLog(LOG_WARNING, 0, "Config: Ratelimit must be more than 0.");
+            else {
+                commonConfig.defaultRatelimit = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Default ratelimit %d.", intToken);
             }
 
-        } else if (strcasecmp("defaultthreshold", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultthreshold", token) == 0 && INTTOKEN) {
             // Default Threshold
-            if (atoi(token) <= 0 || atoi(token) > 255) {
-                myLog(LOG_WARNING, 0, "Threshold must be between 1 and 255.");
-            } else {
-                commonConfig.defaultThreshold = atoi(token);
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config: Threshold must be between 1 and 255.");
+            else {
+                commonConfig.defaultThreshold = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Default threshold %d.", intToken);
             }
-            myLog(LOG_NOTICE, 0, "Config: Got defaultthreshold token '%s'.", commonConfig.defaultThreshold);
 
-        } else if (strcasecmp("querierip", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultquerierip", token) == 0 && (token = nextConfigToken())) {
             // Got a querierip token.
-            uint32_t addr = inet_addr(token);
-            commonConfig.querierIp = addr != 0 && addr != (uint32_t)-1 ? addr : 0;
-            myLog(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(addr, 1));
+            commonConfig.querierIp = inet_addr(token);
+            myLog(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(commonConfig.querierIp, 1));
 
-        } else if (strcasecmp("robustnessvalue", token) == 0 && (token = nextConfigToken())) {
-            // Got a robustnessvalue token...
-            unsigned int intToken = atoi(token);
-            commonConfig.robustnessValue = intToken == 0 ? 1 : intToken;
-            commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS ? commonConfig.lastMemberQueryCount : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Setting default robustness value to %d.", commonConfig.robustnessValue);
-
-        } else if (strcasecmp("queryinterval", token) == 0 && (token = nextConfigToken())) {
-            // Got a queryinterval token...
-            unsigned int intToken = atoi(token);
-            if (intToken <= 0 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config: Query interval must be between 1 and 32767.");
-            } else {
-                // Normalize the configured value according to RFC.
-                commonConfig.queryInterval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
-                commonConfig.startupQueryInterval = STARTUP && commonConfig.queryInterval > 4 ? commonConfig.queryInterval / 4 : 1;
-
-                // Check Query response and reload conf intervals and adjust if necessary.
-                commonConfig.queryResponseInterval = commonConfig.queryResponseInterval / 10 > commonConfig.queryInterval ? commonConfig.queryInterval * 10 : commonConfig.queryResponseInterval;
-                commonConfig.rescanConf = commonConfig.rescanConf && commonConfig.rescanConf < commonConfig.queryInterval ? commonConfig.queryInterval : commonConfig.rescanConf;
-                myLog(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %ds", commonConfig.queryInterval, commonConfig.queryResponseInterval / 10);
+        } else if (strcasecmp("defaultquerierver", token) == 0 && INTTOKEN) {
+            // Got a querierver token.
+            if (intToken < 1 || intToken > 3) myLog(LOG_WARNING, 0, "Config: Querier version %d invalid.", intToken);
+            else {
+                commonConfig.querierVer = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Setting default querier version to %d.", intToken);
             }
 
-        } else if (strcasecmp("queryrepsonseinterval", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultrobustness", token) == 0 && INTTOKEN) {
+            // Got a robustnessvalue token...
+            if (intToken < 1 || intToken > 7) myLog(LOG_WARNING, 0, "Config IF: Robustness value mus be between 1 and 7.");
+            else {
+                commonConfig.robustnessValue = intToken;
+                commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS ? commonConfig.lastMemberQueryCount : commonConfig.robustnessValue;
+                myLog(LOG_NOTICE, 0, "Config: Setting default robustness value to %d.", intToken);
+            }
+
+        } else if (strcasecmp("defaultqueryinterval", token) == 0 && INTTOKEN) {
+            // Got a queryinterval token...
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config: Query interval must be between 1 and 255.");
+            else {
+                commonConfig.queryInterval = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Setting default query interval to %ds.", commonConfig.queryInterval);
+            }
+
+        } else if (strcasecmp("defaultqueryrepsonseinterval", token) == 0 && INTTOKEN) {
             // Got a queryresponsenterval token...
-            unsigned int intToken = atoi(token);
-            if (intToken <= 0 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config: Query response interval must be between 1 and 32767.");
-            } else {
-                // Normalize the configured value according to RFC.
-                commonConfig.queryResponseInterval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
-                float i = (float)commonConfig.queryResponseInterval / (float)10;
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config: Query response interval must be between 1 and 255.");
+            else {
+                commonConfig.queryResponseInterval = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Setting default query response interval to %d.", intToken);
+            }
 
-                // Check query and rescanconf interval and adjust if necessary.
-                commonConfig.queryInterval = commonConfig.queryInterval < commonConfig.queryResponseInterval / 10 ? commonConfig.queryResponseInterval / 10 : commonConfig.queryInterval;
-                commonConfig.rescanConf = commonConfig.rescanConf && commonConfig.rescanConf < commonConfig.queryResponseInterval / 10 ? commonConfig.queryResponseInterval : commonConfig.rescanConf;
-                myLog(LOG_NOTICE, 0, "Config: Setting default query response interval to %.1fs. Default query interval %ds", i, commonConfig.queryInterval);
-        }
-
-        } else if (strcasecmp("lastmemberinterval", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultlastmemberinterval", token) == 0 && INTTOKEN) {
             // Got a lastmemberinterval token...
-            unsigned int intToken = atoi(token);
-            if (intToken <= 0 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config: Last member query interval must be between 1 and 32767.");
-            } else {
-                // Normalize the configured value according to RFC.
-                commonConfig.lastMemberQueryInterval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config: Last member query interval must be between 1 and 255.");
+            else {
+                commonConfig.lastMemberQueryInterval = intToken;
+                myLog(LOG_NOTICE, 0, "Config: Setting default last member query interval to %d.", intToken);
+            }
 
-                // Check reload conf intervals and adjust if necessary.
-                commonConfig.rescanConf = commonConfig.rescanConf && commonConfig.rescanConf < commonConfig.lastMemberQueryInterval / 10 ? commonConfig.lastMemberQueryInterval / 10 : commonConfig.rescanConf;
-                myLog(LOG_NOTICE, 0, "Config: Setting default last member query interval to %.1fs.", (float)commonConfig.lastMemberQueryInterval / (float)10);
-        }
-
-        } else if (strcasecmp("lastmembercount", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("defaultlastmembercount", token) == 0 && INTTOKEN) {
             // Got a lastmembercount token...
-            unsigned int intToken = atoi(token);
-            commonConfig.lastMemberQueryCount = intToken == 0 ? 1 : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", commonConfig.lastMemberQueryCount);
+            commonConfig.lastMemberQueryCount = intToken < 0 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
+            myLog(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
 
-        } else if (strcasecmp("bwcontrol", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("bwcontrol", token) == 0 && INTTOKEN) {
             // Got a bcontrolinterval token...
-            unsigned int intToken = atoi(token);
             commonConfig.bwControlInterval = intToken > 0 && intToken < 3 ? 3 : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", commonConfig.bwControlInterval);
+            myLog(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken);
 
-        } else if (strcasecmp("rescanvif", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("rescanvif", token) == 0 && INTTOKEN) {
             // Got a rescanvif token...
-            unsigned int intToken = atoi(token);
-            commonConfig.rescanVif = intToken;
-            myLog(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", commonConfig.rescanVif);
+            commonConfig.rescanVif = intToken > 0 ? intToken : 0;
+            myLog(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
 
-        } else if (strcasecmp("rescanconf", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("rescanconf", token) == 0 && INTTOKEN) {
             // Got a rescanconf token...
-            unsigned int intToken = atoi(token);
-            unsigned int i = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0) * 10;
-            commonConfig.rescanConf = intToken != 0 && (i < commonConfig.queryResponseInterval || i < commonConfig.lastMemberQueryInterval) ? i : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", commonConfig.rescanConf);
+            commonConfig.rescanConf = intToken > 0 ? intToken : 0;
+            myLog(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);
 
-
-        } else if (strcasecmp("loglevel", token) == 0 && (token = nextConfigToken())) {
+        } else if (strcasecmp("loglevel", token) == 0 && INTTOKEN) {
             // Got a loglevel token...
-            unsigned int intToken = atoi(token);
-            commonConfig.logLevel = intToken > 7 ? 7 : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
+            commonConfig.logLevel = intToken > 7 ? 7 : intToken < 0 ? 0 : intToken;
+            myLog(LOG_NOTICE, 0, "Config: Log Level %d", intToken);
 
         } else if (strcasecmp("logfile", token) == 0 && (token = nextConfigToken())) {
             if (! commonConfig.log2Stderr) {
@@ -545,14 +519,14 @@ bool loadConfig(void) {
             commonConfig.proxyLocalMc = true;
             myLog(LOG_NOTICE, 0, "Config: Will proxy local multicast range 224.0.0.0/8.");
 
-        } else if (strcasecmp("noquerierelection", token) == 0) {
+        } else if (strcasecmp("defaultnoquerierelection", token) == 0) {
             // Got a noquerierelection token....
             commonConfig.querierElection = false;
             myLog(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
 
         } else if (strcasecmp("cligroup", token) == 0 && (token = nextConfigToken())) {
             // Got a cligroup token....
-            if (! getgrnam(token)) myLog(LOG_WARNING, errno, "Config: Incorrect group %s.", token);
+            if (! getgrnam(token)) myLog(LOG_WARNING, errno, "Config: Incorrect CLI group %s.", token);
             else {
                 commonConfig.socketGroup = *getgrnam(token);
                 if (!STARTUP) cliSetGroup(commonConfig.socketGroup.gr_gid);
@@ -561,7 +535,7 @@ bool loadConfig(void) {
 
         } else if (strstr(phyintopt, token)) {
             myLog(LOG_WARNING, 0, "Config: %s without phyint. Ignoring.", token);
-            for (token = nextConfigToken(); ! strstr(options, token); token = nextConfigToken());
+            for (token = nextConfigToken(); !strstr(options, token); token = nextConfigToken());
             continue;
 
         } else {
@@ -576,13 +550,23 @@ bool loadConfig(void) {
     // Close the configfile.
     configFile(NULL, 0);
 
+    // Check Query response interval and adjust if necessary.
+    if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10 > commonConfig.queryInterval) {
+        if (commonConfig.querierVer != 3) commonConfig.queryResponseInterval = commonConfig.queryInterval * 10;
+        else                              commonConfig.queryResponseInterval = getIgmpExp(commonConfig.queryInterval * 10, 1);
+        float f = (commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10;
+        myLog(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", commonConfig.queryInterval, f);
+    }
+
     // Check rescanvif status and start or clear timers if necessary.
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
         timers.rescanVif = timer_setTimer(0, commonConfig.rescanVif * 10, "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
     } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
+
     }
+
     // Check rescanconf status and start or clear timers if necessary.
     if (commonConfig.rescanConf && timers.rescanConf == 0) {
         timers.rescanConf = timer_setTimer(0, commonConfig.rescanConf * 10, "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
@@ -590,6 +574,7 @@ bool loadConfig(void) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
+
     // Check if bw control interval changed.
     if (oldcommonConfig.bwControlInterval != commonConfig.bwControlInterval) {
         timer_clearTimer(timers.bwControl);
@@ -607,11 +592,13 @@ bool loadConfig(void) {
             timers.bwControl = timer_setTimer(0, commonConfig.bwControlInterval * 10, "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
         }
     }
+
     // Check if quickleave was enabled or disabled due to config change.
     if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
         myLog(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.", commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
         clearRoutes(CONFIG);
     }
+
     // Check if hashtable size was changed due to config change.
     if (!STARTUP && commonConfig.fastUpstreamLeave && oldcommonConfig.downstreamHostsHashTableSize != commonConfig.downstreamHostsHashTableSize) {
         myLog(LOG_NOTICE, 0, "Config: Downstream host hashtable size changed from %i to %i, reinitializing routes.",oldcommonConfig.downstreamHostsHashTableSize, commonConfig.downstreamHostsHashTableSize);
@@ -626,22 +613,23 @@ bool loadConfig(void) {
 */
 static struct vifConfig *parsePhyintToken(void) {
     struct vifConfig  *tmpPtr;
+    int    intToken;
 
     // First token should be the interface name....
     if (! (token = nextConfigToken())) {
         myLog(LOG_WARNING, 0, "Config: IF: You should at least name your interfeces.");
         return NULL;
     }
-    myLog(LOG_DEBUG, 0, "Config: IF: Config for interface %s.", token);
+    myLog(LOG_NOTICE, 0, "Config: IF: Config for interface %s.", token);
 
     // Allocate and initialize memory for new configuration.
     if (! (tmpPtr = (struct vifConfig*)malloc(sizeof(struct vifConfig)))) myLog(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
-    *tmpPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount}, true, false, NULL, NULL };
+    *tmpPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, commonConfig.robustnessValue}, true, false, NULL, NULL };
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
     memcpy(tmpPtr->name, token, IF_NAMESIZE);
     tmpPtr->name[IF_NAMESIZE - 1] = '\0';
-    if (strlen(token) >= IF_NAMESIZE) myLog(LOG_WARNING, 0, "parsePhyintToken: Interface name %s larger than system IF_NAMESIZE(%d), truncated to %s.", token, IF_NAMESIZE, tmpPtr->name);
+    if (strlen(token) >= IF_NAMESIZE) myLog(LOG_WARNING, 0, "Config: IF: Interface name %s larger than system IF_NAMESIZE(%d), truncated to %s.", token, IF_NAMESIZE, tmpPtr->name);
 
     // Set pointer to pointer to filters list.
     filPtr = &tmpPtr->filters;
@@ -667,7 +655,7 @@ static struct vifConfig *parsePhyintToken(void) {
 
         if (strcasecmp("filter", token) == 0 || strcasecmp("altnet", token) == 0 || strcasecmp("whitelist", token) == 0) {
             // Black / Whitelist Parsing. If an error is made in a list, the whole list will be ignored.
-            myLog(LOG_DEBUG, 0, "Config: IF: Parsing %s.", token);
+            myLog(LOG_NOTICE, 0, "Config: IF: Parsing %s.", token);
             char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
             uint32_t addr, mask;
             struct filters fil = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL };
@@ -732,7 +720,7 @@ static struct vifConfig *parsePhyintToken(void) {
                     // Correct filter, add and reset fil to process next entry.
                     if (fil.dir == (uint8_t)-1) fil.dir = 3;
                     if (fil.src.ip == 0xFFFFFFFF) fil.src.ip = fil.src.mask = 0;
-                    myLog(LOG_DEBUG, 0, "Config: IF: Adding filter Src: %s Dst: %s Dir: %s Action: %lld.", inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown", fil.action);
+                    myLog(LOG_NOTICE, 0, "Config: IF: Adding filter Src: %s Dst: %s Dir: %s Action: %lld.", inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown", fil.action);
                     allocFilter(fil);
                     fil = (struct filters){ {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL };
                 }
@@ -741,96 +729,91 @@ static struct vifConfig *parsePhyintToken(void) {
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
             tmpPtr->nodefaultfilter = true;
-            myLog(LOG_DEBUG, 0, "Config: IF: Got nodefaultfilter token.");
+            myLog(LOG_NOTICE, 0, "Config: IF: Not setting default filters.");
 
         } else if (strcasecmp("updownstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPDOWNSTREAM;
-            myLog(LOG_DEBUG, 0, "Config: IF: Got updownstream token.");
+            myLog(LOG_NOTICE, 0, "Config: IF: Updownstream.");
 
         } else if (strcasecmp("upstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPSTREAM;
-            myLog(LOG_DEBUG, 0, "Config: IF: Got upstream token.");
+            myLog(LOG_NOTICE, 0, "Config: IF: Upstream.");
 
         } else if (strcasecmp("downstream", token) == 0) {
             tmpPtr->state = IF_STATE_DOWNSTREAM;
-            myLog(LOG_DEBUG, 0, "Config: IF: Got downstream token.");
+            myLog(LOG_NOTICE, 0, "Config: IF: Downstream.");
 
         } else if (strcasecmp("disabled", token) == 0) {
             tmpPtr->state = IF_STATE_DISABLED;
-            myLog(LOG_DEBUG, 0, "Config: IF: Got disabled token.");
+            myLog(LOG_NOTICE, 0, "Config: IF: Disabled.");
 
-        } else if (strcasecmp("ratelimit", token) == 0 && (token = nextConfigToken())) {
-            if (atoi(token) < 0) {
-                myLog(LOG_WARNING, 0, "Config IF: Ratelimit must be 0 or more.");
-            } else {
-                tmpPtr->ratelimit = atoi(token);
-                myLog(LOG_DEBUG, 0, "Config: IF: Got ratelimit token '%lld'.", tmpPtr->ratelimit);
+        } else if (strcasecmp("ratelimit", token) == 0 && INTTOKEN) {
+            if (intToken < 0) myLog(LOG_WARNING, 0, "Config: IF: Ratelimit must 0 or more.");
+            else {
+                tmpPtr->ratelimit = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Setting ratelimit to %lld.", intToken);
             }
 
-        } else if (strcasecmp("threshold", token) == 0 && (token = nextConfigToken())) {
-            if (atoi(token) <= 0 || atoi(token) > 255) {
-                myLog(LOG_WARNING, 0, "Config IF: Threshold must be between 1 and 255.");
-            } else {
-                tmpPtr->threshold = atoi(token);
-                myLog(LOG_DEBUG, 0, "Config: IF: Got threshold token '%d'.", tmpPtr->threshold);
+        } else if (strcasecmp("threshold", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config IF: Threshold must be between 1 and 255.");
+            else {
+                tmpPtr->threshold = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Setting threshold to %d.", intToken);
             }
 
         } else if (strcasecmp("querierip", token) == 0 && (token = nextConfigToken())) {
-            uint32_t addr = inet_addr(token);
-            tmpPtr->qry.ip = addr != 0 && addr != (uint32_t)-1 ? addr : 0;
-            myLog(LOG_DEBUG, 0, "Config IF: Setting querier ip address on %s to %s.", tmpPtr->name, inetFmt(addr, 1));
+            tmpPtr->qry.ip = inet_addr(token);
+            myLog(LOG_NOTICE, 0, "Config IF: Setting querier ip address to %s.", inetFmt(tmpPtr->qry.ip, 1));
+
+        } else if (strcasecmp("querierver", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 3) myLog(LOG_WARNING, 0, "Config IF: IGMP version %d not valid.", intToken);
+            else {
+                tmpPtr->qry.ver = intToken;
+                myLog(LOG_NOTICE, 0, "Config IF: Setting querier version %d.", intToken);
+            }
 
         } else if (strcasecmp("noquerierelection", token) == 0) {
             tmpPtr->qry.election = false;
-            myLog(LOG_DEBUG, 0, "Config IF: Will not participate in IGMP querier election on %s.", tmpPtr->name);
+            myLog(LOG_NOTICE, 0, "Config IF: Will not participate in IGMP querier election.");
 
-        } else if (strcasecmp("robustness", token) == 0 && (token = nextConfigToken())) {
-            if (atoi(token) <= 0) {
-                myLog(LOG_WARNING, 0, "Config IF: Robustness value should be more than 1.");
-            } else {
-                tmpPtr->qry.robustness = atoi(token);
-                myLog(LOG_DEBUG, 0, "Config: IF: Got robustness token '%d'.", tmpPtr->qry.robustness);
+        } else if (strcasecmp("robustness", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 7) myLog(LOG_WARNING, 0, "Config IF: Robustness value mus be between 1 and 7.");
+            else {
+                tmpPtr->qry.robustness = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Settings robustness to %d.", intToken);
             }
 
-        } else if (strcasecmp("queryinterval", token) == 0 && (token = nextConfigToken())) {
-            unsigned int intToken = atoi(token);
-            if (intToken < 1 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config IF: Query interval value should be between 1 than 32767.");
-            } else {
-                tmpPtr->qry.interval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
-                myLog(LOG_DEBUG, 0, "Config: IF: Got queryinterval token '%d'.", tmpPtr->qry.interval);
+        } else if (strcasecmp("queryinterval", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config IF: Query interval value should be between 1 than 255.");
+            else {
+                tmpPtr->qry.interval = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Setting query interval to %d.", intToken);
             }
 
-        } else if (strcasecmp("queryresponseinterval", token) == 0 && (token = nextConfigToken())) {
-            unsigned int intToken = atoi(token);
-            if (intToken < 1 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config IF: Query response interval value should be between 1 than 32767.");
-            } else {
-                tmpPtr->qry.responseInterval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
-                commonConfig.rescanConf = commonConfig.rescanConf && commonConfig.rescanConf < tmpPtr->qry.responseInterval / 10 ? tmpPtr->qry.responseInterval / 10 : commonConfig.rescanConf;
-                myLog(LOG_DEBUG, 0, "Config: IF: Got queryresponseinterval token '%d'.", tmpPtr->qry.responseInterval);
+        } else if (strcasecmp("queryresponseinterval", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config IF: Query response interval value should be between 1 than 255.");
+            else {
+                tmpPtr->qry.responseInterval = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Setting query response interval to %d.", intToken);
             }
 
-        } else if (strcasecmp("lastmemberinterval", token) == 0 && (token = nextConfigToken())) {
-            unsigned int intToken = atoi(token);
-            if (intToken < 1 || intToken > 32767) {
-                myLog(LOG_WARNING, 0, "Config IF: Last member interval value should be between 1 than 32767.");
-            } else {
-                tmpPtr->qry.lmInterval = intToken < 128 ? intToken : getIgmpExp(getIgmpExp(intToken, 1), 0);
-                commonConfig.rescanConf = commonConfig.rescanConf && commonConfig.rescanConf < tmpPtr->qry.lmInterval / 10 ? tmpPtr->qry.lmInterval / 10 : commonConfig.rescanConf;
-                myLog(LOG_DEBUG, 0, "Config: IF: Got lastmemberinterval token '%d'.", tmpPtr->qry.lmInterval);
+        } else if (strcasecmp("lastmemberinterval", token) == 0 && INTTOKEN) {
+            if (intToken < 1 || intToken > 255) myLog(LOG_WARNING, 0, "Config IF: Last member interval value should be between 1 than 255.");
+            else {
+                tmpPtr->qry.lmInterval =  intToken;
+                myLog(LOG_NOTICE, 0, "Config: Setting last member query interval to %d.", intToken);
             }
 
-        } else if (strcasecmp("lastmembercount", token) == 0 && (token = nextConfigToken())) {
-            if (atoi(token) <= 0) {
-                myLog(LOG_WARNING, 0, "Config IF: Last member count should be more than 1.");
-            } else {
-                tmpPtr->qry.lmCount = atoi(token);
-                myLog(LOG_DEBUG, 0, "Config: IF: Got lastmembercount token '%d'.", tmpPtr->qry.lmCount);
+        } else if (strcasecmp("lastmembercount", token) == 0 && INTTOKEN) {
+            if (intToken < 1) myLog(LOG_WARNING, 0, "Config IF: Last member count should be more than 1.");
+            else {
+                tmpPtr->qry.lmCount = intToken;
+                myLog(LOG_NOTICE, 0, "Config: IF: Setting last member query count to %d.", intToken);
             }
+
         } else if (! strstr(options, token)) {
             // Unknown token.
-            myLog(LOG_WARNING, 0, "Config: IF; Unknown token '%s' in configfile", token);
+            myLog(LOG_WARNING, 0, "Config: IF; Unknown token '%s' in configfile.", token);
             if (!STARTUP) return NULL;
 
         } else break;   // Send pointer and return to main config parser.
@@ -910,14 +893,14 @@ void configureVifs(void) {
             // Interface has no matching config, create default config.
             myLog(LOG_DEBUG, 0, "configureVifs: Creating default config for %s interface %s.", IS_DISABLED(commonConfig.defaultInterfaceState) ? "disabled" : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream" : IS_UPSTREAM(commonConfig.defaultInterfaceState) ? "upstream" : "downstream", IfDp->Name);
             if (! (confPtr = (struct vifConfig *)malloc(sizeof(struct vifConfig)))) myLog(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
-            *confPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount}, false, false, NULL, NULL };
+            *confPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, commonConfig.robustnessValue}, false, false, NULL, NULL };
             strcpy(confPtr->name, IfDp->Name);
             confPtr->next = vifConf;
             vifConf = confPtr;
         }
 
         // Link the configuration to the interface. And update the states.
-        IfDp->conf           = confPtr;
+        IfDp->conf      = confPtr;
         if (! IfDp->oldconf) {
             // If no old config at this point it is because buildIfVc detecetd new or removed interface.
             IfDp->oldconf = confPtr;
@@ -927,15 +910,20 @@ void configureVifs(void) {
                 IfDp->state          = IF_STATE_DISABLED | 0x80;
             } else {
                 // New interface, oldstate is disabled, newstate is configured state without default filter flag.
-                IfDp->state          = IfDp->conf->state & ~0x80;
+                IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
                 IfDp->oldconf->state = IF_STATE_DISABLED;
             }
         } else {
             // Existing interface, oldstate is current state with default filter flag, newstate is configured state without default filter flag.
             IfDp->oldconf->state = IfDp->state | (IfDp->conf->state & 0x80);
-            IfDp->state          = IfDp->conf->state & ~0x80;
+            IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
         }
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
+
+        // Set configured querier ip to interface address if not configured and set version to 3 for disabled/upstream only interface.
+        if (confPtr->qry.ip == (uint32_t)-1) confPtr->qry.ip = IfDp->InAdr.s_addr;
+        if (!IS_DOWNSTREAM(IfDp->state)) confPtr->qry.ver = 3;
+        if (confPtr->qry.ver == 1) confPtr->qry.interval = 10, confPtr->qry.responseInterval = 10;
 
         // Create default filters for aliases -> any allow, when reloading config or when new interface is detected and no configuration reload has yet occured.
         if (!(IfDp->conf->state & 0x80) && !confPtr->compat && !confPtr->nodefaultfilter && !CONFIG->nodefaultFilter) {
@@ -946,7 +934,7 @@ void configureVifs(void) {
         }
 
         // Set the querier parameters and check if timers need to be stopped and querier process restarted.
-        if (! IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && IfDp->querier.ip != IfDp->InAdr.s_addr) ctrlQuerier(2, IfDp);
+        if (! IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && IfDp->querier.ip != IfDp->conf->qry.ip) ctrlQuerier(2, IfDp);
 
         // Increase counters and call addVif if necessary.
         if (!IS_DISABLED(newstate) && (IfDp->index != (unsigned int)-1 || addVIF(IfDp))) {
@@ -956,11 +944,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate))          { clearRoutes(IfDp);  ctrlQuerier(1, IfDp); }
+        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )        { clearRoutes(IfDp);  ctrlQuerier(1, IfDp); }
         else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))        {                     ctrlQuerier(1, IfDp); }
-        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate))          { clearRoutes(IfDp);  ctrlQuerier(0, IfDp); }
+        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )        { clearRoutes(IfDp);  ctrlQuerier(0, IfDp); }
         else if ( oldstate != newstate)                                      { clearRoutes(IfDp);  ctrlQuerier(2, IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate))         { clearRoutes(IfDp);                        }
+        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )        { clearRoutes(IfDp);                        }
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (unsigned int)-1) {
@@ -975,5 +963,5 @@ void configureVifs(void) {
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
-    if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0) myLog(LOG_ERR, 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
+    if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0) myLog(STARTUP ? LOG_ERR : LOG_WARNING, 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }

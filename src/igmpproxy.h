@@ -96,15 +96,14 @@ struct Config {
     char               *runPath;
     // Default interface igmp parameters.
     uint32_t            querierIp;
-    unsigned int        robustnessValue;
-    unsigned int        queryInterval;
-    unsigned int        queryResponseInterval;
+    uint8_t             querierVer;
+    uint8_t             robustnessValue;
+    uint8_t             queryInterval;
+    uint8_t             queryResponseInterval;
     unsigned int        bwControlInterval;
-    // Used on querier startup.
-    unsigned int        startupQueryInterval;
     // Last member probe.
-    unsigned int        lastMemberQueryInterval;
-    unsigned int        lastMemberQueryCount;
+    uint8_t             lastMemberQueryInterval;
+    uint8_t             lastMemberQueryCount;
     // Set if upstream leave messages should be sent instantly..
     bool                fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
@@ -151,13 +150,16 @@ struct filters {
 
 // Keeps configured Querier parameters.
 struct queryParam {
-    uint32_t            ip;                      // Configured querier IP
-    bool                election;                // Configured querier election mode
-    uint8_t             robustness;              // Configured robustness value
-    unsigned int        interval;                // Configured query interval
-    unsigned int        responseInterval;        // Configured query response interval
-    unsigned int        lmInterval;              // Configured lastmember query interval value
-    uint8_t             lmCount;                 // Configured lastmember count value
+    uint32_t            ip;                     // Configured querier IP
+    uint8_t             ver;                    // Configured querier version
+    bool                election;               // Configured querier election mode
+    uint8_t             robustness;             // Configured robustness value
+    uint8_t             interval;               // Configured query interval
+    uint8_t             responseInterval;       // Configured query response interval
+    uint8_t             lmInterval;             // Configured lastmember query interval value
+    uint8_t             lmCount;                // Configured lastmember count value
+    uint8_t             startupQueryInterval;   // Configured startup query interval
+    uint8_t             startupQueryCount;      // Configured startup query count
 };
 
 // Structure to keep configuration for VIFs.
@@ -180,17 +182,8 @@ struct querier {                                        // igmp querier status f
     uint8_t        qqi;                                 // Queriers query interval
     uint8_t        qrv;                                 // Queriers robustness value
     uint8_t        mrc;                                 // Queriers max response code
-    uint64_t       v1Timer;                             // v1 Querier timer
-    uint64_t       v2Timer;                             // v2 Querier timer
-    uint64_t       v3Timer;                             // v3 Querier timer
+    uint64_t       Timer;                               // Self / Other Querier timer
     uint64_t       ageTimer;                            // Route aging timer
-};
-
-// Operational IGMP status for interfaces.
-struct Igmp {
-    uint8_t        ver;                                 // Version
-    uint64_t       v1Timer;                             // V1 timer
-    uint64_t       v2Timer;                             // V2 timer
 };
 
 // Interfaces configuration.
@@ -199,14 +192,11 @@ struct IfDesc {
     struct in_addr                InAdr;                    // Primary IP
     struct filters               *aliases;                  // Secondary IPs
     unsigned short                Flags;                    // Operational flags
+    unsigned short                mtu;                      // Interface MTU
     uint8_t                       state;                    // Operational state
     struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
     struct querier                querier;                  // igmp querier for interface
-    struct Igmp                   igmp;                     // Operational IGMP status
-    unsigned char                 threshold;                // ttl limit
-    unsigned int                  startupQueryInterval;     // Interface startup query interval
-    uint8_t                       startupQueryCount;        // Interface startup query count
-    uint64_t                      bytes, rate, ratelimit;   // Counters for bandwith control
+    uint64_t                      bytes, rate;              // Counters for bandwith control
     unsigned int                  index;                    // MCast vif index
     struct IfDesc                *next;
 };
@@ -214,11 +204,11 @@ struct IfDesc {
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
 #define IS_DISABLED(x)         ((x & 0x3) == 0)
-#define IF_STATE_UPSTREAM      1                              // Interface is the upstream interface
+#define IF_STATE_UPSTREAM      1                              // Interface is upstream
 #define IS_UPSTREAM(x)         (x & 0x1)
-#define IF_STATE_DOWNSTREAM    2                              // Interface is a downstream interface
+#define IF_STATE_DOWNSTREAM    2                              // Interface is downstream
 #define IS_DOWNSTREAM(x)       (x & 0x2)
-#define IF_STATE_UPDOWNSTREAM  3
+#define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
 #define IF_OLDSTATE(x)         x ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED
 #define IF_NEWSTATE(x)         x ? x->state          & ~0x80 : IF_STATE_DISABLED
@@ -277,7 +267,7 @@ struct gvDescL {
 //  Global Variables.
 //############A#####################################################################
 // Timekeeping
-extern struct timespec curtime, utcoff;
+extern struct   timespec curtime, utcoff;
 
 // Process Signaling.
 extern unsigned int sighandled, sigstatus;
@@ -294,7 +284,7 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 /**
 *   callout.c
 */
-typedef void  (*timer_f)(void *);
+typedef void  (*timer_f)();
 void            timer_freeQueue(void);
 struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(uint64_t timer_id, unsigned int delay, const char name[40], timer_f action, void *);
