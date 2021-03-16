@@ -116,7 +116,7 @@ void processCliCon(int fd) {
     unsigned int s = sizeof(cliSockAddr);
     int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
     if (len <= 0) return;
-    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0) logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0)      logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
     else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0) getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
     else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0) getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
     else if (strcmp("t", buf) == 0 || strcmp("th", buf) == 0) debugQueue("", strcmp("t", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
@@ -176,13 +176,13 @@ void cliCmd(char *cmd) {
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
         fprintf(stdout, "Cannot open socket %s. %s\n", srvSockAddr.sun_path, strerror(errno));
-        exit(1);
+        exit(-1);
     }
 
     for (cmd = cli ? fgets(buf, CLI_CMD_BUF, stdin) : strcpy(buf, cmd); cmd && strcmp("done\n", buf) != 0 && strcmp(".\n", buf) != 0 && strlen(buf) < CLI_CMD_BUF; cmd = fgets(buf, CLI_CMD_BUF, stdin)) {
         if (sendto(srvSock, buf, cli ? strlen(buf) - 1 : strlen(buf), 0, (struct sockaddr *)&srvSockAddr, sizeof(srvSockAddr)) == -1) {
             fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
-            exit(1);
+            exit(-1);
         }
 
         // Receive the daemon's answer. It will be closed by one single byte.

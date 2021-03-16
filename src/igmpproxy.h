@@ -100,31 +100,31 @@ struct Config {
     uint8_t             robustnessValue;
     uint8_t             queryInterval;
     uint8_t             queryResponseInterval;
-    unsigned int        bwControlInterval;
+    uint32_t            bwControlInterval;
     // Last member probe.
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
     // Set if upstream leave messages should be sent instantly..
     bool                fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
-    unsigned int        downstreamHostsHashTableSize;
+    uint32_t            downstreamHostsHashTableSize;
     // Max origins for route when bw control is disabled.
-    unsigned int        maxOrigins;
+    uint16_t            maxOrigins;
     // Set default interface status and parameters.
-    unsigned short      defaultInterfaceState;
-    unsigned char       defaultThreshold;
-    unsigned int        defaultRatelimit;
+    uint8_t             defaultInterfaceState;
+    uint8_t             defaultThreshold;
+    uint64_t            defaultRatelimit;
     bool                defaultFilterAny;
     bool                nodefaultFilter;
     // Logging Parameters.
-    int                 logLevel;
-    bool                logFile;
+    uint8_t             logLevel;
+    bool                log2File;
     char               *logFilePath;
     bool                log2Stderr;              // Log to stderr instead of to syslog / file
     // Set if nneed to detect new interface.
-    unsigned int        rescanVif;
+    uint32_t            rescanVif;
     // Set if nneed to detect config change.
-    unsigned int        rescanConf;
+    uint32_t            rescanConf;
     // Set if need to proxy IANA local multicast range 224.0.0.0/8.
     bool                proxyLocalMc;
     // Set if must not participate in IGMP querier election.
@@ -174,6 +174,7 @@ struct vifConfig {
     struct filters     *filters;
     struct vifConfig   *next;
 };
+#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, false, NULL, NULL }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -191,15 +192,16 @@ struct IfDesc {
     char                          Name[IF_NAMESIZE];
     struct in_addr                InAdr;                    // Primary IP
     struct filters               *aliases;                  // Secondary IPs
-    unsigned short                Flags;                    // Operational flags
-    unsigned short                mtu;                      // Interface MTU
+    uint32_t                      Flags;                    // Operational flags
+    uint32_t                      mtu;                      // Interface MTU
     uint8_t                       state;                    // Operational state
     struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
     struct querier                querier;                  // igmp querier for interface
     uint64_t                      bytes, rate;              // Counters for bandwith control
-    unsigned int                  index;                    // MCast vif index
+    uint8_t                       index;                    // MCast vif index
     struct IfDesc                *next;
 };
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0,(uint8_t)-1, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -257,7 +259,7 @@ struct gvDescL {
 #define IFREBUILD  (sigstatus & GOT_SIGUSR2)
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
 #define NOSIG      (sigstatus == 0)
-#define STARTUP NOSIG
+#define STARTUP    (sigstatus == 1)
 
 // CLI Defines.
 #define CLI_CMD_BUF    256
@@ -270,7 +272,7 @@ struct gvDescL {
 extern struct   timespec curtime, utcoff;
 
 // Process Signaling.
-extern unsigned int sighandled, sigstatus;
+extern uint8_t  sighandled, sigstatus;
 
 // Global IGMP groups.
 extern uint32_t allhosts_group;            /* All hosts addr in net order */
@@ -287,7 +289,7 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 typedef void  (*timer_f)();
 void            timer_freeQueue(void);
 struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(uint64_t timer_id, unsigned int delay, const char name[40], timer_f action, void *);
+uint64_t        timer_setTimer(uint64_t timer_id, uint32_t delay, const char name[40], timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 
@@ -317,30 +319,17 @@ void           freeIfDescL(bool clean);
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfByName(const char *IfName);
-struct IfDesc *getIfByIx(unsigned int ix);
+struct IfDesc *getIfByIx(uint8_t ix);
 struct IfDesc *getIfL(void);
 uint64_t       isAddressValidForIf(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group);
 void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
 void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 
 /**
-*   mroute-api.c
-*/
-int  getMrouterFD(void);
-int  enableMRouter(void);
-void disableMRouter(void);
-bool addVIF(struct IfDesc *Dp);
-void delVIF(struct IfDesc *Dp);
-int  addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
-int  delMRoute(uint32_t src, uint32_t group, int vif);
-void deleteUpcalls(uint32_t src, uint32_t group);
-
-/**
 *   igmp.c
 */
 char    *initIgmp(void);
 void     acceptIgmp(int recvlen, struct msghdr msgHdr);
-uint16_t getIgmpExp(int val, int d);
 void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     freeQueriers(void);
 void     sendGroupSpecificMemberQuery(GroupVifDesc *gvDesc);
@@ -353,16 +342,28 @@ char    *fmtInAdr(struct in_addr InAdr, int pos);
 char    *inetFmt(uint32_t addr, int pos);
 char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t inetChksum(uint16_t *addr, int len);
+uint32_t murmurhash3(register uint32_t x);
+uint16_t getIgmpExp(register int val, register int d);
+void     myLog(int Serverity, int Errno, const char *FmtSt, ...);
 
 /**
 *   kern.c
 */
+#define MROUTERFD k_getMrouterFD()
 void k_set_rcvbuf(int bufsize, int minsize);
-int  k_set_ttl(int t);
+int  k_set_ttl(uint8_t t);
 void k_set_loop(int l);
 void k_set_if(struct IfDesc *IfDp);
 bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr);
 bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr);
+int  k_getMrouterFD(void);
+int  k_enableMRouter(void);
+void k_disableMRouter(void);
+bool k_addVIF(struct IfDesc *IfDp);
+void k_delVIF(struct IfDesc *IfDp);
+int  k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
+int  k_delMRoute(uint32_t src, uint32_t group, int vif);
+void k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
 *   rttable.c
@@ -372,16 +373,11 @@ uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void               processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
 void               bwControl(uint64_t *tid);
-void               clearRoutes(void *Dp1);
+void               clearRoutes(void *Dp);
 uint32_t           getRouteVifbits(register uint32_t group);
-struct RouteTable *insertRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
+struct routeTable *insertRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
 void               activateRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
 void               ageActiveRoutes(struct IfDesc *IfDp);
 bool               setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp);
 bool               lastMemberGroupAge(uint32_t group, struct IfDesc *IfDp);
 void               logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
-
-/**
-*   syslog.c
-*/
-void myLog(int Serverity, int Errno, const char *FmtSt, ...);

@@ -89,10 +89,7 @@ void freeConfig(int old) {
     for (clrConfPtr = old ? oldvifConf : vifConf; clrConfPtr; clrConfPtr = tmpConfPtr) {
         tmpConfPtr = clrConfPtr->next;
         struct filters *tmpFilPtr;
-        for (; clrConfPtr->filters; clrConfPtr->filters = tmpFilPtr) {
-            tmpFilPtr = clrConfPtr->filters->next;
-            free(clrConfPtr->filters);  // Alloced by allocFilter()
-        }
+        for (; clrConfPtr->filters; tmpFilPtr = clrConfPtr->filters->next, free(clrConfPtr->filters), clrConfPtr->filters = tmpFilPtr);  // Alloced by allocFilter()
         free(clrConfPtr);   // Alloced by parsePhyintToken()
     }
 
@@ -105,8 +102,8 @@ void freeConfig(int old) {
 static bool configFile(char *filename, int open) {
     // Open config file and allocate memory for inputbuffer. Freed by closeConfigFile()
     if (! open || ! (confFilePtr = fopen(filename, "r")) || ! (iBuffer = (char*)malloc(sizeof(char) * READ_BUFFER_SIZE))) {
-        fclose(confFilePtr);
-        free(iBuffer);   // Alloced by self
+        if (confFilePtr) fclose(confFilePtr);
+        if (iBuffer) free(iBuffer);   // Alloced by self
         confFilePtr = NULL;
         iBuffer = NULL;
         return open ? false : true;
@@ -188,11 +185,8 @@ static char *nextConfigToken(void) {
         }
         // If the readsize is less than buffersize, we assume EOF.
         if (readSize < READ_BUFFER_SIZE && bufPtr == readSize) {
-            if (tokenPtr > 0) {
-                finished = true;
-            } else {
-                return NULL;
-            }
+            if (tokenPtr > 0) finished = true;
+            else return NULL;
         }
     }
     if (tokenPtr > 0) {
@@ -268,7 +262,8 @@ static void initCommonConfig(void) {
     commonConfig.nodefaultFilter  = false;
 
     // Log to file disabled by default.
-    commonConfig.logFile = false;
+    commonConfig.log2File = false;
+    commonConfig.logLevel = !commonConfig.log2Stderr ? LOG_WARNING : LOG_DEBUG;
 
     // Default no timed rebuild interfaces / reload config.
     commonConfig.rescanVif  = 0;
@@ -318,8 +313,8 @@ void reloadConfig(uint64_t *tid) {
 *   Loads the configuration from file, and stores the config in respective holders.
 */
 bool loadConfig(void) {
-    struct vifConfig  *tmpPtr, **currPtr = &vifConf;
-    int    intToken;
+    struct  vifConfig *tmpPtr, **currPtr = &vifConf;
+    int64_t            intToken;
 
     // Initialize common config
     initCommonConfig();
@@ -353,7 +348,7 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("maxorigins", token) == 0 && INTTOKEN) {
             // Got a maxorigins token...
-            commonConfig.maxOrigins = intToken < DEFAULT_MAX_ORIGINS ? DEFAULT_MAX_ORIGINS : intToken;
+            commonConfig.maxOrigins = intToken < DEFAULT_MAX_ORIGINS || intToken > 65535 ? DEFAULT_MAX_ORIGINS : intToken;
             myLog(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
 
         } else if (strcasecmp("hashtablesize", token) == 0 && INTTOKEN) {
@@ -474,7 +469,7 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("bwcontrol", token) == 0 && INTTOKEN) {
             // Got a bcontrolinterval token...
-            commonConfig.bwControlInterval = intToken > 0 && intToken < 3 ? 3 : intToken;
+            commonConfig.bwControlInterval = intToken < 3 ? 3 : intToken;
             myLog(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken);
 
         } else if (strcasecmp("rescanvif", token) == 0 && INTTOKEN) {
@@ -489,12 +484,14 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("loglevel", token) == 0 && INTTOKEN) {
             // Got a loglevel token...
-            commonConfig.logLevel = intToken > 7 ? 7 : intToken < 0 ? 0 : intToken;
-            myLog(LOG_NOTICE, 0, "Config: Log Level %d", intToken);
+            if (!commonConfig.log2Stderr) {
+                commonConfig.logLevel = intToken > 7 ? 7 : intToken < 0 ? 0 : intToken;
+                myLog(LOG_NOTICE, 0, "Config: Log Level %d", intToken);
+            }
 
         } else if (strcasecmp("logfile", token) == 0 && (token = nextConfigToken())) {
-            if (! commonConfig.log2Stderr) {
-                // Got a logfile token. Only use log file if not logging to stderr.
+            // Got a logfile token. Only use log file if not logging to stderr.
+            if (!commonConfig.log2Stderr) {
                 commonConfig.logFilePath = ! commonConfig.logFilePath ? (char *)malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;   // Freed by igmpProxyCleanUp()
                 if (strstr(options, token)) {
                     myLog(LOG_WARNING, 0, "Config: No logfile path specified. Ignoring.");
@@ -510,7 +507,7 @@ bool loadConfig(void) {
                     myLog(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
                     time_t rawtime = time(NULL);
                     utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
-                    commonConfig.logFile = true;
+                    commonConfig.log2File = true;
                 }
             }
 
@@ -568,9 +565,8 @@ bool loadConfig(void) {
     }
 
     // Check rescanconf status and start or clear timers if necessary.
-    if (commonConfig.rescanConf && timers.rescanConf == 0) {
-        timers.rescanConf = timer_setTimer(0, commonConfig.rescanConf * 10, "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
-    } else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
+    if (commonConfig.rescanConf && timers.rescanConf == 0) timers.rescanConf = timer_setTimer(0, commonConfig.rescanConf * 10, "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
+    else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
@@ -581,16 +577,12 @@ bool loadConfig(void) {
         timers.bwControl = 0;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         int Va, len = sizeof(Va);
-        if (!STARTUP && (getsockopt(getMrouterFD(), IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) || ! (Va & MRT_MFC_BW_UPCALL))) {
+        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) || ! (Va & MRT_MFC_BW_UPCALL))) {
             myLog(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             commonConfig.bwControlInterval = 0;
-        } else {
-            clearRoutes(getConfig);
-        }
+        } else clearRoutes(getConfig);
 #endif
-        if (commonConfig.bwControlInterval) {
-            timers.bwControl = timer_setTimer(0, commonConfig.bwControlInterval * 10, "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
-        }
+        if (commonConfig.bwControlInterval) timers.bwControl = timer_setTimer(0, commonConfig.bwControlInterval * 10, "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
     }
 
     // Check if quickleave was enabled or disabled due to config change.
@@ -612,8 +604,8 @@ bool loadConfig(void) {
 *   Internal function to parse phyint config.
 */
 static struct vifConfig *parsePhyintToken(void) {
-    struct vifConfig  *tmpPtr;
-    int    intToken;
+    struct vifConfig *tmpPtr;
+    int64_t           intToken;
 
     // First token should be the interface name....
     if (! (token = nextConfigToken())) {
@@ -624,7 +616,8 @@ static struct vifConfig *parsePhyintToken(void) {
 
     // Allocate and initialize memory for new configuration.
     if (! (tmpPtr = (struct vifConfig*)malloc(sizeof(struct vifConfig)))) myLog(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
-    *tmpPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, commonConfig.robustnessValue}, true, false, NULL, NULL };
+    *tmpPtr = DEFAULT_VIFCONF;
+    tmpPtr->compat = true;
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
     memcpy(tmpPtr->name, token, IF_NAMESIZE);
@@ -883,17 +876,14 @@ void configureVifs(void) {
                 }
 
                 // Free the previous list made by parsePhyIntToken().
-                for (filter = ofilters; filter; filter = alias) {
-                    alias = filter->next;
-                    free(filter);      // Alloced by allocFilter()
-                }
+                for (filter = ofilters; filter; alias = filter->next, free(filter), filter = alias);   // Alloced by allocFilter()
             }
 
         } else  {
             // Interface has no matching config, create default config.
             myLog(LOG_DEBUG, 0, "configureVifs: Creating default config for %s interface %s.", IS_DISABLED(commonConfig.defaultInterfaceState) ? "disabled" : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream" : IS_UPSTREAM(commonConfig.defaultInterfaceState) ? "upstream" : "downstream", IfDp->Name);
             if (! (confPtr = (struct vifConfig *)malloc(sizeof(struct vifConfig)))) myLog(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
-            *confPtr = (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, commonConfig.robustnessValue}, false, false, NULL, NULL };
+            *confPtr = DEFAULT_VIFCONF;
             strcpy(confPtr->name, IfDp->Name);
             confPtr->next = vifConf;
             vifConf = confPtr;
@@ -937,7 +927,7 @@ void configureVifs(void) {
         if (! IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && IfDp->querier.ip != IfDp->conf->qry.ip) ctrlQuerier(2, IfDp);
 
         // Increase counters and call addVif if necessary.
-        if (!IS_DISABLED(newstate) && (IfDp->index != (unsigned int)-1 || addVIF(IfDp))) {
+        if (!IS_DISABLED(newstate) && (IfDp->index != (uint8_t)-1 || k_addVIF(IfDp))) {
             vifcount++;
             if (IS_DOWNSTREAM(newstate)) downvifcount++;
             if (IS_UPSTREAM(newstate))   upsvifcount++;
@@ -951,8 +941,8 @@ void configureVifs(void) {
         else if ( oldstate == newstate    && !IS_DISABLED(newstate) )        { clearRoutes(IfDp);                        }
 
         // Check if vif needs to be removed.
-        if (IS_DISABLED(newstate) && IfDp->index != (unsigned int)-1) {
-            delVIF(IfDp);
+        if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
+            k_delVIF(IfDp);
             if (vifcount) vifcount--;
             if (IS_DOWNSTREAM(oldstate) && downvifcount) downvifcount--;
             if (IS_UPSTREAM(oldstate)   && upsvifcount)  upsvifcount--;

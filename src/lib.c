@@ -41,7 +41,7 @@ static char s[4][19];
 *   Formats 'InAdr' into a dotted decimal string.
 *   returns: - pointer to 'St'
 */
-char *fmtInAdr(struct in_addr InAdr, int pos) {
+inline char *fmtInAdr(struct in_addr InAdr, int pos) {
     sprintf(s[pos - 1], "%u.%u.%u.%u", ((uint8_t *)&InAdr.s_addr)[0], ((uint8_t *)&InAdr.s_addr)[1], ((uint8_t *)&InAdr.s_addr)[2], ((uint8_t *)&InAdr.s_addr)[3]);
     return s[pos - 1];
 }
@@ -49,7 +49,7 @@ char *fmtInAdr(struct in_addr InAdr, int pos) {
 /**
 *   Convert an IP address in u_long (network) format into a printable string.
 */
-char *inetFmt(uint32_t addr, int pos) {
+inline char *inetFmt(uint32_t addr, int pos) {
     register unsigned char *a = (unsigned char *)&addr;
 
     sprintf(s[pos - 1], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
@@ -59,16 +59,12 @@ char *inetFmt(uint32_t addr, int pos) {
 /**
 *   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
 */
-char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
+inline char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
     register unsigned char *a = (unsigned char *)&addr, *m = (unsigned char *)&mask;
     int bits = 33 - ffs(ntohl(mask));
 
-    if ((addr == 0) && (mask == 0)) {
-        sprintf(s[pos - 1], "default");
-        return(s[pos - 1]);
-    }
-
-    if      (m[3] != 0) sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
+    if ((addr == 0) && (mask == 0)) sprintf(s[pos - 1], "default");
+    else if (m[3] != 0) sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
     else if (m[2] != 0) sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
     else if (m[1] != 0) sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
     else                sprintf(s[pos - 1], "%u/%d",          a[0], bits);
@@ -77,50 +73,68 @@ char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
 }
 
 /**
-*   inet_cksum extracted from:
-*        P I N G . C
-*
-*   Author -
-*        Mike Muuss
-*        U. S. Army Ballistic Research Laboratory
-*        December, 1983
-*   Modified at Uc Berkeley
-*
-*   (ping.c) Status -
-*        Public Domain.  Distribution Unlimited.
-*
-*        I N _ C K S U M
-*
-*   Checksum routine for Internet Protocol family headers (C Version)
+*   Optimized ones complement IGMP checksum calculation routine.
+*   Original Author - Mike Muuss, U. S. Army Ballistic Research Laboratory, December, 1983
+*   Our algorithm is simple, using a 32 bit accumulator (sum), we add sequential 16 bit words to it,
+*   and at the end, fold back all the carry bits from the top 16 bits into the lower 16 bits.
 */
-uint16_t inetChksum(uint16_t *addr, int len) {
-    register int nleft = len;
-    register uint16_t *w = addr;
-    uint16_t answer = 0;
+inline uint16_t inetChksum(register uint16_t *addr, register int len) {
     register int32_t sum = 0;
 
-    /*
-     *  Our algorithm is simple, using a 32 bit accumulator (sum),
-     *  we add sequential 16 bit words to it, and at the end, fold
-     *  back all the carry bits from the top 16 bits into the lower
-     *  16 bits.
-     */
-    while (nleft > 1) {
-        sum += *w++;
-        nleft -= 2;
-    }
+    do sum += *addr++; while ((len -= 2) > 1);
+    if (len) sum += *(uint8_t *)addr;
 
-    /* mop up an odd byte, if necessary */
-    if (nleft == 1) {
-        *(uint8_t *) (&answer) = *(uint8_t *)w ;
-        sum += answer;
-    }
+    sum = (sum >> 16) + (sum & 0xffff);
+    return (uint16_t) ~(sum + (sum >> 16));
+}
 
-    /*
-     * add back carry outs from top 16 bits to low 16 bits
-     */
-    sum = (sum >> 16) + (sum & 0xffff); /* add hi 16 to low 16 */
-    sum += (sum >> 16);                 /* add carry */
-    answer = ~sum;                      /* truncate to 16 bits */
-    return answer;
+/**
+*   Functions for downstream hosts hash table
+*   MurmurHash3 32bit hash function by Austin Appleby, public domain
+*/
+inline uint32_t murmurhash3(register uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x85ebca6b;
+    x ^= x >> 13;
+    x *= 0xc2b2ae35;
+    return x ^ (x >> 16);
+}
+
+/**
+*   Calculate QQIC / RESV value from given 15 bit integer (RFC Max). We use our own implementation, as various OS do not provide a common one.
+*/
+inline uint16_t getIgmpExp(register int val, register int d) {
+    int i, exp;
+    if      (val <= 0 || val > 32767) return 0;
+    else if (val < 128)               return (uint8_t)val;
+    else if (!d)                      return (uint16_t)((val & 0xf) | 0x10) << (((val & 0x70) >> 4) + 3);
+    for (exp = 0, i = val >> 7; i != 1; i >>= 1, exp++);
+    return (uint8_t)(0x80 | exp << 4 | ((val >> (exp + 3)) & 0xf));
+}
+
+/**
+*   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
+*/
+inline void myLog(int Severity, int Errno, const char *FmtSt, ...) {
+    struct timespec logtime;
+    char            LogMsg[256];
+    FILE           *lfp = NULL;
+    va_list         ArgPt;
+    unsigned        Ln;
+
+    if (Severity > CONFIG->logLevel) return;
+    va_start(ArgPt, FmtSt);
+    Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
+    if (Errno > 0) snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
+    va_end(ArgPt);
+
+    if (CONFIG->log2File || CONFIG->log2Stderr || (STARTUP && Severity <= LOG_ERR)) {
+        clock_gettime(CLOCK_REALTIME, &logtime);
+        long sec = logtime.tv_sec + utcoff.tv_sec, nsec = logtime.tv_nsec;
+        lfp = CONFIG->log2File ? freopen(CONFIG->logFilePath, "a", stderr) : NULL;
+        fprintf(stderr, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60, sec % 3600 % 60, nsec / 100000, LogMsg);
+        if (lfp) fclose(lfp);
+    } else syslog(Severity, "%s", LogMsg);
+
+    if (Severity <= LOG_ERR) exit(-1);
 }

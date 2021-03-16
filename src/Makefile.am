@@ -10,12 +10,10 @@ igmpproxy_SOURCES = \
 	igmpproxy.h \
 	kern.c \
 	lib.c \
-	mroute-api.c \
 	os-dragonfly.h \
 	os-freebsd.h \
 	os-linux.h \
 	os-netbsd.h \
 	os-openbsd.h \
 	os-qnxnto.h \
-	rttable.c \
-	syslog.c
+	rttable.c
