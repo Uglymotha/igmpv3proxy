@@ -71,7 +71,7 @@ static struct timers {
     uint64_t bwControl;
 } timers = { 0, 0, 0 };
 
-#define INTTOKEN ((intToken = atoi(nextConfigToken())) || !intToken)
+#define INTTOKEN ((intToken = atoll(nextConfigToken())) || !intToken)
 
 /**
 *   Returns pointer to the configuration.
@@ -304,7 +304,7 @@ void reloadConfig(uint64_t *tid) {
 
         myLog(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", oldvifConf, vifConf);
     }
-    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf) *tid = timer_setTimer(0, commonConfig.rescanConf * 10, "Reload Configuration", (timer_f)reloadConfig, tid);
+    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf) *tid = timer_setTimer(0, TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
 
     sigstatus = 0;
 }
@@ -557,7 +557,7 @@ bool loadConfig(void) {
 
     // Check rescanvif status and start or clear timers if necessary.
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(0, commonConfig.rescanVif * 10, "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
+        timers.rescanVif = timer_setTimer(0, TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
     } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
@@ -565,7 +565,7 @@ bool loadConfig(void) {
     }
 
     // Check rescanconf status and start or clear timers if necessary.
-    if (commonConfig.rescanConf && timers.rescanConf == 0) timers.rescanConf = timer_setTimer(0, commonConfig.rescanConf * 10, "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
+    if (commonConfig.rescanConf && timers.rescanConf == 0) timers.rescanConf = timer_setTimer(0, TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
     else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
@@ -582,7 +582,7 @@ bool loadConfig(void) {
             commonConfig.bwControlInterval = 0;
         } else clearRoutes(getConfig);
 #endif
-        if (commonConfig.bwControlInterval) timers.bwControl = timer_setTimer(0, commonConfig.bwControlInterval * 10, "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
+        if (commonConfig.bwControlInterval) timers.bwControl = timer_setTimer(0, TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
     }
 
     // Check if quickleave was enabled or disabled due to config change.

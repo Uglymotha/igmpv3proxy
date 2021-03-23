@@ -245,7 +245,6 @@ static void igmpProxyRun(void) {
         }
 
         // Run queue aging, it wil return the time until next timer is scheduled.
-        clock_gettime(CLOCK_MONOTONIC, &curtime);
         struct timespec timeout = timer_ageQueue();
 
         // Wait for input

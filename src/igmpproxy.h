@@ -237,7 +237,7 @@ struct IfDesc {
 // Group specific query structs.
 typedef struct {
     uint32_t        group;
-    char            sourceVif[IF_NAMESIZE];
+    char            IfDp[IF_NAMESIZE];
     bool            started;
     bool            aging;
     uint64_t        timerid;
@@ -286,11 +286,14 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 /**
 *   callout.c
 */
+#define TMNAMESZ 40
+#define TDELAY(x) (struct timespec){ -1, x }
 typedef void  (*timer_f)();
 void            timer_freeQueue(void);
 struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(uint64_t timer_id, uint32_t delay, const char name[40], timer_f action, void *);
+uint64_t        timer_setTimer(uint64_t timer_id, struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);
+struct timespec timer_getTime(uint64_t timer_id);
 void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 
 /**

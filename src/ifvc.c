@@ -86,7 +86,7 @@ void rebuildIfVc(uint64_t *tid) {
     if (!CONFRELOAD) freeIfDescL(true);
 
     // Restart timer when doing timed reload.
-    if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif) *tid = timer_setTimer(0, CONFIG->rescanVif * 10, "Rebuild Interfaces", (timer_f)rebuildIfVc, tid);
+    if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif) *tid = timer_setTimer(0, TDELAY(CONFIG->rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, tid);
 
     sigstatus = IFREBUILD ? 0 : sigstatus;
 }

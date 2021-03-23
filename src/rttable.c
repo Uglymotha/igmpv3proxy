@@ -50,32 +50,34 @@ struct originAddrs {
     struct originAddrs *next;
 };
 
-struct sources {
+struct dSources {
     uint32_t            ip;                       // Source IP adress
     uint32_t            vifBits;                  // Active vifs for source
-    uint8_t             ageValue[MAXVIFS];        // Per vif age value
-    struct sources     *next;
+    uint8_t             ageValue[MAXVIFS];        // Age value for source
+    struct dsources    *next;
 };
 
-struct itimers {
-    uint64_t            tid;                      // Timer ID
-    struct IfDesc      *IfDp;                     // Interface for timer
-    struct itimers     *next;
+struct uSources {
+    uint32_t            ip;                       // Source IP adress
+    struct uSources    *next;
 };
 
 struct routeTable {
+    // Keeps group and source information.
     struct routeTable  *next;                     // Pointer to the next group in line.
     uint32_t            group;                    // The group to route
-    uint32_t            vifBits;                  // Bits representing recieving VIFs
-    struct itimers     *v1Timers, *v2Timers;      // Other hosts present timers
-    struct sources     *sources;                  // Source list for group
+    struct uSources    *uSources;                 // Upstream source list for group
+    struct dSources    *dSources;                 // Downstream source list for group
     struct originAddrs *origins;                  // The origin adresses (only set on activated routes)
 
     // Keeps the group states. Per vif flags.
     uint32_t            mode;                     // Mode (include/exclude) for group
     uint32_t            upstrState;               // Upstream membership state
     uint32_t            lastMember;               // Last member flag
+    uint32_t            v1mode;                   // v1 compatibility flags
+    uint32_t            v2mode;                   // v2 compatibility flags
     uint8_t             ageValue[MAXVIFS];        // Downcounter for death.
+    uint32_t            vifBits;                  // Bits representing recieving VIFs
     uint32_t            ageVifBits;               // Bits representing aging VIFs.
 
     // Keeps downstream hosts information
@@ -133,13 +135,11 @@ uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp) {
 
     for (croute = routing_table; croute; croute = croute->next) {
         if (IS_UPSTREAM(IfDp->state) && (croute->group & group.mask) == group.ip) {
-            for (oAddr = croute->origins; oAddr; oAddr = oAddr->next) {
+            for (oAddr = croute->origins; oAddr; oAddr = oAddr->next)
                 bw = oAddr->vif == (IfDp->index) ? bw + oAddr->rate : bw;
-            }
         } else if (IS_DOWNSTREAM(IfDp->state) && (croute->group & group.mask) == group.ip && BIT_TST(croute->vifBits, IfDp->index)) {
-            for (oAddr = croute->origins; oAddr; oAddr = oAddr->next) {
+            for (oAddr = croute->origins; oAddr; oAddr = oAddr->next)
                 bw += oAddr->rate;
-            }
         }
     }
 
@@ -166,9 +166,8 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
         for (oAddr = croute->origins; oAddr && oAddr->src != bwUpc->bu_src.s_addr; oAddr = oAddr->next);
         if (oAddr) {
             oAddr->bytes += bwUpc->bu_measured.b_bytes;
-            oAddr->ageBytes += bwUpc->bu_measured.b_bytes;
             oAddr->rate = bwUpc->bu_measured.b_bytes / CONFIG->bwControlInterval;
-            myLog(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to Src %s Dst %s, total %lldB / age %lldB (%lld B/s)", bwUpc->bu_measured.b_bytes, inetFmt(oAddr->src, 1), inetFmt(croute->group, 2), oAddr->bytes, oAddr->ageBytes, oAddr->rate);
+            myLog(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to Src %s Dst %s, total %lldB (%lld B/s)", bwUpc->bu_measured.b_bytes, inetFmt(oAddr->src, 1), inetFmt(croute->group, 2), oAddr->bytes, oAddr->rate);
             for (GETIFL(IfDp)) {
                 // Find the incoming and outgoing interfaces and add to counter.
                 if (IfDp->index == oAddr->vif || BIT_TST(croute->vifBits, IfDp->index)) {
@@ -237,7 +236,7 @@ void bwControl(uint64_t *tid) {
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(0, CONFIG->bwControlInterval * 10, "Bandwidth Control", (timer_f)bwControl, tid);
+    *tid = timer_setTimer(0, TDELAY(CONFIG->bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, tid);
 }
 
 /**
