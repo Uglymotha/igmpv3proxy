@@ -324,7 +324,6 @@ void           buildIfVc(void);
 struct IfDesc *getIfByName(const char *IfName);
 struct IfDesc *getIfByIx(uint8_t ix);
 struct IfDesc *getIfL(void);
-uint64_t       isAddressValidForIf(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group);
 void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
 void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 
@@ -371,16 +370,16 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 /**
 *   rttable.c
 */
-uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
+uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-void               processBwUpcall(struct bw_upcall *bwUpc, int nr);
+void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
-void               bwControl(uint64_t *tid);
-void               clearRoutes(void *Dp);
-uint32_t           getRouteVifbits(register uint32_t group);
-struct routeTable *insertRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
-void               activateRoute(register uint32_t src, register uint32_t group, struct IfDesc *IfDp);
-void               ageActiveRoutes(struct IfDesc *IfDp);
-bool               setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp);
-bool               lastMemberGroupAge(uint32_t group, struct IfDesc *IfDp);
-void               logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+void     bwControl(uint64_t *tid);
+void     clearRoutes(void *Dp);
+uint32_t getRouteVifbits(register uint32_t group);
+void     updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec);
+void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
+void     ageActiveRoutes(struct IfDesc *IfDp);
+bool     setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp);
+bool     lastMemberGroupAge(uint32_t group, struct IfDesc *IfDp);
+void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);

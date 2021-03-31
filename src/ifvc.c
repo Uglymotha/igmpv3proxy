@@ -204,40 +204,6 @@ inline struct IfDesc *getIfByIx(uint8_t ix) {
 }
 
 /**
-*   Function that checks if a given ipaddress is a valid address for the supplied pointer.
-*/
-uint64_t isAddressValidForIf(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group) {
-    struct filters      *filter;
-    uint64_t             bw = ALLOW;
-
-    // Filters are processed top down until a definitive action (BLOCK or ALLOW) is found. The default action when no filter applies is block.
-    // Whenever a ratelimit statement is encountered the the total bandwidth of all groups the filter applies to over the interface is calculated.
-    // If the result is over the ratelimit specified by the bw variable is updated and processing continues. If more than one ratelimit is applicable
-    // only the last is applied. In any case block still means block.
-    for (filter = old ? IfDp->oldconf->filters : IfDp->conf->filters; filter; filter = filter->next) {
-        if ((filter->dir == IF_STATE_UPSTREAM && dir == IF_STATE_DOWNSTREAM) || (filter->dir == IF_STATE_DOWNSTREAM && dir == IF_STATE_UPSTREAM)) continue;
-        if (src == 0 && (group & filter->dst.mask) == filter->dst.ip) {
-           if (filter->action > ALLOW) {
-               // Set ratelimit for filter. If we are called with a pointer to vifconfig it is for evaluating bwl and we do not do bw control.
-               if ((bw = getGroupBw(filter->dst, IfDp)) && bw >= filter->action)
-                   myLog(LOG_NOTICE, 0, "BW_CONTROL: Group %s (%lld B/s) ratelimited on %s by filter %s (%lld B/s).", inetFmt(group, 1), bw, IfDp->Name, inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->action);
-               else if (bw < filter->action)
-                   bw = BLOCK;
-           } else if (filter->action == ALLOW) {
-               // When joining upstream or evaluating bw lists during config reload the source is not known.
-               // Allow the request if the group is valid for any source it is used for joining / leaving and querying groups.
-               return bw > ALLOW ? bw : ALLOW;
-           }
-        } else if ((src & filter->src.mask) == filter->src.ip && (group & filter->dst.mask) == filter->dst.ip && filter->action <= ALLOW) {
-           // Process filters top down and apply first match. When action is block return block, otherwise return the set ratelimit (allow by default).
-           return filter->action == BLOCK ? BLOCK : bw > ALLOW ? bw : ALLOW;
-        }
-    }
-
-    return BLOCK;
-}
-
-/**
 *   Outputs interface statistics to socket specified in arguments.
 */
 void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {

@@ -547,10 +547,12 @@ bool loadConfig(void) {
     // Close the configfile.
     configFile(NULL, 0);
 
-    // Check Query response interval and adjust if necessary.
+    // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10 > commonConfig.queryInterval) {
-        if (commonConfig.querierVer != 3) commonConfig.queryResponseInterval = commonConfig.queryInterval * 10;
-        else                              commonConfig.queryResponseInterval = getIgmpExp(commonConfig.queryInterval * 10, 1);
+        if (commonConfig.querierVer != 3)
+            commonConfig.queryResponseInterval = commonConfig.queryInterval * 10;
+        else
+            commonConfig.queryResponseInterval = getIgmpExp(commonConfig.queryInterval * 10, 1);
         float f = (commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10;
         myLog(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", commonConfig.queryInterval, f);
     }
@@ -812,6 +814,16 @@ static struct vifConfig *parsePhyintToken(void) {
         } else break;   // Send pointer and return to main config parser.
 
         token = nextConfigToken();
+    }
+
+    // Check Query response interval and adjust if necessary (query response must be <= query interval).
+    if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10 > tmpPtr->qry.interval) {
+        if (tmpPtr->qry.ver != 3)
+            tmpPtr->qry.responseInterval = tmpPtr->qry.interval * 10;
+        else
+            tmpPtr->qry.responseInterval = getIgmpExp(tmpPtr->qry.interval * 10, 1);
+        float f = (tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10;
+        myLog(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", tmpPtr->qry.interval, f);
     }
 
     return tmpPtr;
