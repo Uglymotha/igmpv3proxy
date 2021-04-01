@@ -179,10 +179,13 @@ static void igmpProxyInit(void) {
     }
 
     // Load the config file.
-    if (! loadConfig()) myLog(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
+    if (! loadConfig())
+        myLog(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
+    CONFIG->downstreamHostsHashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Fork daemon.
-    if (!CONFIG->notAsDaemon && fork()) exit(0);
+    if (!CONFIG->notAsDaemon && fork())
+        exit(0);
 
     // Enable mroute api open cli socket and set pollFD.
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };

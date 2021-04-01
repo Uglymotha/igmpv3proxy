@@ -108,6 +108,7 @@ struct Config {
     bool                fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
     uint32_t            downstreamHostsHashTableSize;
+    uint32_t            downstreamHostsHashSeed;
     // Max origins for route when bw control is disabled.
     uint16_t            maxOrigins;
     // Set default interface status and parameters.
@@ -234,20 +235,6 @@ struct IfDesc {
 #define DEFAULT_MAX_ORIGINS     64  // Maximun nr of route sources, controlable by maxorigins config paramter, in which case this also acts as mimimun
 #define DEFAULT_HASHTABLE_SIZE  32  // Default host tracking hashtable size.
 
-// Group specific query structs.
-typedef struct {
-    uint32_t        group;
-    char            IfDp[IF_NAMESIZE];
-    bool            started;
-    bool            aging;
-    uint64_t        timerid;
-} GroupVifDesc;
-
-struct gvDescL {
-    GroupVifDesc     *gvDesc;
-    struct gvDescL   *next;
-};
-
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild
 #define GOT_SIGHUP  0x02
 #define GOT_SIGUSR1 0x04
@@ -334,7 +321,7 @@ char    *initIgmp(void);
 void     acceptIgmp(int recvlen, struct msghdr msgHdr);
 void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     freeQueriers(void);
-void     sendGroupSpecificMemberQuery(GroupVifDesc *gvDesc);
+void     sendGSQ(GroupVifDesc *gvDesc);
 void     sendGeneralMemberQuery(struct IfDesc *IfDp);
 
 /**

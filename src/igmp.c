@@ -384,9 +384,8 @@ void freeQueriers(void) {
 /**
 *   Sends a group specific member report query until the group times out.
 */
-void sendGroupSpecificMemberQuery(GroupVifDesc *gvDesc) {
-    struct gvDescL *tgvDescL = NULL, *ngvDescL = NULL, *pgvDescL = NULL;
-    struct IfDesc  *IfDp = getIfByName(gvDesc->IfDp);
+void sendGSQ(struct igmpv3_query *query) {
+    struct IfDesc  *IfDp = getIfByName(&query->grec_src[query->grec_nsrcs]);
 
     if (!gvDesc->started) {
         for (tgvDescL = qgvDescL; tgvDescL && ! (tgvDescL->gvDesc->group == gvDesc->group
