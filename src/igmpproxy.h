@@ -327,13 +327,15 @@ void     sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
+static bool log;
+#define LOG(x, ...) log = (CONFIG->logLevel >= x && myLog(x, __VA_ARGS__))
 char    *fmtInAdr(struct in_addr InAdr, int pos);
 char    *inetFmt(uint32_t addr, int pos);
 char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t inetChksum(uint16_t *addr, int len);
 uint32_t murmurhash3(register uint32_t x);
 uint16_t getIgmpExp(register int val, register int d);
-void     myLog(int Serverity, int Errno, const char *FmtSt, ...);
+bool     myLog(int Serverity, int Errno, const char *FmtSt, ...);
 
 /**
 *   kern.c

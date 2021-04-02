@@ -208,7 +208,6 @@ static void igmpProxyCleanUp(void) {
 
     struct IfDesc *IfDp;
     for (GETIFL(IfDp)) ctrlQuerier(0, IfDp);
-    freeQueriers();         // Free all group queriers.
     timer_freeQueue();      // Free all timeouts.
     clearRoutes(NULL);      // Remove all routes.
     freeIfDescL(false);     // Free IfDesc table.

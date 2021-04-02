@@ -115,14 +115,14 @@ inline uint16_t getIgmpExp(register int val, register int d) {
 /**
 *   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
 */
-inline void myLog(int Severity, int Errno, const char *FmtSt, ...) {
+inline bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
     struct timespec logtime;
     char            LogMsg[256];
     FILE           *lfp = NULL;
     va_list         ArgPt;
     unsigned        Ln;
 
-    if (Severity > CONFIG->logLevel) return;
+    if (Severity > CONFIG->logLevel) return false;
     va_start(ArgPt, FmtSt);
     Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
     if (Errno > 0) snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
@@ -136,5 +136,8 @@ inline void myLog(int Severity, int Errno, const char *FmtSt, ...) {
         if (lfp) fclose(lfp);
     } else syslog(Severity, "%s", LogMsg);
 
-    if (Severity <= LOG_ERR) exit(-1);
+    if (Severity <= LOG_ERR)
+        exit(-1);
+
+    return true;
 }

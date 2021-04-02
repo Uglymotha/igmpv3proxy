@@ -147,10 +147,11 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     struct cmsghdr    *cmsgPtr;
     struct IfDesc     *IfDp = NULL;
 
+    LOG(LOG_DEBUG, 0, "BLABLA %15s %15s %2d %2d 0x%02x", inetFmt(src, 1), inetFmt(dst, 2), ip->ip_ttl, ipdatalen, igmp->igmp_type);
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
-        if (! (IfDp = getIfByIx(igmpMsg->im_vif)))
+        if (igmp->igmp_type == IGMP_MEMBERSHIP_QUERY || ! (IfDp = getIfByIx(igmpMsg->im_vif)))
             return;
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
@@ -290,7 +291,8 @@ static void sendIgmp(struct IfDesc *IfDp, struct igmpv3_grec *grec) {
         myLog(LOG_WARNING, errno, "sendIGMP: from %s to %s (%d) on %s", inetFmt(IfDp->querier.ip, 2), inetFmt(ip->ip_dst.s_addr, 1), len, IfDp->Name);
 
     if (setigmpsource) {
-        if (setloop) k_set_loop(false);
+        if (setloop)
+            k_set_loop(false);
         // Restore original...
         k_set_if(NULL);
     }

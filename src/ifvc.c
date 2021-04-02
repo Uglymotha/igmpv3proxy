@@ -76,17 +76,20 @@ void rebuildIfVc(uint64_t *tid) {
     sigstatus = NOSIG ? GOT_IFREB : sigstatus;
 
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if (!CONFRELOAD) buildIfVc();
+    if (!CONFRELOAD)
+        buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
     myLog(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
     configureVifs();
 
     // Call createvifs for removing or adding interfaces if required.
-    if (!CONFRELOAD) freeIfDescL(true);
+    if (!CONFRELOAD)
+        freeIfDescL(true);
 
     // Restart timer when doing timed reload.
-    if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif) *tid = timer_setTimer(0, TDELAY(CONFIG->rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, tid);
+    if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif)
+        *tid = timer_setTimer(0, TDELAY(CONFIG->rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, tid);
 
     sigstatus = IFREBUILD ? 0 : sigstatus;
 }
@@ -99,7 +102,8 @@ void buildIfVc(void) {
     struct ifreq ifr;
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
     struct filters *nfil, *fil;
-    if ((getifaddrs (&IfAddrsP)) == -1) myLog(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
+    if ((getifaddrs (&IfAddrsP)) == -1)
+        myLog(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
 
     // Loop over interfaces. Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
