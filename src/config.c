@@ -204,7 +204,8 @@ static void allocFilter(struct filters fil) {
     struct filters ***tmpFil = &filPtr;
 
     // Allocate memory for filter and copy from argument.
-    if (! (**tmpFil = (struct filters*)malloc(sizeof(struct filters)))) myLog(LOG_ERR, errno, "allocSubnet: Out of Memory.");  // Freed by freeConfig() or parsePhyIntToken()
+    if (! (**tmpFil = (struct filters*)malloc(sizeof(struct filters))))
+        myLog(LOG_ERR, errno, "allocSubnet: Out of Memory.");  // Freed by freeConfig() or parsePhyIntToken()
     ***tmpFil = fil;
 
     *tmpFil = &(***tmpFil).next;

@@ -321,7 +321,7 @@ char    *initIgmp(void);
 void     acceptIgmp(int recvlen, struct msghdr msgHdr);
 void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     freeQueriers(void);
-void     sendGSQ(GroupVifDesc *gvDesc);
+void     sendGSQ(void *query);
 void     sendGeneralMemberQuery(struct IfDesc *IfDp);
 
 /**
@@ -363,10 +363,7 @@ void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
-uint32_t getRouteVifbits(register uint32_t group);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
-void     ageActiveRoutes(struct IfDesc *IfDp);
-bool     setRouteLastMemberMode(uint32_t group, uint32_t src, struct IfDesc *IfDp);
-bool     lastMemberGroupAge(uint32_t group, struct IfDesc *IfDp);
+void     ageRoutes(struct IfDesc *IfDp, uint64_t tid);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
