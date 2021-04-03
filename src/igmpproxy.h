@@ -273,7 +273,7 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 /**
 *   callout.c
 */
-#define TMNAMESZ 40
+#define TMNAMESZ 48
 #define TDELAY(x) (struct timespec){ -1, x }
 typedef void  (*timer_f)();
 void            timer_freeQueue(void);
@@ -317,18 +317,17 @@ void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 /**
 *   igmp.c
 */
-char    *initIgmp(void);
-void     acceptIgmp(int recvlen, struct msghdr msgHdr);
-void     ctrlQuerier(int start, struct IfDesc *IfDp);
-void     freeQueriers(void);
-void     sendGSQ(void *query);
-void     sendGeneralMemberQuery(struct IfDesc *IfDp);
+char *initIgmp(void);
+void  acceptIgmp(int recvlen, struct msghdr msgHdr);
+void  ctrlQuerier(int start, struct IfDesc *IfDp);
+void  sendIgmp(struct IfDesc *IfDp, void *rec);
+void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 
 /**
 *   lib.c
 */
-static bool log;
-#define LOG(x, ...) log = (CONFIG->logLevel >= x && myLog(x, __VA_ARGS__))
+bool qdlm;    // Quick & dirty Macro to reduce logging impact.
+#define LOG(x, ...) qdlm = (x <= CONFIG->logLevel && myLog(x, __VA_ARGS__))
 char    *fmtInAdr(struct in_addr InAdr, int pos);
 char    *inetFmt(uint32_t addr, int pos);
 char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
@@ -360,12 +359,12 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 *   rttable.c
 */
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
-#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
-#endif
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
 void     ageRoutes(struct IfDesc *IfDp, uint64_t tid);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
+#endif

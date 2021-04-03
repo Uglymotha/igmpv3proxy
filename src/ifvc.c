@@ -54,7 +54,7 @@ void freeIfDescL(bool clean) {
         nIfDp = IfDp->next;
         if (!clean || (clean && IfDp->conf && (IfDp->state & 0x80))) {
             // On shutdown, or when interface is marked for deletion, remove it and its aliases.
-            if (clean) myLog(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
+            if (clean) LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
             struct filters *fil, *nfil;
             for (fil = IfDp->aliases; fil; nfil = fil->next, free(fil), fil = nfil);  // Alloced by buildIfVc()
             if (clean && pIfDp) pIfDp->next = IfDp->next;
@@ -65,7 +65,7 @@ void freeIfDescL(bool clean) {
             pIfDp = IfDp;
         }
     }
-    myLog(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
+    LOG(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
 }
 
 /**
@@ -80,7 +80,7 @@ void rebuildIfVc(uint64_t *tid) {
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
-    myLog(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
+    LOG(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
     configureVifs();
 
     // Call createvifs for removing or adding interfaces if required.
@@ -103,7 +103,7 @@ void buildIfVc(void) {
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
     struct filters *nfil, *fil;
     if ((getifaddrs (&IfAddrsP)) == -1)
-        myLog(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
+        LOG(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
 
     // Loop over interfaces. Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
@@ -125,15 +125,15 @@ void buildIfVc(void) {
             if (! fil && mask != 0xFFFFFFFF) {
                 // Create new alias and prepend to list of existing aliases.
                 fil = IfDp->aliases;
-                if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters)))) myLog(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by Self or freeIfDescL()
+                if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters)))) LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by Self or freeIfDescL()
                 *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, fil };
             }
-            myLog(LOG_INFO, 0, "builfIfVc: Interface %s Addr: %s, Network: %s, Ptr: %p", IfDp->Name ,inetFmt(addr, 1), inetFmts(subnet, mask, 2), IfDp->aliases);
+            LOG(LOG_INFO, 0, "builfIfVc: Interface %s Addr: %s, Network: %s, Ptr: %p", IfDp->Name ,inetFmt(addr, 1), inetFmts(subnet, mask, 2), IfDp->aliases);
             continue;
 
         } else if (! IfDp) {
             // New interface, allocate and initialize.
-            if (! (IfDp  = (struct IfDesc *)malloc(sizeof(struct IfDesc)))) myLog(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
+            if (! (IfDp  = (struct IfDesc *)malloc(sizeof(struct IfDesc)))) LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
             // Copy the interface name. Make 100% sure it is NULL terminated.
@@ -155,25 +155,25 @@ void buildIfVc(void) {
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
-        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) myLog(LOG_WARNING, errno, "buildIfVc: Failed to get MTU for %s, disabling.", IfDp->Name);
+        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) LOG(LOG_WARNING, errno, "buildIfVc: Failed to get MTU for %s, disabling.", IfDp->Name);
         else IfDp->mtu = ifr.ifr_mtu;
 
         // Enable multicast if necessary.
         if (! (IfDp->Flags & IFF_MULTICAST)) {
             ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
-            if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0) myLog(LOG_WARNING, errno, "buildIfVc: Failed to enable multicast on %s, disabling.", IfDp->Name);
+            if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0) LOG(LOG_WARNING, errno, "buildIfVc: Failed to enable multicast on %s, disabling.", IfDp->Name);
             else {
                 IfDp->Flags = ifr.ifr_flags;
-                myLog(LOG_NOTICE, 0, "buildIfVc: Multicast Enabled on %s.", IfDp->Name);
+                LOG(LOG_NOTICE, 0, "buildIfVc: Multicast Enabled on %s.", IfDp->Name);
             }
         }
 
         // Insert the verified subnet as first alias.
-        if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters)))) myLog(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
+        if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters)))) LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
         // Debug log the result...
-        myLog( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
+        LOG( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
              IfDp->Name, fmtInAdr(IfDp->InAdr, 1), IfDp->Flags, IfDp->mtu, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
     }
     

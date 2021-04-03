@@ -58,7 +58,7 @@ int openCliSock(void) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = (char *)malloc(strlen(path) + 12))) myLog(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
+            if (! (CONFIG->runPath = (char *)malloc(strlen(path) + 12))) LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
             strcpy(CONFIG->runPath, strcat(path, "/igmpproxy/"));
             break;
         }
@@ -75,7 +75,7 @@ int openCliSock(void) {
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
         || (chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)) || chmod(cliSockAddr.sun_path, 0660)) {
-        myLog(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
+        LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
         cliSock = -1;
     }
 
@@ -130,7 +130,7 @@ void processCliCon(int fd) {
 
     // Close connection by sending 1 byte.
     sendto(fd, ".", 1, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    myLog(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
+    LOG(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
 }
 
 // Below are functions and definitions for client connections.
