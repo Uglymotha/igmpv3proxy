@@ -143,8 +143,10 @@ static inline struct routeTable *findRoute(register uint32_t group) {
             LOG(LOG_ERR, errno, "insertRoute: Out of memory.");
         memset(croute, 0, sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize);
         croute->group = group;
+        if (routing_table)
+            routing_table->prev = croute;
         croute->next  = routing_table;
-        routing_table->prev = routing_table = croute;
+        routing_table = croute;
     }
     return croute;
 }
@@ -258,7 +260,7 @@ void bwControl(uint64_t *tid) {
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(0, TDELAY(CONFIG->bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, tid);
+    *tid = timer_setTimer(TDELAY(CONFIG->bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, tid);
 }
 
 /**
@@ -802,7 +804,7 @@ static void sendGroupSpecificQuery(struct igmpv3_grec *grec) {
     if (grec->grec_auxwords++ < IfDp->conf->qry.lmCount) {
         sendIgmp(IfDp, grec);
         sprintf(msg, "GSQ (%s): %15s:%u", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1), grec->grec_nsrcs);
-        timer_setTimer(0, TDELAY(IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 0) : IfDp->conf->qry.lmInterval), msg, (timer_f)sendGroupSpecificQuery, grec);
+        timer_setTimer(TDELAY(IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 0) : IfDp->conf->qry.lmInterval), msg, (timer_f)sendGroupSpecificQuery, grec);
     } else
         free(grec);   // Alloced by updateRoute()
 }

@@ -336,11 +336,16 @@ static void acceptGeneralMemberQuery(struct IfDesc *IfDp, uint32_t src, struct i
     // Set ageing and other querier timer.
     if (ver < IfDp->querier.ver || (ver == IfDp->querier.ver && (htonl(src) <= htonl(IfDp->querier.ip)))) {
         IfDp->querier = (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer };
-        if (IS_DOWNSTREAM(IfDp->state)) IfDp->querier.ageTimer = timer_setTimer(IfDp->querier.ageTimer, TDELAY(ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver ==  2 ? igmpv3->igmp_code : 10), strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name), (timer_f)ageRoutes, IfDp);
+        if (IS_DOWNSTREAM(IfDp->state)) {
+            timer_clearTimer(IfDp->querier.ageTimer);
+            IfDp->querier.ageTimer = timer_setTimer(TDELAY(ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver ==  2 ? igmpv3->igmp_code : 10), strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name), (timer_f)ageRoutes, IfDp);
+        }
+        timer_clearTimer(IfDp->querier.Timer);
         sprintf(msg, "%sv%1d Querier Timer: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
-        IfDp->querier.Timer = timer_setTimer(IfDp->querier.Timer, TDELAY(timeout), strcat(msg, IfDp->Name), (timer_f)expireQuerierTimer, IfDp);
+        IfDp->querier.Timer = timer_setTimer(TDELAY(timeout), strcat(msg, IfDp->Name), (timer_f)expireQuerierTimer, IfDp);
         LOG(LOG_INFO, 0, "Detected %sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.", IS_DOWNSTREAM(IfDp->state) ? "other " : "", ver, inetFmt(src, 1), IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
-    } else LOG(LOG_DEBUG, 0, "Received IGMP v%d general membership query from %s on %s, but it does not have priority over %s. Ignoring", ver, inetFmt(src, 1), IfDp->Name, IfDp->querier.ip == IfDp->conf->qry.ip ? "us" : inetFmt(IfDp->querier.ip, 2));
+    } else
+        LOG(LOG_DEBUG, 0, "Received IGMP v%d general membership query from %s on %s, but it does not have priority over %s. Ignoring", ver, inetFmt(src, 1), IfDp->Name, IfDp->querier.ip == IfDp->conf->qry.ip ? "us" : inetFmt(IfDp->querier.ip, 2));
 }
 
 /**
@@ -355,9 +360,9 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         sendIgmp(IfDp, NULL);
         IfDp->conf->qry.startupQueryCount = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryCount - 1 : 0;
         int timeout = IfDp->querier.ver == 3 ? (getIgmpExp(IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi, 0)) : (IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi);
-        IfDp->querier.Timer = timer_setTimer(0, TDELAY(timeout * 10), strcat(strcpy(msg, "General Query: "), IfDp->Name), (timer_f)sendGeneralMemberQuery, IfDp);
+        IfDp->querier.Timer = timer_setTimer( TDELAY(timeout * 10), strcat(strcpy(msg, "General Query: "), IfDp->Name), (timer_f)sendGeneralMemberQuery, IfDp);
         timeout = IfDp->querier.ver != 3 ? IfDp->querier.mrc : getIgmpExp(IfDp->querier.mrc, 0);
-        IfDp->querier.ageTimer = timer_setTimer(0, TDELAY(timeout), strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name), (timer_f)ageRoutes, IfDp);
+        IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout), strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name), (timer_f)ageRoutes, IfDp);
         LOG(LOG_DEBUG, 0, "Sent membership query from %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1), inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
     }
 }

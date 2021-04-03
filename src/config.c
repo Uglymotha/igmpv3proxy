@@ -306,7 +306,7 @@ void reloadConfig(uint64_t *tid) {
 
         LOG(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", oldvifConf, vifConf);
     }
-    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf) *tid = timer_setTimer(0, TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
+    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf) *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
 
     sigstatus = 0;
 }
@@ -575,7 +575,7 @@ bool loadConfig(void) {
 
     // Check rescanvif status and start or clear timers if necessary.
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(0, TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
+        timers.rescanVif = timer_setTimer(TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
     } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
@@ -584,7 +584,7 @@ bool loadConfig(void) {
 
     // Check rescanconf status and start or clear timers if necessary.
     if (commonConfig.rescanConf && timers.rescanConf == 0)
-        timers.rescanConf = timer_setTimer(0, TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
+        timers.rescanConf = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
     else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
@@ -603,7 +603,7 @@ bool loadConfig(void) {
             clearRoutes(getConfig);
 #endif
         if (commonConfig.bwControlInterval)
-            timers.bwControl = timer_setTimer(0, TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
+            timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
     }
 
     // Check if quickleave was enabled or disabled due to config change.

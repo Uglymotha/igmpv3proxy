@@ -85,17 +85,11 @@ struct timespec timer_ageQueue() {
 *   @param action   - The function to call on timeout.
 *   @param data     - Pointer to the function data to supply.
 */
-uint64_t timer_setTimer(uint64_t timer_id, struct timespec delay, const char name[TMNAMESZ], timer_f action, void *data) {
+uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
     uint64_t              i = 1;
 
-    if (timer_id) {
-        // If a timer is to be modified remove it up in the queue first.
-        for (node = queue; node && node->id != timer_id; ptr = node, node = node->next);
-        if (! node)   return 0;
-        else if (ptr) ptr->next = node->next;
-        else          queue = node->next;
-    } else if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
+    if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
     *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){0, 0}, NULL };
@@ -129,7 +123,7 @@ uint64_t timer_setTimer(uint64_t timer_id, struct timespec delay, const char nam
 
     delay = curtime.tv_nsec > node->time.tv_nsec ? (struct timespec){ node->time.tv_sec - curtime.tv_sec - 1, 999999999 - curtime.tv_nsec + node->time.tv_nsec}
                                                  : (struct timespec){ node->time.tv_sec - curtime.tv_sec    , node->time.tv_nsec - curtime.tv_nsec }; 
-    LOG(LOG_DEBUG, 0, "%s timeout %d (#%d): %s - delay %d.%1d secs", timer_id ? "Modified" : "Created", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
+    LOG(LOG_DEBUG, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
     if (CONFIG->logLevel == LOG_DEBUG)
         debugQueue("Set Timer", 1, NULL, 0);
     return node->id;
@@ -152,10 +146,12 @@ void *timer_clearTimer(uint64_t timer_id) {
     } else {
         for (i++, ptr = queue; ptr->next && ptr->next->id != timer_id; ptr = ptr->next, i++);
         fptr = ptr->next;
-        if (ptr->next) ptr->next = ptr->next->next;
+        if (ptr->next)
+            ptr->next = ptr->next->next;
     }
     if (fptr) {
-        if (CONFIG->logLevel == LOG_DEBUG) debugQueue("Clear Timer", 1, NULL, 0);
+        if (CONFIG->logLevel == LOG_DEBUG)
+            debugQueue("Clear Timer", 1, NULL, 0);
         ptr = (void *)fptr->data;
         LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", fptr->id, i, fptr->name);
         free(fptr);        // Alloced by timer_setTimer()
@@ -163,15 +159,6 @@ void *timer_clearTimer(uint64_t timer_id) {
 
     // Return pointer to the cleared timer's data, the caller may need it.
     return (void *)ptr;
-}
-
-/**
-*  Returns the scheduled time for given timer.
-*/
-inline struct timespec timer_getTime(uint64_t timer_id) {
-    struct timeOutQueue *node = NULL;
-    for (node = queue; node && node->id != timer_id; node = node->next);
-    return node ? node->time : (struct timespec){ -1, -1 };
 }
 
 /**
@@ -191,13 +178,15 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
     }
     for (i = 1, ptr = queue; ptr; ptr = ptr->next, i++) {
         struct timespec delay = curtime.tv_sec > ptr->time.tv_sec || (curtime.tv_sec == ptr->time.tv_sec && curtime.tv_nsec > ptr->time.tv_nsec) ? (struct timespec){ 0, 0 } :
-                                ptr->time.tv_nsec < curtime.tv_nsec ? (struct timespec){ ptr->time.tv_sec - curtime.tv_sec - 1, 1000000000 - (curtime.tv_nsec + ptr->time.tv_nsec) / 100000000 }
+                                ptr->time.tv_nsec < curtime.tv_nsec ? (struct timespec){ ptr->time.tv_sec - curtime.tv_sec - 1, 1000000000 - (curtime.tv_nsec - ptr->time.tv_nsec) / 100000000 }
                                                                     : (struct timespec){ ptr->time.tv_sec - curtime.tv_sec    , ptr->time.tv_nsec - curtime.tv_nsec / 100000000 };
         if (! cliSockAddr)
             LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, ptr->id, ptr->name);
         else {
-            if (h) strcpy(msg, "%3d | %5d.%1ds | %6d | %s");
-            else   strcpy(msg, "%d %d.%d %d %s");
+            if (h)
+                strcpy(msg, "%3d | %5d.%1ds | %6d | %s");
+            else
+                strcpy(msg, "%d %d.%d %d %s");
             sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, ptr->id, ptr->name);
             sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
         }
