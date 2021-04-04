@@ -121,13 +121,13 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uin
     bool res = false;
     // Sanitycheck the group adress...
     if (! IN_MULTICAST(ntohl(group)))
-        LOG(LOG_WARNING, 0, "checkGrpRec: The group address %s is not a valid Multicast group. Ignoring", inetFmt(group, 1));
+        LOG(LOG_WARNING, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
     /* filter local multicast 224.0.0.0/8 */
     else if (! CONFIG->proxyLocalMc && ((htonl(group) & 0xFFFFFF00) == 0xE0000000))
-        LOG(LOG_NOTICE, 0, "checkGrpRec: The IGMP message to %s was local multicast and proxylocalmc is not set. Ignoring.", inetFmt(group, 1));
+        LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s and proxylocalmc is not set. Ignoring.", IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state) ? "upstream interface " : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
-        LOG(LOG_INFO, 0, "checkGrpRec: Message was received on %s. Ignoring.", strcat(msg, IfDp->Name));
+        LOG(LOG_INFO, 0, "checkIgmp: Message for %s was received on %s. Ignoring.", inetFmt(group, 1), strcat(msg, IfDp->Name));
     } else
         res = true;
 

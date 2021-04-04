@@ -606,6 +606,10 @@ bool loadConfig(void) {
             timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
     }
 
+    // Set hashtable size to 0 when quickleave is disabled.
+    if (!commonConfig.fastUpstreamLeave)
+        commonConfig.downstreamHostsHashTableSize = 0;
+
     // Check if quickleave was enabled or disabled due to config change.
     if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
         LOG(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.", commonConfig.fastUpstreamLeave ? "disabled" : "enabled");

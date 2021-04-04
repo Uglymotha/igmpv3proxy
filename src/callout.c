@@ -132,33 +132,27 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
 /**
 *   Removes a timer from the queue.
 */
-void *timer_clearTimer(uint64_t timer_id) {
-    struct timeOutQueue *ptr = NULL, *fptr = NULL;
-    uint64_t i = 1;
+void *timer_clearTimer(uint64_t tid) {
+    struct timeOutQueue *node, *pnode;
+    uint64_t i;
 
-    // If no queue or timer_id is zero return.
-    if (! queue || timer_id == 0) return NULL;
-
-    // Search queue for timer and remove.
-    if (queue->id == timer_id) {
-        fptr = queue;
-        queue = queue->next;
-    } else {
-        for (i++, ptr = queue; ptr->next && ptr->next->id != timer_id; ptr = ptr->next, i++);
-        fptr = ptr->next;
-        if (ptr->next)
-            ptr->next = ptr->next->next;
-    }
-    if (fptr) {
+    // Find the timer.
+    for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
+    if (node) {
+        // If found, remove the timer.
+        if (pnode)
+            pnode->next = node->next;
+        else
+            queue = node->next;
         if (CONFIG->logLevel == LOG_DEBUG)
             debugQueue("Clear Timer", 1, NULL, 0);
-        ptr = (void *)fptr->data;
-        LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", fptr->id, i, fptr->name);
-        free(fptr);        // Alloced by timer_setTimer()
+        pnode = (void *)node->data;
+        LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", node->id, i, node->name);
+        free(node);        // Alloced by timer_setTimer()
     }
 
-    // Return pointer to the cleared timer's data, the caller may need it.
-    return (void *)ptr;
+    // If timer was removed, return its data, the caller may need it.
+    return node ? (void *)pnode : NULL;
 }
 
 /**
@@ -178,7 +172,7 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
     }
     for (i = 1, ptr = queue; ptr; ptr = ptr->next, i++) {
         struct timespec delay = curtime.tv_sec > ptr->time.tv_sec || (curtime.tv_sec == ptr->time.tv_sec && curtime.tv_nsec > ptr->time.tv_nsec) ? (struct timespec){ 0, 0 } :
-                                ptr->time.tv_nsec < curtime.tv_nsec ? (struct timespec){ ptr->time.tv_sec - curtime.tv_sec - 1, 1000000000 - (curtime.tv_nsec - ptr->time.tv_nsec) / 100000000 }
+                                ptr->time.tv_nsec < curtime.tv_nsec ? (struct timespec){ ptr->time.tv_sec - curtime.tv_sec - 1, 999999999 - (curtime.tv_nsec - ptr->time.tv_nsec) / 100000000 }
                                                                     : (struct timespec){ ptr->time.tv_sec - curtime.tv_sec    , ptr->time.tv_nsec - curtime.tv_nsec / 100000000 };
         if (! cliSockAddr)
             LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, ptr->id, ptr->name);

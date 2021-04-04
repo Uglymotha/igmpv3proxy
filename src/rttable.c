@@ -339,11 +339,9 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, struct IfDesc *IfDp
 *   Clears / Updates all routes and routing table, and sends Joins / Leaves upstream. If called with NULL pointer all routes are removed.
 */
 void clearRoutes(void *Dp) {
-    struct routeTable    *croute, *nextroute;
-    struct IfDesc        *IfDp = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
-    register uint8_t      oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
-    if (!routing_table)
-        return;
+    struct routeTable *croute, *nextroute;
+    struct IfDesc     *IfDp = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
+    register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
     // Loop through all routes...
     for (croute = routing_table; croute; croute = nextroute) {
@@ -387,7 +385,7 @@ void clearRoutes(void *Dp) {
                 BIT_SET(croute->upstrState, IfDp->index);
                 LOG(LOG_INFO, 0, "clearRoutes: Joined %s on new upstream interface %s.", inetFmt(croute->group, 1), IfDp->Name);
             }
-            keep = true;
+            continue;
 
         } else if (!NOSIG && IS_UPSTREAM(oldstate)) {
             if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate)) {
@@ -396,8 +394,10 @@ void clearRoutes(void *Dp) {
                     if (checkFilters(IfDp, 0, IF_STATE_UPSTREAM, oAddr->src, croute->group) != ALLOW && checkFilters(IfDp, 1, IF_STATE_UPSTREAM, oAddr->src, croute->group) == ALLOW) {
                         LOG(LOG_WARNING, 0, "clearRoutes: Removing source %s on %s from route %s, no longer allowed.",inetFmt (oAddr->src, 1), IfDp->Name, inetFmt(croute->group, 2));
                         k_delMRoute(oAddr->src, croute->group, oAddr->vif);
-                        if (pAddr) pAddr->next = oAddr->next;
-                        else croute->origins = oAddr->next;
+                        if (pAddr)
+                            pAddr->next = oAddr->next;
+                        else
+                            croute->origins = oAddr->next;
                         free(oAddr);  // Alloced by activateRoute()
                         oAddr = pAddr ? pAddr->next : croute->origins;
                     } else {
@@ -412,7 +412,8 @@ void clearRoutes(void *Dp) {
                     if (checkFilters(IfDp, 0, IF_STATE_UPSTREAM, 0, croute->group) != ALLOW && checkFilters(IfDp, 1, IF_STATE_UPSTREAM, 0, croute->group) == ALLOW) {
                         // Group is no longer allowed. Leave if not active on interface set to last member. If active on interface, remove.
                         LOG(LOG_WARNING, 0, "clearRoutes: Leaving group %s on %s, no longer allowed.", inetFmt(croute->group, 1), IfDp->Name);
-                        if (k_leaveMcGroup(IfDp, croute->group)) BIT_CLR(croute->upstrState, IfDp->index);
+                        if (k_leaveMcGroup(IfDp, croute->group))
+                            BIT_CLR(croute->upstrState, IfDp->index);
                     } else if (checkFilters(IfDp, 0, IF_STATE_UPSTREAM, 0, croute->group) == ALLOW && checkFilters(IfDp, 1, IF_STATE_UPSTREAM, 0, croute->group) != ALLOW) {
                         // Group is now allowed on upstream interface, join.
                         if (k_joinMcGroup(IfDp, croute->group) == ALLOW) {
@@ -425,12 +426,15 @@ void clearRoutes(void *Dp) {
             // Transition from upstream to downstream or disabled. Leave group, set to last member and query.
             } else if (!IS_UPSTREAM(newstate) && BIT_TST(croute->upstrState, IfDp->index)) {
                 LOG(LOG_WARNING, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.", inetFmt(croute->group, 1), IfDp->Name);
-                if (k_leaveMcGroup(IfDp, croute->group)) BIT_CLR(croute->upstrState, IfDp->index);
+                if (k_leaveMcGroup(IfDp, croute->group))
+                    BIT_CLR(croute->upstrState, IfDp->index);
                 for (oAddr = croute->origins, pAddr = NULL; oAddr; ) {
                     if (BIT_TST(oAddr->vif, IfDp->index)) {
                         k_delMRoute(oAddr->src, croute->group, oAddr->vif);
-                        if (pAddr) pAddr->next = oAddr->next;
-                        else croute->origins = oAddr->next;
+                        if (pAddr)
+                            pAddr->next = oAddr->next;
+                        else
+                            croute->origins = oAddr->next;
                         free(oAddr);   // Alloced by activateRoute()
                         oAddr = pAddr ? pAddr->next : croute->origins;
                     } else {
@@ -469,22 +473,20 @@ void clearRoutes(void *Dp) {
             }
         }
 
-        // If the current route is not to be removed, continue.
-        if (keep)
-            continue;
+        if (!keep) {
+            // Route will be removed, send a leave message upstream on current interfaces.
+            sendJoinLeaveUpstream(croute, NULL, 0);
 
-        // Route will be removed, send a leave message upstream on current interfaces.
-        sendJoinLeaveUpstream(croute, NULL, 0);
+            // Log the cleanup in debugmode...
+            LOG(LOG_DEBUG, 0, "clearRoutes: Removing route entry for %s", inetFmt(croute->group, 1));
 
-        // Log the cleanup in debugmode...
-        LOG(LOG_DEBUG, 0, "clearRoutes: Removing route entry for %s", inetFmt(croute->group, 1));
-
-        // Remove the route from routing table.
-        removeRoute(croute);
+            // Remove the route from routing table.
+            removeRoute(croute);
+        }
     }
 
     if (! routing_table)
-        LOG(LOG_NOTICE, 0, "clearRoutes: Routing table is empty.");
+        LOG(LOG_INFO, 0, "clearRoutes: Routing table is empty.");
     else
         logRouteTable("Clear Routes", 1, NULL, 0);
 }
@@ -560,10 +562,10 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
         for (i = 0; i < nsrcs; i++) {
             for (dsrc = croute->dSources; dsrc && dsrc->ip != grec->grec_src[i].s_addr; dsrc = dsrc->next);
             if (! dsrc) {
-                if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources))))   // Freed by self removeRoute() or ageRoutes()
+                if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize)))   // Freed by self removeRoute() or ageRoutes()
                     LOG(LOG_ERR, errno, "updateRoute: Out of memory.");
+                memset(dsrc, 0, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize);
                 *dsrc = (struct dSources){ croute->dSources, grec->grec_src[i].s_addr, 0, 0, {0} };
-                memset(dsrc->downstreamHostsHashTable, 0, CONFIG->downstreamHostsHashTableSize);
                 croute->dSources = dsrc;
             }
             if (! BIT_TST(dsrc->vifBits, IfDp->index)) {
@@ -620,10 +622,10 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
             }
             for (dsrc = croute->dSources; dsrc && dsrc->ip != grec->grec_src[i].s_addr; dsrc = dsrc->next);
             if (! dsrc) {
-                if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources))))  // Freed by self removeRoute() or ageRoutes()
+                if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize)))   // Freed by self removeRoute() or ageRoutes()
                     LOG(LOG_ERR, errno, "updateRoute: Out of memory.");
+                memset(dsrc, 0, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize);
                 *dsrc = (struct dSources){ croute->dSources, grec->grec_src[i].s_addr, 0, 0, {0} };
-                memset(dsrc->downstreamHostsHashTable, 0, CONFIG->downstreamHostsHashTableSize);
                 croute->dSources = dsrc;
             }
             // IN (B) = GMI, (A + B) / EX: (A) = GMI, (X + A) (Y - A)
@@ -668,10 +670,10 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
             if (BIT_TST(croute->mode, IfDp->index)) {
                 for (dsrc = croute->dSources; dsrc && dsrc->ip != grec->grec_src[i].s_addr; dsrc = dsrc->next);
                 if (! dsrc) {
-                    if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources))))  // Freed by self removeRoute() or ageRoutes()
+                    if (! (dsrc = (struct dSources *)malloc(sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize)))   // Freed by self removeRoute() or ageRoutes()
                         LOG(LOG_ERR, errno, "updateRoute: Out of memory.");
+                    memset(dsrc, 0, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize);
                     *dsrc = (struct dSources){ croute->dSources, grec->grec_src[i].s_addr, 0, 0, {0} };
-                    memset(dsrc->downstreamHostsHashTable, 0, CONFIG->downstreamHostsHashTableSize);
                     croute->dSources = dsrc;
                 }
                 clearDownstreamHost(dsrc->downstreamHostsHashTable, src);
@@ -732,26 +734,29 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
 
     // Send queries if necessary.
     if (q > 0) {
-        LOG(LOG_DEBUG, 0, "updateRoute: Querying %d/%d sources for %s on %s.", q, a, inetFmt(croute->group, 1), IfDp->Name);
-        if (  ! (query  = (struct igmpv3_grec *)malloc(sizeof(struct igmpv3_grec) + q * sizeof(struct in_addr) + IF_NAMESIZE))    // Freed by sendGroupSpecificQuery()
+        LOG(LOG_DEBUG, 0, "updateRoute: Querying %d/%d sources for %s on %s.", q, a, inetFmt(croute->group, 1), IfDp->Name);     // Freed by sendGroupSpecificQuery()
+        if (  ! (query  = (struct igmpv3_grec *)malloc(sizeof(struct igmpv3_grec) + q * sizeof(struct in_addr) + IF_NAMESIZE))   // Freed by sendGroupSpecificQuery()
            || (a > 0 && ! (query1 = (struct igmpv3_grec *)malloc(sizeof(struct igmpv3_grec) + a * sizeof(struct in_addr) + IF_NAMESIZE))))
             LOG(LOG_ERR, errno, "updateRoute: Out of memory.");
         query->grec_nsrcs = q;
         query->grec_type = query->grec_auxwords = 0;
-        query->grec_mca.s_addr = query1->grec_mca.s_addr = croute->group;
-        query1->grec_type = 1;
+        query->grec_mca.s_addr = croute->group;
         memcpy(&query->grec_src[q], IfDp->Name, IF_NAMESIZE);
-        for (q = 0, i = 0, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
-            if (!BIT_TST(dsrc->vifBits, IfDp->index))
+        for (q = 0, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
+            if (!BIT_TST(dsrc->vifBits, IfDp->index) || !BIT_TST(dsrc->lastMember, IfDp->index))
                 continue;
-            if (!BIT_TST(dsrc->lastMember, IfDp->index))
-                query1->grec_src[i++].s_addr = dsrc->ip;
-            else
-                query->grec_src[q++].s_addr = dsrc->ip;
+            query->grec_src[q++].s_addr = dsrc->ip;
         }
-        if (i > 0) {
+        if (a > 0) {
             memcpy(&query1->grec_src[i], IfDp->Name, IF_NAMESIZE);
+            query1->grec_mca.s_addr = croute->group;
+            query1->grec_type = 1;
             query1->grec_nsrcs = i;
+            for (i = 0, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
+                if (!BIT_TST(dsrc->vifBits, IfDp->index) || BIT_TST(dsrc->lastMember, IfDp->index))
+                    continue;
+                query1->grec_src[i++].s_addr = dsrc->ip;
+            }
             sendGroupSpecificQuery(query1);
         }
         sendGroupSpecificQuery(query);
@@ -784,8 +789,12 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
 */
 static void sendGroupSpecificQuery(struct igmpv3_grec *grec) {
     struct IfDesc      *IfDp = getIfByName((char *)&grec->grec_src[grec->grec_nsrcs]);
+    struct routeTable  *croute;
+    struct dSources    *src;
+    uint16_t            i,j;
     if (! IfDp) {
         LOG(LOG_WARNING, 0, "Requested to send GSQ for %s with %d sources, but interface %s not found.", inetFmt(grec->grec_mca.s_addr, 1), grec->grec_nsrcs, &grec->grec_src[grec->grec_nsrcs]);
+        free(grec);  // Alloced by updateRoute()
         return;
     }
 
@@ -797,16 +806,45 @@ static void sendGroupSpecificQuery(struct igmpv3_grec *grec) {
     }
 
     // Do aging upon reentry.
-    if (grec->grec_auxwords > 0)
+    if (grec->grec_auxwords > 0) {
         ageRoutes(IfDp, 0);
+
+        // Check group and sources we still need to query.
+        if (grec->grec_nsrcs == 0 && ((croute = findRoute(grec->grec_mca.s_addr)) || ! croute || !BIT_TST(croute->lastMember, IfDp->index))) {
+            LOG(LOG_DEBUG, 0, "sendGSQ: %s not longer in last member state on %s.", inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
+            free(grec);   // Alloced by updateRoute()
+            return;
+        } else if (grec->grec_nsrcs > 0) {
+            grec->grec_nsrcs = 0;
+            if ((croute = findRoute(grec->grec_mca.s_addr))) {
+                for (i = 0, j = 1; i < grec->grec_nsrcs; j++) {
+                    for (src = croute->dSources; src && (!BIT_TST(src->vifBits, IfDp->index) || !BIT_TST(src->lastMember, IfDp->index)); src = src->next);
+                    if (! src) {
+                        LOG(LOG_DEBUG, 0, "sendGSQ: %s / %s not longer in last member state on %s.", inetFmt(grec->grec_src[i].s_addr, 1), inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
+                        grec->grec_src[i] = grec->grec_src[j];
+                    } else {
+                        grec->grec_nsrcs++;
+                        i++;
+                    }
+                }
+            }
+            if (grec->grec_nsrcs == 0) {
+                LOG(LOG_DEBUG, 0, "sendGSQ: No more sources to query for %s on %s.", inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
+                free(grec);   // Alloced by updateRoute()
+                return;
+            }
+        }
+    }
 
     // Send query and set timeout for next round...
     if (grec->grec_auxwords++ < IfDp->conf->qry.lmCount) {
         sendIgmp(IfDp, grec);
-        sprintf(msg, "GSQ (%s): %15s:%u", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1), grec->grec_nsrcs);
+        sprintf(msg, "GSQ (%s): %15s/%u", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1), grec->grec_nsrcs);
         timer_setTimer(TDELAY(IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 0) : IfDp->conf->qry.lmInterval), msg, (timer_f)sendGroupSpecificQuery, grec);
-    } else
+    } else {
+        LOG(LOG_DEBUG, 0, "sendGSQ: Done querying %d sources for %s on %s.", grec->grec_nsrcs, inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
         free(grec);   // Alloced by updateRoute()
+    }
 }
 
 /**
@@ -875,11 +913,12 @@ static void removeRoute(struct routeTable* croute) {
 *   Ages a specific route
 */
 void ageRoutes(struct IfDesc *IfDp, uint64_t tid) {
-    struct routeTable *croute;
+    struct routeTable *croute = routing_table;
     struct dSources   *dsrc, *psrc;
     LOG(LOG_DEBUG, 0, "ageRoutes: Aging %s routes on %s.", tid ? "active" : "last member", IfDp->Name);
-    for (croute = routing_table; croute; croute = croute->next) {
+    while (croute) {
         if (!BIT_TST(croute->vifBits, IfDp->index)) {
+            croute = croute->next;
             continue;
         }
         if (tid != 0 && croute->v1Age[IfDp->index] > 0 && --croute->v1Age[IfDp->index] == 0)
@@ -917,13 +956,18 @@ void ageRoutes(struct IfDesc *IfDp, uint64_t tid) {
         }
         if (croute->mode == 0 && ! croute->dSources) {
             LOG(LOG_DEBUG, 0, "ageRoutes: Removed group %s after aging.", inetFmt(croute->group, 2), IfDp->Name);
-            removeRoute(croute);
-        } else if (!BIT_TST(croute->mode, IfDp->index)) {
-            for (dsrc = croute->dSources; dsrc && !BIT_TST(dsrc->vifBits, IfDp->index); dsrc = dsrc->next);
-            if (! dsrc) {
-                LOG(LOG_DEBUG, 0, "ageRoutes: Removed group %s from %s after aging.", inetFmt(croute->group, 2), IfDp->Name);
-                BIT_CLR(croute->vifBits, IfDp->index);
+            croute = croute->prev;
+            removeRoute(croute ? croute->next : routing_table);
+            croute = ! croute ? routing_table : croute->next;
+        } else {
+            if (!BIT_TST(croute->mode, IfDp->index)) {
+                for (dsrc = croute->dSources; dsrc && !BIT_TST(dsrc->vifBits, IfDp->index); dsrc = dsrc->next);
+                if (! dsrc) {
+                    LOG(LOG_DEBUG, 0, "ageRoutes: Removed group %s from %s after aging.", inetFmt(croute->group, 2), IfDp->Name);
+                    BIT_CLR(croute->vifBits, IfDp->index);
+                }
             }
+            croute = croute->next;
         }
     }
 
