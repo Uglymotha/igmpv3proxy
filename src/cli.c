@@ -116,17 +116,22 @@ void processCliCon(int fd) {
     unsigned int s = sizeof(cliSockAddr);
     int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
     if (len <= 0) return;
-    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0)      logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0) getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0) getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("t", buf) == 0 || strcmp("th", buf) == 0) debugQueue("", strcmp("t", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0)
+        logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0)
+        getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0)
+        getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
+    else if (strcmp("t", buf) == 0 || strcmp("th", buf) == 0)
+        debugQueue("", strcmp("t", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
     else if (strcmp("c", buf) == 0) {
         sighandled |= GOT_SIGUSR1;
         sendto(fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
     } else if (strcmp("b", buf) == 0) {
         sighandled |= GOT_SIGUSR2;
         sendto(fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    } else sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+    } else
+        sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
 
     // Close connection by sending 1 byte.
     sendto(fd, ".", 1, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));

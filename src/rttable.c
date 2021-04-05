@@ -115,13 +115,6 @@ static inline void clearDownstreamHost(uint8_t *table, uint32_t src) {
     }
 }
 
-static inline bool testDownstreamHost(uint8_t *table, uint32_t src) {
-    if (!CONFIG->fastUpstreamLeave)
-        return true;
-    uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize*8);
-    return BIT_TST(table[hash/8], hash%8);
-}
-
 static inline bool testNoDownstreamHost(uint8_t *table) {
     if (CONFIG->fastUpstreamLeave) {
         size_t i;

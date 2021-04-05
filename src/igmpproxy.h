@@ -213,8 +213,8 @@ struct IfDesc {
 #define IS_DOWNSTREAM(x)       (x & 0x2)
 #define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
-#define IF_OLDSTATE(x)         x ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED
-#define IF_NEWSTATE(x)         x ? x->state          & ~0x80 : IF_STATE_DISABLED
+#define IF_OLDSTATE(x)         x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED
+#define IF_NEWSTATE(x)         x ?               x->state          & ~0x80 : IF_STATE_DISABLED
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -325,7 +325,7 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
-bool qdlm;    // Quick & dirty Macro to reduce logging impact.
+int     qdlm;    // Quick & dirty Macro to reduce logging impact.
 #define LOG(x, ...) qdlm = (x <= CONFIG->logLevel && myLog(x, __VA_ARGS__))
 char    *fmtInAdr(struct in_addr InAdr, int pos);
 char    *inetFmt(uint32_t addr, int pos);

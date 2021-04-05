@@ -300,9 +300,9 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
 *   Function to control the IGMP querier process on interfaces.
 */
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
-    if (! start || start == 2) {
+    if (start == 0 || start == 2) {
         // Remove all timers and reset all IGMP status.
-        if (IS_DOWNSTREAM(IfDp->state) || IS_DISABLED(IfDp->state)) {
+        if ((! IfDp->oldconf || IS_DOWNSTREAM(IF_OLDSTATE(IfDp))) && IS_DISABLED(IF_NEWSTATE(IfDp))) {
             k_leaveMcGroup(IfDp, allrouters_group);
             k_leaveMcGroup(IfDp, alligmp3_group);
         }
@@ -310,9 +310,10 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         timer_clearTimer(IfDp->querier.ageTimer);
         memset(&IfDp->querier, 0, sizeof(struct querier));
         IfDp->querier.ip = (uint32_t)-1;
-        if (!IS_DOWNSTREAM(IfDp->state)) IfDp->conf->qry.ver = 3;
+        if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
+            IfDp->conf->qry.ver = 3;
     }
-    if (start && IS_DOWNSTREAM(IfDp->state)) {
+    if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
         // Join all routers groups and start querier process on new downstream interfaces.
         k_joinMcGroup(IfDp, allrouters_group);
         k_joinMcGroup(IfDp, alligmp3_group);
