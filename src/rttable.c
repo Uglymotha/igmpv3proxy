@@ -499,7 +499,7 @@ void clearRoutes(void *Dp) {
 */
 void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
     struct igmpv3_grec *grec   = (struct igmpv3_grec *)rec,
-                       *query, *query1;
+                       *query  = NULL , *query1 = NULL;
     struct routeTable  *croute = findRoute(grec->grec_mca.s_addr);
     uint16_t type   = grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
                  || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT ? IGMPV3_MODE_IS_EXCLUDE
