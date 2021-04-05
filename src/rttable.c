@@ -123,11 +123,12 @@ static inline bool testDownstreamHost(uint8_t *table, uint32_t src) {
 }
 
 static inline bool testNoDownstreamHost(uint8_t *table) {
-    if (!CONFIG->fastUpstreamLeave)
-        return false;
-    size_t i;
-    for (i = 0; i < CONFIG->downstreamHostsHashTableSize && !table[i]; i++)
-    return i < CONFIG->downstreamHostsHashTableSize ? false : true;
+    if (CONFIG->fastUpstreamLeave) {
+        size_t i;
+        for (i = 0; i < CONFIG->downstreamHostsHashTableSize && !table[i]; i++)
+        return i < CONFIG->downstreamHostsHashTableSize ? false : true;
+    }
+    return false;
 }
 
 /**
