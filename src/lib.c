@@ -50,9 +50,7 @@ inline char *fmtInAdr(struct in_addr InAdr, int pos) {
 *   Convert an IP address in u_long (network) format into a printable string.
 */
 inline char *inetFmt(uint32_t addr, int pos) {
-    register unsigned char *a = (unsigned char *)&addr;
-
-    sprintf(s[pos - 1], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
+    sprintf(s[pos - 1], "%u.%u.%u.%u", ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], ((uint8_t *)&addr)[3]);
     return s[pos - 1];
 }
 
@@ -60,14 +58,18 @@ inline char *inetFmt(uint32_t addr, int pos) {
 *   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
 */
 inline char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
-    register unsigned char *a = (unsigned char *)&addr, *m = (unsigned char *)&mask;
     int bits = 33 - ffs(ntohl(mask));
 
-    if ((addr == 0) && (mask == 0)) sprintf(s[pos - 1], "default");
-    else if (m[3] != 0) sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
-    else if (m[2] != 0) sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
-    else if (m[1] != 0) sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
-    else                sprintf(s[pos - 1], "%u/%d",          a[0], bits);
+    if ((addr == 0) && (mask == 0))
+        sprintf(s[pos - 1], "default");
+    else if (((uint8_t *)&mask)[3] != 0)
+        sprintf(s[pos - 1], "%u.%u.%u.%u/%d", ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], ((uint8_t *)&addr)[3], bits);
+    else if (((uint8_t *)&mask)[2] != 0)
+        sprintf(s[pos - 1], "%u.%u.%u/%d",    ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], bits);
+    else if (((uint8_t *)&mask)[1] != 0)
+        sprintf(s[pos - 1], "%u.%u/%d",       ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], bits);
+    else
+        sprintf(s[pos - 1], "%u/%d",          ((uint8_t *)&addr)[0], bits);
 
     return s[pos - 1];
 }
@@ -81,10 +83,12 @@ inline char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
 inline uint16_t inetChksum(register uint16_t *addr, register int len) {
     register int32_t sum = 0;
 
-    do sum += *addr++; while ((len -= 2) > 1);
-    if (len) sum += *(uint8_t *)addr;
+    do sum += *addr++;
+        while ((len -= 2) > 1);
+    if (len)
+        sum += *(uint8_t *)addr;
 
-    sum = (sum >> 16) + (sum & 0xffff);
+    sum = (sum >> 16) + (uint16_t)sum;
     return (uint16_t) ~(sum + (sum >> 16));
 }
 
@@ -105,9 +109,13 @@ inline uint32_t murmurhash3(register uint32_t x) {
 */
 inline uint16_t getIgmpExp(register int val, register int d) {
     int i, exp;
-    if      (val <= 0 || val > 32767) return 0;
-    else if (val < 128)               return (uint8_t)val;
-    else if (!d)                      return (uint16_t)((val & 0xf) | 0x10) << (((val & 0x70) >> 4) + 3);
+    if (val <= 0 || val > 32767)
+        return 0;
+    else if (val < 128)
+        return (uint8_t)val;
+    else if (!d)
+        return (uint16_t)((val & 0xf) | 0x10) << (((val & 0x70) >> 4) + 3);
+
     for (exp = 0, i = val >> 7; i != 1; i >>= 1, exp++);
     return (uint8_t)(0x80 | exp << 4 | ((val >> (exp + 3)) & 0xf));
 }
@@ -130,7 +138,8 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
     if (CONFIG->log2File || CONFIG->log2Stderr || (STARTUP && Severity <= LOG_ERR)) {
         clock_gettime(CLOCK_REALTIME, &curtime);
         long sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
-        lfp = CONFIG->log2File ? freopen(CONFIG->logFilePath, "a", stderr) : NULL;
+        if (CONFIG->log2File)
+            lfp = freopen(CONFIG->logFilePath, "a", stderr);
         fprintf(stderr, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60, sec % 3600 % 60, nsec / 100000, LogMsg);
         if (lfp)
             fclose(lfp);

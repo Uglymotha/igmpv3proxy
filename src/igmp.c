@@ -120,7 +120,7 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uin
     if (! IN_MULTICAST(ntohl(group)))
         LOG(LOG_WARNING, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
     /* filter local multicast 224.0.0.0/8 */
-    else if (! CONFIG->proxyLocalMc && ((htonl(group) & 0xFFFFFF00) == 0xE0000000))
+    else if (! CONFIG->proxyLocalMc && ((ntohl(group) & 0xFF000000) == 0xE0000000))
         LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s and proxylocalmc is not set. Ignoring.", IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state) ? "upstream interface " : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");

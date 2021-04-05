@@ -112,7 +112,8 @@ int main(int ArgCn, char *ArgVc[]) {
                     cliCmd(h == 'h' ? strcat(strcat(cmd, (char *)&c), (char *)&h) : (char *)&c);
                 }
                 c = h == 'h' ? getopt(ArgCn, ArgVc, "riftcvdnh") : h;
-                if (c == -1) exit(0);
+                if (c == -1)
+                    exit(0);
             }
             cliCmd("cli");
             exit(0);
@@ -207,7 +208,8 @@ static void igmpProxyCleanUp(void) {
     myLog(LOG_DEBUG, 0, "clean handler called");
 
     struct IfDesc *IfDp;
-    for (GETIFL(IfDp)) ctrlQuerier(0, IfDp);
+    for (GETIFL(IfDp))
+        ctrlQuerier(0, IfDp);
     timer_freeQueue();      // Free all timeouts.
     clearRoutes(NULL);      // Remove all routes.
     freeIfDescL(false);     // Free IfDesc table.
@@ -249,11 +251,12 @@ static void igmpProxyRun(void) {
         // Run queue aging, it wil return the time until next timer is scheduled.
         struct timespec timeout = timer_ageQueue();
 
-        // Wait for input
-        int Rt = ppoll(pollFD, 2, timeout.tv_sec != -1 ? &timeout : NULL, NULL);
+        // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
+        int Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
 
         // log and ignore failures
-        if (Rt < 0 && errno != EINTR) myLog(LOG_WARNING, errno, "select() failure");
+        if (Rt < 0 && errno != EINTR)
+            myLog(LOG_WARNING, errno, "select() failure");
         else if (Rt > 0) {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
@@ -269,13 +272,17 @@ static void igmpProxyRun(void) {
                 struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
 
                 int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
-                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) myLog(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
-                else if ((msgHdr.msg_flags & MSG_CTRUNC)) myLog(LOG_WARNING, errno, "recvmsg() truncated control message received");
-                else acceptIgmp(recvlen, msgHdr);
+                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC))
+                    myLog(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
+                else if ((msgHdr.msg_flags & MSG_CTRUNC))
+                    myLog(LOG_WARNING, errno, "recvmsg() truncated control message received");
+                else
+                    acceptIgmp(recvlen, msgHdr);
             }
 
             // Check if any cli connection needs to be handled.
-            if (pollFD[1].revents & POLLIN) processCliCon(pollFD[1].fd);
+            if (pollFD[1].revents & POLLIN)
+                processCliCon(pollFD[1].fd);
         }
     }
 }
