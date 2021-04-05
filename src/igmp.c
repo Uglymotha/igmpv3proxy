@@ -55,9 +55,6 @@ static char send_buf[BUF_SIZE];        // output packet buffer
 static char msg[TMNAMESZ];
 static int  curttl = 1;
 
-// Keep list of groupvifdescs for group specific queries.
-struct gvDescL *qgvDescL = NULL;
-
 /**
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
 *   Returns pointer to the receive buffer.

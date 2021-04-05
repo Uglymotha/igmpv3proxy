@@ -751,6 +751,7 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
             memcpy(&query1->grec_src[i], IfDp->Name, IF_NAMESIZE);
             query1->grec_mca.s_addr = croute->group;
             query1->grec_type = 1;
+            query1->grec_auxwords = 0;
             query1->grec_nsrcs = i;
             for (i = 0, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
                 if (!BIT_TST(dsrc->vifBits, IfDp->index) || BIT_TST(dsrc->lastMember, IfDp->index))
@@ -767,7 +768,7 @@ void updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec) {
         if (! (query = (struct igmpv3_grec *)malloc(sizeof(struct igmpv3_grec) + IF_NAMESIZE)))   // Freed by sendGroupSpecificQuery()
             LOG(LOG_ERR, errno, "updateRoute: Out of memory.");
         query->grec_mca.s_addr = croute->group;
-        query->grec_nsrcs = query->grec_type = 0;
+        query->grec_nsrcs = query->grec_type = query->grec_auxwords = 0;
         memcpy(&query->grec_src[0], IfDp->Name, IF_NAMESIZE);
         sendGroupSpecificQuery(query);
     }
