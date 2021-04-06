@@ -590,8 +590,8 @@ bool loadConfig(void) {
         timers.rescanConf = 0;
     }
 
-    // Check if bw control interval changed.
-    if (!STARTUP && oldcommonConfig.bwControlInterval != commonConfig.bwControlInterval) {
+    // Check bwcontrol status and start or clear timers if necessary..
+    if (oldcommonConfig.bwControlInterval != commonConfig.bwControlInterval) {
         timer_clearTimer(timers.bwControl);
         timers.bwControl = 0;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC

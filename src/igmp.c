@@ -119,8 +119,8 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uin
     // Sanitycheck the group adress...
     if (! IN_MULTICAST(ntohl(group)))
         LOG(LOG_WARNING, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
-    /* filter local multicast 224.0.0.0/8 */
-    else if (! CONFIG->proxyLocalMc && ((ntohl(group) & 0xFF000000) == 0xE0000000))
+    /* filter local multicast 224.0.0.0/24 */
+    else if (! CONFIG->proxyLocalMc && IGMP_LOCAL(group))
         LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s and proxylocalmc is not set. Ignoring.", IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state) ? "upstream interface " : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
@@ -358,7 +358,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         sendIgmp(IfDp, NULL);
         IfDp->conf->qry.startupQueryCount = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryCount - 1 : 0;
         int timeout = IfDp->querier.ver == 3 ? (getIgmpExp(IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi, 0)) : (IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi);
-        IfDp->querier.Timer = timer_setTimer( TDELAY(timeout * 10), strcat(strcpy(msg, "General Query: "), IfDp->Name), (timer_f)sendGeneralMemberQuery, IfDp);
+        IfDp->querier.Timer = timer_setTimer(TDELAY(timeout * 10), strcat(strcpy(msg, "General Query: "), IfDp->Name), (timer_f)sendGeneralMemberQuery, IfDp);
         timeout = IfDp->querier.ver != 3 ? IfDp->querier.mrc : getIgmpExp(IfDp->querier.mrc, 0);
         IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout), strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name), (timer_f)ageRoutes, IfDp);
         LOG(LOG_DEBUG, 0, "Sent membership query from %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1), inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);

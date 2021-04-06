@@ -48,7 +48,7 @@ static uint64_t id = 1;
 /*
 *   Calculate time difference between two timespecs. Return 0,-1 if t1 is already past t2.
 */
-static inline struct timespec timer_Delay(struct timespec t1, struct timespec t2) {
+static inline struct timespec timer_Diff(struct timespec t1, struct timespec t2) {
     return t1.tv_sec  > t2.tv_sec || (t1.tv_sec == t2.tv_sec && t1.tv_nsec > t2.tv_nsec) ? (struct timespec){ 0, -1 } :
            t1.tv_nsec > t2.tv_nsec ? (struct timespec){ t2.tv_sec - t1.tv_sec - 1, 1000000000 - t1.tv_nsec + t2.tv_nsec }
                                    : (struct timespec){ t2.tv_sec - t1.tv_sec, t2.tv_nsec - t1.tv_nsec };
@@ -71,16 +71,16 @@ struct timespec timer_ageQueue() {
     uint64_t i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (i = 1, node = queue; i <= 4 && node && timer_Delay(curtime, node->time).tv_nsec == -1; node = queue, i++) {
-        LOG(LOG_DEBUG, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timer_Delay(node->time, curtime).tv_nsec / 1000);
+    for (i = 1, node = queue; i <= 4 && node && timer_Diff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
+        LOG(LOG_DEBUG, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timer_Diff(node->time, curtime).tv_nsec / 1000);
         queue = node->next;
         node->func(node->data, node->id);
         free(node);     // Alloced by timer_setTimer()
     }
-    if (i > 1 && CONFIG->logLevel == LOG_DEBUG)
-        debugQueue("Age Queue", 1, NULL, 0);
+    if (i > 1)
+        DEBUGQUEUE("Age Queue", 1, NULL, 0);
 
-    return queue ? timer_Delay(curtime, queue->time) : (struct timespec){-1, -1};
+    return queue ? timer_Diff(curtime, queue->time) : (struct timespec){-1, -1};
 }
 
 /**
@@ -94,7 +94,7 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){0, 0}, NULL };
+    *node = (struct timeOutQueue){ id++, "", action, data, delay, NULL };
     strcpy(node->name, name);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
@@ -102,31 +102,26 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
             node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10 + 1, curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 - 1000000000 };
         else
             node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10, curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
-    } else
-        node->time = delay;
-
-    // if the queue is empty, insert the node and return.
-    if (! queue)
-        queue = node;
-    else {
-        // chase the queue looking for the right place.
-        for (ptr = queue, i++; ptr->next && (node->time.tv_sec > ptr->next->time.tv_sec ||
-                               (node->time.tv_sec == ptr->next->time.tv_sec && node->time.tv_nsec >= ptr->next->time.tv_nsec)); ptr = ptr->next, i++);
-        if (ptr == queue && (node->time.tv_sec < ptr->time.tv_sec || (node->time.tv_sec == ptr->time.tv_sec && node->time.tv_nsec < ptr->time.tv_nsec))) {
-           // Start of queue, insert.
-           i--;
-           queue = node;
-           node->next = ptr;
-        } else {
-           node->next = ptr->next;
-           ptr->next = node;
-        }
     }
 
-    delay = timer_Delay(curtime, node->time);
+    if (! queue)
+        // if the queue is empty, insert the node and return.
+        queue = node;
+    else if (timer_Diff(queue->time, node->time).tv_nsec == -1) {
+        // Start of queue, insert.
+        i++;
+        node->next = queue;
+        queue = node;
+    } else {
+        // chase the queue looking for the right place.
+        for (ptr = queue, i++; ptr->next && timer_Diff(ptr->next->time, node->time).tv_nsec != -1; ptr = ptr->next, i++);
+        node->next = ptr->next;
+        ptr->next = node;
+    }
+
+    delay = timer_Diff(curtime, node->time);
     LOG(LOG_DEBUG, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
-    if (CONFIG->logLevel == LOG_DEBUG)
-        debugQueue("Set Timer", 1, NULL, 0);
+    DEBUGQUEUE("Set Timer", 1, NULL, 0);
     return node->id;
 }
 
@@ -145,8 +140,7 @@ void *timer_clearTimer(uint64_t tid) {
             pnode->next = node->next;
         else
             queue = node->next;
-        if (CONFIG->logLevel == LOG_DEBUG)
-            debugQueue("Clear Timer", 1, NULL, 0);
+        DEBUGQUEUE("Clear Timer", 1, NULL, 0);
         pnode = (void *)node->data;
         LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", node->id, i, node->name);
         free(node);        // Alloced by timer_setTimer()
@@ -172,7 +166,7 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
     for (i = 1, node = queue; node; node = node->next, i++) {
-        struct timespec delay = timer_Delay(curtime, node->time);
+        struct timespec delay = timer_Diff(curtime, node->time);
         if (! cliSockAddr)
             LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
         else {

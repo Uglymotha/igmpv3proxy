@@ -51,6 +51,8 @@ struct igmpv3_report {
     struct igmpv3_grec igmp_grec[];
 };
 
+#define IGMP_LOCAL(x) ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
+
 #define IGMPV3_MODE_IS_INCLUDE   1
 #define IGMPV3_MODE_IS_EXCLUDE   2
 #define IGMPV3_CHANGE_TO_INCLUDE 3

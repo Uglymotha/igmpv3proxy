@@ -68,7 +68,6 @@
 //#################################################################################
 
 // Bit manipulation macros.
-#define BIT_ZERO(X)      ((X) = 0)
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
 #define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
 #define BIT_TST(X,n)     ((X) & 1 << (n))
@@ -275,6 +274,7 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 */
 #define TMNAMESZ 48
 #define TDELAY(x) (struct timespec){ -1, x }
+#define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 typedef void  (*timer_f)();
 void            timer_freeQueue(void);
 struct timespec timer_ageQueue();

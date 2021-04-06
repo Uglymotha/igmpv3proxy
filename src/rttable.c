@@ -105,14 +105,14 @@ static void          removeRoute(struct routeTable *croute);
 
 static inline void setDownstreamHost(uint8_t *table, uint32_t src) {
     if (CONFIG->fastUpstreamLeave) {
-        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize*8);
+        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize * 8);
         BIT_SET(table[hash/8], hash%8);
     }
 }
 
 static inline void clearDownstreamHost(uint8_t *table, uint32_t src) {
     if (CONFIG->fastUpstreamLeave) {
-        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize*8);
+        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize * 8);
         BIT_CLR(table[hash/8], hash%8);
     }
 }
