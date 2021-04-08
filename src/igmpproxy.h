@@ -361,7 +361,7 @@ void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
-void     ageRoutes(struct IfDesc *IfDp, uint64_t tid);
+void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);

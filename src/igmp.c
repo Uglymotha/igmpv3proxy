@@ -272,7 +272,7 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     igmpv3->igmp_type         = IGMP_MEMBERSHIP_QUERY;
     igmpv3->igmp_code         = IfDp->querier.ver == 1 ? 0 : grec ? IfDp->conf->qry.lmInterval : IfDp->querier.mrc;
     igmpv3->igmp_group.s_addr = grec ? grec->grec_mca.s_addr : 0;
-    igmpv3->igmp_misc         = (grec && grec->grec_type == 1 ? 0x8 : 0) + IfDp->querier.qrv;    // When sending 1st group and source specific query, set router suppress flag.
+    igmpv3->igmp_misc         = (grec && grec->grec_type | 0x1 ? 0x8 : 0) + IfDp->querier.qrv;    // set router suppress flag.
     igmpv3->igmp_qqi          = grec ? IfDp->conf->qry.lmInterval : IfDp->querier.qqi;
 
     // Set sources for group and source specific query
