@@ -261,7 +261,7 @@ int k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) {
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
     // Add the mfc to the kernel.
-    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d", fmtInAdr(CtlReq.mfcc_origin, 1), fmtInAdr(CtlReq.mfcc_mcastgrp, 2), (int)CtlReq.mfcc_parent);
+    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1), inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if ((rc = setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq))))
         LOG(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -293,7 +293,7 @@ int k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #endif
 
     // Remove mfc from kernel.
-    LOG(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", fmtInAdr(CtlReq.mfcc_origin, 1), fmtInAdr(CtlReq.mfcc_mcastgrp, 2), (int)CtlReq.mfcc_parent);
+    LOG(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1), inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if ((rc = setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq))))
         LOG(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
 

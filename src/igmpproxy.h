@@ -327,7 +327,6 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 */
 int     qdlm;    // Quick & dirty Macro to reduce logging impact.
 #define LOG(x, ...) qdlm = (x <= CONFIG->logLevel && myLog(x, __VA_ARGS__))
-char    *fmtInAdr(struct in_addr InAdr, int pos);
 char    *inetFmt(uint32_t addr, int pos);
 char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t inetChksum(uint16_t *addr, int len);

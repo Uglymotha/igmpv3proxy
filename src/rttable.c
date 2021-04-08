@@ -825,14 +825,15 @@ static void sendGroupSpecificQuery(struct igmpv3_grec *grec) {
             free(grec);   // Alloced by updateRoute()
             return;
         } else if (grec->grec_nsrcs > 0) {
-            grec->grec_nsrcs = 0;
             if ((croute = findRoute(grec->grec_mca.s_addr, false))) {
-                for (i = 0, j = 1; i < grec->grec_nsrcs; j++) {
+                uint16_t n = grec->grec_nsrcs;
+                for (grec->grec_nsrcs = i = 0, j = 1; i < n; j++) {
                     for (src = croute->dSources; src && (!BIT_TST(src->vifBits, IfDp->index) || !BIT_TST(src->lmBits, IfDp->index)); src = src->next);
                     if (! src) {
-                        LOG(LOG_DEBUG, 0, "sendGSQ: %s / %s not longer in last member state on %s.", inetFmt(grec->grec_src[i].s_addr, 1), inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
+                        LOG(LOG_DEBUG, 0, "sendGSQ: %s / %s not longer in last member state on %s.", inetFmt(grec->grec_src[i].s_addr, 1), inetFmt(grec->grec_mca.s_addr, 2), IfDp->Name);
                         grec->grec_src[i] = grec->grec_src[j];
                     } else {
+                        LOG(LOG_DEBUG, 0, "sendGSQ: %s / %s still in last member state on %s.", inetFmt(grec->grec_src[i].s_addr, 1), inetFmt(grec->grec_mca.s_addr, 2), IfDp->Name);
                         grec->grec_nsrcs++;
                         i++;
                     }
@@ -950,7 +951,7 @@ void ageRoutes(struct IfDesc *IfDp, uint64_t tid) {
             }
         }
         if ( ((tid == 0 && BIT_TST(croute->lmBits, IfDp->index)) || (tid != 0 && !BIT_TST(croute->lmBits, IfDp->index)))
-           && (croute->age[IfDp->index] > 0 && --croute->age[IfDp->index] == 0 && !BIT_TST(croute->mode, IfDp->index))) {
+           && (croute->age[IfDp->index] > 0 && --croute->age[IfDp->index] == 0 && BIT_TST(croute->mode, IfDp->index))) {
             LOG(LOG_DEBUG, 0, "ageRoutes: Switching mode for %s to include on %s.", inetFmt(croute->group, 1), IfDp->Name);
             BIT_CLR(croute->mode, IfDp->index);
             for (psrc = NULL, dsrc = croute->dSources; dsrc; dsrc = dsrc ? dsrc->next : croute->dSources) {

@@ -38,15 +38,6 @@
 static char s[4][19];
 
 /**
-*   Formats 'InAdr' into a dotted decimal string.
-*   returns: - pointer to 'St'
-*/
-inline char *fmtInAdr(struct in_addr InAdr, int pos) {
-    sprintf(s[pos - 1], "%u.%u.%u.%u", ((uint8_t *)&InAdr.s_addr)[0], ((uint8_t *)&InAdr.s_addr)[1], ((uint8_t *)&InAdr.s_addr)[2], ((uint8_t *)&InAdr.s_addr)[3]);
-    return s[pos - 1];
-}
-
-/**
 *   Convert an IP address in u_long (network) format into a printable string.
 */
 inline char *inetFmt(uint32_t addr, int pos) {

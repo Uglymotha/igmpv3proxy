@@ -94,7 +94,7 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, "", action, data, delay, NULL };
+    *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){ delay.tv_sec, delay.tv_nsec }, NULL };
     strcpy(node->name, name);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
@@ -109,7 +109,6 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
         queue = node;
     else if (timer_Diff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
-        i++;
         node->next = queue;
         queue = node;
     } else {

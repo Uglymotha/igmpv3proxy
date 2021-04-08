@@ -181,7 +181,7 @@ void buildIfVc(void) {
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
         // Debug log the result...
-        LOG( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p", IfDp->Name, fmtInAdr(IfDp->InAdr, 1), IfDp->Flags, IfDp->mtu, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
+        LOG( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p", IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->Flags, IfDp->mtu, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
     }
     
     // Free the getifadds struct.
