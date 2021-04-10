@@ -248,7 +248,7 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     struct sockaddr_in   sdst;
 
     if (grec && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && grec->grec_nsrcs > 0))) {
-        LOG(LOG_WARNING, 0, "Request to send group specific query on %s while in v%d mode, not sending.", IfDp->Name, IfDp->querier.ver);
+        LOG(LOG_NOTICE, 0, "Request to send group specific query on %s while in v%d mode, not sending.", IfDp->Name, IfDp->querier.ver);
         return;
     } else if (grec && !IN_MULTICAST(ntohl(grec->grec_mca.s_addr))) {
         LOG(LOG_WARNING, 0, "IGMP request to %s on %s not valid, not sending.", inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);
