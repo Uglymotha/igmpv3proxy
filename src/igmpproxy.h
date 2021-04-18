@@ -349,13 +349,14 @@ int  k_enableMRouter(void);
 void k_disableMRouter(void);
 bool k_addVIF(struct IfDesc *IfDp);
 void k_delVIF(struct IfDesc *IfDp);
-int  k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
-int  k_delMRoute(uint32_t src, uint32_t group, int vif);
+void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
+void k_delMRoute(uint32_t src, uint32_t group, int vif);
 void k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
 *   rttable.c
 */
+#define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip)
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);

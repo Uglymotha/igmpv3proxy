@@ -596,7 +596,7 @@ bool loadConfig(void) {
         timers.bwControl = 0;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         int Va, len = sizeof(Va);
-        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) || ! (Va & MRT_MFC_BW_UPCALL))) {
+        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0 || ! (Va & MRT_MFC_BW_UPCALL))) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             commonConfig.bwControlInterval = 0;
         } else
