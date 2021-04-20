@@ -101,9 +101,11 @@ void freeConfig(int old) {
 */
 static bool configFile(char *filename, int open) {
     // Open config file and allocate memory for inputbuffer. Freed by closeConfigFile()
-    if (! open || ! (confFilePtr = fopen(filename, "r")) || ! (iBuffer = (char*)malloc(sizeof(char) * READ_BUFFER_SIZE))) {
-        if (confFilePtr) fclose(confFilePtr);
-        if (iBuffer) free(iBuffer);   // Alloced by self
+    if (! open || ! (confFilePtr = fopen(filename, "r")) || ! (iBuffer = malloc(sizeof(char) * READ_BUFFER_SIZE))) {
+        if (confFilePtr)
+            fclose(confFilePtr);
+        if (iBuffer)
+            free(iBuffer);   // Alloced by self
         confFilePtr = NULL;
         iBuffer = NULL;
         return open ? false : true;
@@ -124,7 +126,8 @@ static char *nextConfigToken(void) {
     bool           finished = false, oversized = false, commentFound = false;
 
     // If no file or buffer, return NULL
-    if (! confFilePtr || ! iBuffer) return NULL;
+    if (! confFilePtr || ! iBuffer)
+        return NULL;
 
     // Outer buffer fill loop...
     while (! finished) {
@@ -135,7 +138,8 @@ static char *nextConfigToken(void) {
             bufPtr = 0;
 
             // If the readsize is 0, we should just return...
-            if (readSize == 0) return NULL;
+            if (readSize == 0)
+                return NULL;
         }
 
         // Inner char loop...
@@ -185,8 +189,10 @@ static char *nextConfigToken(void) {
         }
         // If the readsize is less than buffersize, we assume EOF.
         if (readSize < READ_BUFFER_SIZE && bufPtr == readSize) {
-            if (tokenPtr > 0) finished = true;
-            else return NULL;
+            if (tokenPtr > 0)
+                finished = true;
+            else
+                return NULL;
         }
     }
     if (tokenPtr > 0) {
@@ -204,7 +210,7 @@ static void allocFilter(struct filters fil) {
     struct filters ***tmpFil = &filPtr;
 
     // Allocate memory for filter and copy from argument.
-    if (! (**tmpFil = (struct filters*)malloc(sizeof(struct filters))))
+    if (! (**tmpFil = malloc(sizeof(struct filters))))
         LOG(LOG_ERR, errno, "allocSubnet: Out of Memory.");  // Freed by freeConfig() or parsePhyIntToken()
     ***tmpFil = fil;
 
@@ -218,15 +224,19 @@ static bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
     // First get the network part of the address...
     char *tmpStr = strtok(addrstr, "/");
     *addr = inet_addr(tmpStr);
-    if (*addr == (in_addr_t)-1) return false;
+    if (*addr == (in_addr_t)-1)
+        return false;
 
     // Next parse the subnet mask.
     tmpStr = strtok(NULL, "/");
     if (tmpStr) {
         int bitcnt = atoi(tmpStr);
-        if (bitcnt < 0 || bitcnt > 32) return false;
-        else *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
-    } else return false;
+        if (bitcnt < 0 || bitcnt > 32)
+            return false;
+        else
+            *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
+    } else
+        return false;
 
     return true;
 }
@@ -287,7 +297,8 @@ static void initCommonConfig(void) {
 */
 void reloadConfig(uint64_t *tid) {
     // Check and set sigstatus to what we are actually doing right now.
-    if (NOSIG) sigstatus = GOT_CONFREL;
+    if (NOSIG)
+        sigstatus = GOT_CONFREL;
     oldvifConf      = vifConf;
     vifConf         = NULL;
     oldcommonConfig = commonConfig;
@@ -306,7 +317,8 @@ void reloadConfig(uint64_t *tid) {
 
         LOG(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", oldvifConf, vifConf);
     }
-    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf) *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
+    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
+        *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
 
     sigstatus = 0;
 }
@@ -322,7 +334,8 @@ bool loadConfig(void) {
     initCommonConfig();
 
     // Open config file and read first token.
-    if (! configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken())) return false;
+    if (! configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken()))
+        return false;
     LOG(LOG_DEBUG, 0, "Loading config from '%s'", commonConfig.configFilePath);
 
     // Loop until all configuration is read.
@@ -341,7 +354,8 @@ bool loadConfig(void) {
                 *currPtr = tmpPtr;
                 currPtr = &tmpPtr->next;
                 continue;
-            } else if (!STARTUP) return false;
+            } else if (!STARTUP)
+                return false;
 
         } else if (strcasecmp("quickleave", token) == 0) {
             // Got a quickleave token....
@@ -507,7 +521,7 @@ bool loadConfig(void) {
         } else if (strcasecmp("logfile", token) == 0 && (token = nextConfigToken())) {
             // Got a logfile token. Only use log file if not logging to stderr.
             if (!commonConfig.log2Stderr) {
-                commonConfig.logFilePath = ! commonConfig.logFilePath ? (char *)malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;   // Freed by igmpProxyCleanUp()
+                commonConfig.logFilePath = ! commonConfig.logFilePath ? malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;   // Freed by igmpProxyCleanUp()
                 if (strstr(options, token)) {
                     LOG(LOG_WARNING, 0, "Config: No logfile path specified. Ignoring.");
                     continue;
@@ -554,7 +568,8 @@ bool loadConfig(void) {
         } else {
             // Unparsable token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file", token);
-            if (!STARTUP) return false;
+            if (!STARTUP)
+                return false;
         }
 
         token = nextConfigToken();
@@ -640,7 +655,7 @@ static struct vifConfig *parsePhyintToken(void) {
     LOG(LOG_NOTICE, 0, "Config: IF: Config for interface %s.", token);
 
     // Allocate and initialize memory for new configuration.
-    if (! (tmpPtr = (struct vifConfig*)malloc(sizeof(struct vifConfig))))
+    if (! (tmpPtr = malloc(sizeof(struct vifConfig))))
         LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
     *tmpPtr = DEFAULT_VIFCONF;
     tmpPtr->compat = true;
@@ -880,10 +895,12 @@ void configureVifs(void) {
     struct vifConfig *confPtr = NULL;
     register int      vifcount = 0, upsvifcount = 0, downvifcount = 0;
 
-    if (! vifConf) LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
+    if (! vifConf)
+        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
     // Loop through all interfaces and find matching config.
     for (GETIFL(IfDp)) {
-        if (CONFRELOAD) IfDp->oldconf = IfDp->conf;
+        if (CONFRELOAD)
+            IfDp->oldconf = IfDp->conf;
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name) != 0; confPtr = confPtr->next);
         if (confPtr) {
             LOG(LOG_DEBUG, 0, "Found config for %s", IfDp->Name);
@@ -933,7 +950,7 @@ void configureVifs(void) {
         } else  {
             // Interface has no matching config, create default config.
             LOG(LOG_DEBUG, 0, "configureVifs: Creating default config for %s interface %s.", IS_DISABLED(commonConfig.defaultInterfaceState) ? "disabled" : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream" : IS_UPSTREAM(commonConfig.defaultInterfaceState) ? "upstream" : "downstream", IfDp->Name);
-            if (! (confPtr = (struct vifConfig *)malloc(sizeof(struct vifConfig))))
+            if (! (confPtr = malloc(sizeof(struct vifConfig))))
                 LOG(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
             *confPtr = DEFAULT_VIFCONF;
             strcpy(confPtr->name, IfDp->Name);
@@ -955,6 +972,10 @@ void configureVifs(void) {
                 IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
                 IfDp->oldconf->state = IF_STATE_DISABLED;
             }
+        } else if (IfDp->oldconf->state & 0x40) {
+            // Interface had removal delayed, flag for removal again.
+            IfDp->oldconf->state = IF_STATE_DISABLED;
+            IfDp->state          = IF_STATE_DISABLED | 0x80;
         } else {
             // Existing interface, oldstate is current state with default filter flag, newstate is configured state without default filter flag.
             IfDp->oldconf->state = IfDp->state | (IfDp->conf->state & 0x80);
@@ -992,11 +1013,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )        { clearRoutes(IfDp);  ctrlQuerier(1, IfDp); }
-        else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))        {                     ctrlQuerier(1, IfDp); }
-        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )        { clearRoutes(IfDp);  ctrlQuerier(0, IfDp); }
-        else if ( oldstate != newstate)                                      { clearRoutes(IfDp);  ctrlQuerier(2, IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )        { clearRoutes(IfDp);                        }
+        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { clearRoutes(IfDp);  ctrlQuerier(1, IfDp); }
+        else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    {                     ctrlQuerier(1, IfDp); }
+        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { clearRoutes(IfDp);  ctrlQuerier(0, IfDp); }
+        else if ( oldstate != newstate)                                  { clearRoutes(IfDp);  ctrlQuerier(2, IfDp); }
+        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    { clearRoutes(IfDp);                        }
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
@@ -1014,5 +1035,6 @@ void configureVifs(void) {
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
-    if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0) LOG(STARTUP ? LOG_ERR : LOG_WARNING, 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
+    if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0)
+        LOG(STARTUP ? LOG_ERR : LOG_WARNING, 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }

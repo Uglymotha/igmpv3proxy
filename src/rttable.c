@@ -739,23 +739,25 @@ static inline void startQuery(struct routeTable *croute, struct IfDesc *IfDp, ui
     if (qlst && nsrcs == 0)
         return;
 
-    if (! (query = malloc(sizeof(struct igmpv3_grec) + nsrcs * sizeof(struct in_addr) + sizeof(void *) + IF_NAMESIZE)))
+    if (! (query = malloc(sizeof(struct igmpv3_grec) + nsrcs * sizeof(struct in_addr) + 2 * sizeof(void *))))
         LOG(LOG_ERR, errno, "updateRoute: Out of memory.");  // Freed by sendGroupSpecificQuery()
 
     if (! qlst) {
         LOG(LOG_INFO, 0, "startQuery: Querying group %s on %s.", inetFmt(croute->group, 1), IfDp->Name);
+        BIT_SET(IfDp->gsq, 1);
         BIT_SET(croute->lmBits, IfDp->index);
         BIT_SET(croute->gsqBits, IfDp->index);
         croute->age[IfDp->index] = IfDp->conf->qry.lmCount;
         croute->qCnt[IfDp->index]++;
     } else {
         LOG(LOG_INFO, 0, "startQuery: Querying %d sources for %s on %s.", qlst[0], inetFmt(croute->group, 1), IfDp->Name);
+        BIT_SET(IfDp->gsq, 2);
         BIT_SET(croute->gssqBits, IfDp->index);
         for (i = 0; i < qlst[0]; query->grec_src[i].s_addr = qlst[i + 1], i++);
     }
     *query = (struct igmpv3_grec){ qlst ? qlst[nsrcs + 1] : 2, 0, nsrcs, {croute->group} };
-    memcpy(&query->grec_src[nsrcs], &croute, sizeof(void *));
-    strcpy((char *)&query->grec_src[nsrcs] + sizeof(void *), IfDp->Name);
+    memcpy((char *)&query->grec_src[nsrcs], &croute, sizeof(void *));
+    memcpy((char *)&query->grec_src[nsrcs] + sizeof(void *), &IfDp, sizeof(void *));
     sendGroupSpecificQuery(query);
 }
 
@@ -768,17 +770,11 @@ static inline void startQuery(struct routeTable *croute, struct IfDesc *IfDp, ui
 */
 static void sendGroupSpecificQuery(void *rec) {
     struct igmpv3_grec *grec   = rec;
-    struct routeTable  *croute = *(struct routeTable **)memcpy(&croute, &grec->grec_src[grec->grec_nsrcs], sizeof(void *));
-    struct IfDesc      *IfDp   = getIfByName((char *)&grec->grec_src[grec->grec_nsrcs] + sizeof(void *));
+    struct routeTable  *croute = *(void **)memcpy(&croute, (char *)&grec->grec_src[grec->grec_nsrcs], sizeof(void *));
+    struct IfDesc      *IfDp   = *(void **)memcpy(&IfDp, (char *)&grec->grec_src[grec->grec_nsrcs] + sizeof(void *), sizeof(void *));
     struct igmpv3_grec *query  = NULL, *query1 = NULL;
     struct dSources    *dsrc, *psrc;
     uint16_t            i, j, a, b, nsrcs = grec->grec_nsrcs;
-    if (! IfDp || IS_DISABLED(IfDp->state)) {
-        LOG(LOG_WARNING, 0, "Requested to send GSQ for %s with %d sources on disabled interface %s.", inetFmt(croute->group, 1), grec->grec_nsrcs, &grec->grec_src[grec->grec_nsrcs]);
-        croute->qCnt[IfDp->index]--;
-        free(grec);  // Alloced by startQuery()
-        return;
-    }
 
     // Do aging upon reentry.
     if (grec->grec_auxwords > 0) {
@@ -796,7 +792,7 @@ static void sendGroupSpecificQuery(void *rec) {
             } else if (--croute->age[IfDp->index] == 0)
                 toInclude(IfDp, croute);
         } else if (grec->grec_type & 0xc) {
-            uint32_t size = sizeof(struct igmpv3_grec) + grec->grec_nsrcs * sizeof(struct in_addr) + IF_NAMESIZE + sizeof(void *);
+            uint32_t size = sizeof(struct igmpv3_grec) + grec->grec_nsrcs * sizeof(struct in_addr) + 2 * sizeof(void *);
             for (i = a = b = 0, j = 1; i < grec->grec_nsrcs; j++) {
                 for (psrc = NULL, dsrc = croute->dSources; dsrc && dsrc->ip != grec->grec_src[i].s_addr; psrc = dsrc, dsrc = dsrc->next);
                 if (! dsrc || dsrc->qCnt[IfDp->index] > 1 || (--dsrc->age[IfDp->index] == 0 && !BIT_TST(croute->mode, IfDp->index))) {
@@ -818,11 +814,11 @@ static void sendGroupSpecificQuery(void *rec) {
                         grec->grec_src[i] = grec->grec_src[j];
                     grec->grec_nsrcs--;
                 } else {
-                    if (BIT_TST(dsrc->lmBits, IfDp->index) && IQUERY) {
+                    if (BIT_TST(dsrc->lmBits, IfDp->index)) {
                         if (! query && ! (query = malloc(size)))
                             LOG(LOG_ERR, errno, "SendGSQ: Out of memory.");  // Freed by self.
                         query->grec_src[a++] = grec->grec_src[i];
-                    } else if (grec->grec_type & 0x4 && IQUERY) {
+                    } else if (grec->grec_type & 0x4) {
                         LOG(LOG_INFO, 0, "sendGSQ: Source %s for group %s no longer in last member state on %s.", inetFmt(dsrc->ip, 1), inetFmt(croute->group, 1), IfDp->Name);
                         if (! query1 && ! (query1 = malloc(size)))
                             LOG(LOG_ERR, errno, "SendGSQ: Out of memory.");  // Freed by self.
@@ -847,10 +843,10 @@ static void sendGroupSpecificQuery(void *rec) {
         if (query) {
             sendIgmp(IfDp, query);
             free(query);  // Alloced by self
-        } else if (IQUERY && ((grec->grec_type & 0x2) || ((grec->grec_type & 0xc) && grec->grec_auxwords == 1)))
+        } else if ((grec->grec_type & 0x2) || ((grec->grec_type & 0xc) && grec->grec_auxwords == 1))
             sendIgmp(IfDp, grec);
-        memcpy(&grec->grec_src[grec->grec_nsrcs], &croute, sizeof(void *));
-        strcpy((char *)&grec->grec_src[grec->grec_nsrcs] + sizeof(void *), IfDp->Name);
+        memcpy((char *)&grec->grec_src[grec->grec_nsrcs], &croute, sizeof(void *));
+        memcpy((char *)&grec->grec_src[grec->grec_nsrcs] + sizeof(void *), &IfDp, sizeof(void *));
         sprintf(msg, "GSQ (%s): %15s/%u", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1), grec->grec_nsrcs);
         timer_setTimer(TDELAY(IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 0) : IfDp->conf->qry.lmInterval), msg, (timer_f)sendGroupSpecificQuery, grec);
     } else {
@@ -858,20 +854,16 @@ static void sendGroupSpecificQuery(void *rec) {
         if (grec->grec_type & 0x2) {
             croute->qCnt[IfDp->index]--;
             BIT_CLR(croute->gsqBits, IfDp->index);
-            if (BIT_TST(croute->lmBits, IfDp->index)) {
-                LOG(LOG_WARNING, 0, "Group %s still in last member mode after querying.", inetFmt(croute->group, 1));
-                BIT_CLR(croute->lmBits, IfDp->index);
-            }
+            BIT_CLR(IfDp->gsq, 1);
+            BIT_CLR(croute->lmBits, IfDp->index);
         } else if (grec->grec_type & 0xc) {
             BIT_CLR(croute->gssqBits, IfDp->index);
+            BIT_CLR(IfDp->gsq, 2);
             for (i = 0; i < grec->grec_nsrcs; i++)
                 for (dsrc = croute->dSources; dsrc; dsrc = dsrc->next)
                     if (dsrc->ip == grec->grec_src[i].s_addr) {
                         dsrc->qCnt[IfDp->index]--;
-                        if (BIT_TST(dsrc->lmBits, IfDp->index)) {
-                            LOG(LOG_WARNING, 0, "Source %s / Group %s still in last member mode after querying.", inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2));
-                            BIT_CLR(dsrc->lmBits, IfDp->index);
-                        }
+                        BIT_CLR(dsrc->lmBits, IfDp->index);
                     }
         }
         free(grec);   // Alloced by startQuery()

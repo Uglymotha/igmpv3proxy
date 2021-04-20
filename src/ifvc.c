@@ -52,17 +52,24 @@ void freeIfDescL(bool clean) {
 
     for (IfDp = IfDescL; IfDp; IfDp = nIfDp) {
         nIfDp = IfDp->next;
-        if (!clean || (clean && IfDp->conf && (IfDp->state & 0x80))) {
+        if (!clean || (clean && (IfDp->state & 0x80) && !IfDp->gsq)) {
             // On shutdown, or when interface is marked for deletion, remove it and its aliases.
-            if (clean)
+            if (clean) {
                 LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
+                if (pIfDp)
+                    pIfDp->next = IfDp->next;
+                else
+                    IfDescL = IfDp->next;
+            }
             for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);  // Alloced by buildIfVc()
-            if (clean && pIfDp)
-                pIfDp->next = IfDp->next;
-            else if (clean)
-                IfDescL = IfDp->next;
             free(IfDp);  // Alloced by buildIfvc()
         } else {
+            if (clean && (IfDp->state & 0x80) && IfDp->gsq) {
+                LOG(LOG_NOTICE, 0, "Interface %s actively queried, Delaying removal.", IfDp->Name);
+                IfDp->state = IF_STATE_DISABLED;
+                IfDp->mtu   = IfDp->Flags = 0;
+                IfDp->conf->state = IF_STATE_DISABLED | 0x40;
+            }
             IfDp->oldconf = NULL;
             pIfDp = IfDp;
         }
@@ -85,9 +92,8 @@ void rebuildIfVc(uint64_t *tid) {
     LOG(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
     configureVifs();
 
-    // Call createvifs for removing or adding interfaces if required.
-    if (!CONFRELOAD)
-        freeIfDescL(true);
+    // Free removed interfaces.
+    freeIfDescL(true);
 
     // Restart timer when doing timed reload.
     if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif)
@@ -127,7 +133,7 @@ void buildIfVc(void) {
             if (! fil && mask != 0xFFFFFFFF) {
                 // Create new alias and prepend to list of existing aliases.
                 fil = IfDp->aliases;
-                if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters))))
+                if (! (IfDp->aliases = malloc(sizeof(struct filters))))
                     LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by Self or freeIfDescL()
                 *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, fil };
             }
@@ -136,7 +142,7 @@ void buildIfVc(void) {
 
         } else if (! IfDp) {
             // New interface, allocate and initialize.
-            if (! (IfDp  = (struct IfDesc *)malloc(sizeof(struct IfDesc))))
+            if (! (IfDp  = malloc(sizeof(struct IfDesc))))
                 LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
@@ -176,7 +182,7 @@ void buildIfVc(void) {
         }
 
         // Insert the verified subnet as first alias.
-        if (! (IfDp->aliases = (struct filters *)malloc(sizeof(struct filters))))
+        if (! (IfDp->aliases = malloc(sizeof(struct filters))))
             LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
@@ -232,15 +238,14 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
-    for (IfDp = IfDescL; IfDp; IfDp = IfDp->next, i++) {
+    for (GETIFL(IfDp), i++) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
-            sprintf(buf, msg, i, IfDp->Name, IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, IfDp->conf->ratelimit);
         } else {
             strcpy(msg, "%d %s %d %d %s %s %s %d %lld %lld %lld\n");
-            sprintf(buf, msg, i, IfDp->Name, IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, IfDp->conf->ratelimit);
         }
+        sprintf(buf, msg, i, IfDp->Name, IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
@@ -264,7 +269,7 @@ void getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd) {
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
-    for (IfDp = IfDescL; IfDp; IfDp = IfDp->next, i++) {
+    for (GETIFL(IfDp), i++) {
         struct filters *filter;
         int             i = 1;
         for (filter = IfDp->conf->filters; filter; filter = filter->next, i++) {
@@ -273,13 +278,11 @@ void getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd) {
                 strcpy(msg, h ? "%10lld B/s" : "%lld");
                 sprintf(s, msg, filter->action);
             }
-            if (h) {
+            if (h)
                 strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
-                sprintf(buf, msg, i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both", filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
-            } else {
+            else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
-                sprintf(buf, msg, IfDp->Name, i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both", filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
-            }
+            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both", filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
             sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
         }
     }

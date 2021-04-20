@@ -247,7 +247,10 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     int                  len    = 0;
     struct sockaddr_in   sdst;
 
-    if (grec && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && grec->grec_nsrcs > 0))) {
+    if (IS_DISABLED(IfDp->state)) {
+        LOG(LOG_NOTICE, 0, "Interface %s disabled, not sending query for %s.", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1));
+        return;
+    } else if (grec && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && grec->grec_nsrcs > 0))) {
         LOG(LOG_NOTICE, 0, "Request to send group specific query on %s while in v%d mode, not sending.", IfDp->Name, IfDp->querier.ver);
         return;
     } else if (grec && !IN_MULTICAST(ntohl(grec->grec_mca.s_addr))) {
@@ -272,7 +275,7 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     igmpv3->igmp_type         = IGMP_MEMBERSHIP_QUERY;
     igmpv3->igmp_code         = IfDp->querier.ver == 1 ? 0 : grec ? IfDp->conf->qry.lmInterval : IfDp->querier.mrc;
     igmpv3->igmp_group.s_addr = grec ? grec->grec_mca.s_addr : 0;
-    igmpv3->igmp_misc         = (grec && grec->grec_type | 0x1 ? 0x8 : 0) + IfDp->querier.qrv;    // set router suppress flag.
+    igmpv3->igmp_misc         = (grec && grec->grec_type & 0x1 ? 0x8 : 0) + IfDp->querier.qrv;    // set router suppress flag.
     igmpv3->igmp_qqi          = grec ? IfDp->conf->qry.lmInterval : IfDp->querier.qqi;
 
     // Set sources for group and source specific query
