@@ -58,7 +58,7 @@ int openCliSock(void) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = (char *)malloc(strlen(path) + 12))) LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
+            if (! (CONFIG->runPath = malloc(strlen(path) + 12))) LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
             strcpy(CONFIG->runPath, strcat(path, "/igmpproxy/"));
             break;
         }

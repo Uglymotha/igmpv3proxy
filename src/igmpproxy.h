@@ -332,6 +332,7 @@ char    *inetFmt(uint32_t addr, int pos);
 char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t inetChksum(uint16_t *addr, int len);
 uint32_t murmurhash3(register uint32_t x);
+void     sortArr(register uint32_t *arr, register uint32_t nr);
 uint16_t getIgmpExp(register int val, register int d);
 bool     myLog(int Serverity, int Errno, const char *FmtSt, ...);
 

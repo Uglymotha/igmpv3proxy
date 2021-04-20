@@ -96,6 +96,20 @@ inline uint32_t murmurhash3(register uint32_t x) {
 }
 
 /**
+*   Sort array in numerical asceding order. (Insertion Sort)
+*/
+inline void sortArr(register uint32_t *arr, register uint32_t nr) {
+    if (nr > 1) {
+        register uint32_t i, j, o, t;
+        for(i = o = 0, j = 1; j < nr; j = ++i + 1, o++) {
+            for (t = arr[j]; j > 0 && arr[j - 1] > t; arr[j] = arr[j - 1], j--, o++);
+            arr[j] = t;
+        }
+        LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
+    }
+}
+
+/**
 *   Calculate QQIC / RESV value from given 15 bit integer (RFC Max). We use our own implementation, as various OS do not provide a common one.
 */
 inline uint16_t getIgmpExp(register int val, register int d) {

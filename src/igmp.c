@@ -281,11 +281,11 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     // Set sources for group and source specific query
     if (grec && grec->grec_nsrcs > 0) {
         for (int i = 0; i < grec->grec_nsrcs; igmpv3->igmp_sources[i] = grec->grec_src[i], i++);
-        igmpv3->igmp_numsrc = grec->grec_nsrcs;
+        igmpv3->igmp_numsrc = htons(grec->grec_nsrcs);
     }
 
     // Set packet length and calculate checksum.
-    len = IP_HEADER_RAOPT_LEN + (IfDp->querier.ver != 3 ? 8 : IGMPV3_MINLEN + (igmpv3->igmp_numsrc * sizeof(struct in_addr)));
+    len = IP_HEADER_RAOPT_LEN + (IfDp->querier.ver != 3 ? 8 : IGMPV3_MINLEN + (ntohs(igmpv3->igmp_numsrc) * sizeof(struct in_addr)));
     igmpv3->igmp_cksum        = inetChksum((uint16_t *)igmpv3, len);
     IPSETLEN;
 

@@ -91,7 +91,7 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     struct timeOutQueue  *ptr = NULL, *node = NULL;
     uint64_t              i = 1;
 
-    if (! (node = (struct timeOutQueue *)malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
+    if (! (node = malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
     *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){ delay.tv_sec, delay.tv_nsec }, NULL };
