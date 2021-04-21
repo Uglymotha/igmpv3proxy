@@ -1,6 +1,5 @@
 sbin_PROGRAMS = igmpproxy
 igmpproxy_SOURCES = \
-	callout.c \
 	cli.c \
 	config.c \
 	ifvc.c \
@@ -16,4 +15,5 @@ igmpproxy_SOURCES = \
 	os-netbsd.h \
 	os-openbsd.h \
 	os-qnxnto.h \
-	rttable.c
+	rttable.c \
+	timers.c

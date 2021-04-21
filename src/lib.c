@@ -88,10 +88,9 @@ inline uint16_t inetChksum(register uint16_t *addr, register int len) {
 *   MurmurHash3 32bit hash function by Austin Appleby, public domain
 */
 inline uint32_t murmurhash3(register uint32_t x) {
-    x ^= x >> 16;
-    x *= 0x85ebca6b;
-    x ^= x >> 13;
-    x *= 0xc2b2ae35;
+    x ^= CONFIG->hashSeed;
+    x = (x ^ (x >> 16)) * 0x85ebca6b;
+    x = (x ^ (x >> 13)) * 0xc2b2ae35;
     return x ^ (x >> 16);
 }
 
@@ -101,10 +100,8 @@ inline uint32_t murmurhash3(register uint32_t x) {
 inline void sortArr(register uint32_t *arr, register uint32_t nr) {
     if (nr > 1) {
         register uint32_t i, j, o, t;
-        for(i = o = 0, j = 1; j < nr; j = ++i + 1, o++) {
+        for(i = o = 0, j = 1; j < nr; arr[j] = t, j = ++i + 1, o++)
             for (t = arr[j]; j > 0 && arr[j - 1] > t; arr[j] = arr[j - 1], j--, o++);
-            arr[j] = t;
-        }
         LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
     }
 }

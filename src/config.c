@@ -52,7 +52,7 @@ static void              allocFilter(struct filters fil);
 static struct Config commonConfig, oldcommonConfig;
 
 // All valid configuration options.
-static const char *options = "phyint quickleave maxorigins hashtablesize defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist";
+static const char *options = "phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist";
 static const char *phyintopt = "updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Configuration file reading.
@@ -265,6 +265,9 @@ static void initCommonConfig(void) {
     // up to the 256 non-collision hosts, approximately half of /24 subnet
     commonConfig.downstreamHostsHashTableSize = DEFAULT_HASHTABLE_SIZE;
 
+    // Number of (hashed) route tables.
+    commonConfig.routeTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldcommonConfig.routeTables;
+
     // Default interface state and parameters.
     commonConfig.defaultInterfaceState = IF_STATE_DISABLED;
     commonConfig.defaultThreshold = DEFAULT_THRESHOLD;
@@ -371,11 +374,18 @@ bool loadConfig(void) {
             // Got a hashtablesize token...
             if (! commonConfig.fastUpstreamLeave)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
-            else if (intToken < 8 || intToken > 536870912 || intToken % 8 != 0)
+            else if (intToken < 8 || intToken > 536870912)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 536870912 bytes (multiples of 8), using default %d.", commonConfig.downstreamHostsHashTableSize);
             else {
-                commonConfig.downstreamHostsHashTableSize = intToken;
-                LOG(LOG_NOTICE, 0, "Config: Got hashtablesize for quickleave is %d.", commonConfig.downstreamHostsHashTableSize);
+                commonConfig.downstreamHostsHashTableSize = intToken - intToken % 8;
+                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.downstreamHostsHashTableSize);
+            }
+
+        } else if (strcasecmp("routetables", token) == 0 && INTTOKEN) {
+            // Got a routetables token...
+            if (STARTUP) {
+                commonConfig.routeTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
+                LOG(LOG_NOTICE, 0, "Config: %d route table hash entries.", commonConfig.routeTables);
             }
 
         } else if (strcasecmp("defaultupdown", token) == 0) {

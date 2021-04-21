@@ -182,7 +182,7 @@ static void igmpProxyInit(void) {
     // Load the config file.
     if (! loadConfig())
         myLog(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
-    CONFIG->downstreamHostsHashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
+    CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Fork daemon.
     if (!CONFIG->notAsDaemon && fork())

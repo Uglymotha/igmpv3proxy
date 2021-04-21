@@ -107,7 +107,8 @@ struct Config {
     bool                fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
     uint32_t            downstreamHostsHashTableSize;
-    uint32_t            downstreamHostsHashSeed;
+    uint32_t            hashSeed;
+    uint16_t            routeTables;
     // Max origins for route when bw control is disabled.
     uint16_t            maxOrigins;
     // Set default interface status and parameters.
@@ -232,8 +233,9 @@ struct IfDesc {
 #define IP_HEADER_RAOPT_LEN	24
 
 // Route parameters.
-#define DEFAULT_MAX_ORIGINS     64  // Maximun nr of route sources, controlable by maxorigins config paramter, in which case this also acts as mimimun
+#define DEFAULT_MAX_ORIGINS     64  // Maximun nr of route sources, controlable by maxorigins config paramter, in which case this also acts as mimimun.
 #define DEFAULT_HASHTABLE_SIZE  32  // Default host tracking hashtable size.
+#define DEFAULT_ROUTE_TABLES    32  // Default hash table size for route table.
 
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild
 #define GOT_SIGHUP  0x02

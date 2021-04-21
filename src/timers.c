@@ -72,7 +72,7 @@ struct timespec timer_ageQueue() {
 
     clock_gettime(CLOCK_REALTIME, &curtime);
     for (i = 1, node = queue; i <= 4 && node && timer_Diff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
-        LOG(LOG_DEBUG, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timer_Diff(node->time, curtime).tv_nsec / 1000);
+        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timer_Diff(node->time, curtime).tv_nsec / 1000);
         queue = node->next;
         node->func(node->data, node->id);
         free(node);     // Alloced by timer_setTimer()
@@ -89,12 +89,11 @@ struct timespec timer_ageQueue() {
 */
 uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
-    uint64_t              i = 1;
 
     if (! (node = malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, "", action, data, (struct timespec){ delay.tv_sec, delay.tv_nsec }, NULL };
+    *node = (struct timeOutQueue){ id++, "", action, data, {delay.tv_sec, delay.tv_nsec}, NULL };
     strcpy(node->name, name);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
@@ -104,10 +103,8 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
             node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10, curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
     }
 
-    if (! queue)
-        // if the queue is empty, insert the node and return.
-        queue = node;
-    else if (timer_Diff(queue->time, node->time).tv_nsec == -1) {
+    uint64_t i = 1;
+    if (!queue || timer_Diff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
         node->next = queue;
         queue = node;
@@ -119,7 +116,7 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     }
 
     delay = timer_Diff(curtime, node->time);
-    LOG(LOG_DEBUG, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
+    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
     DEBUGQUEUE("Set Timer", 1, NULL, 0);
     return node->id;
 }

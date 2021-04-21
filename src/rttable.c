@@ -95,7 +95,9 @@ struct routeTable {
 };
 
 // Keeper for the routing table.
-static struct routeTable  *routing_table = NULL;
+#define GETMRT(x) uint16_t iz; if (mrt) for (iz = 0; iz < CONFIG->routeTables; iz++) \
+                                        for (x = mrt[iz]; x; x = ! x ? mrt[iz] : x->next)
+static struct routeTable **mrt = NULL;
 static char                msg[TMNAMESZ];
 
 // Prototypes
@@ -112,14 +114,14 @@ static void          removeRoute(struct routeTable *croute);
 
 static inline void setDownstreamHost(uint64_t *table, uint32_t src) {
     if (CONFIG->fastUpstreamLeave) {
-        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize * 8);
+        uint32_t hash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize * 8);
         BIT_SET(table[hash / 64], hash % 64);
     }
 }
 
 static inline void clearDownstreamHost(uint64_t *table, uint32_t src) {
     if (CONFIG->fastUpstreamLeave) {
-        uint32_t hash = murmurhash3(src ^ CONFIG->downstreamHostsHashSeed) % (CONFIG->downstreamHostsHashTableSize * 8);
+        uint32_t hash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize * 8);
         BIT_CLR(table[hash / 64], hash % 64);
     }
 }
@@ -137,8 +139,18 @@ static inline bool testNoDownstreamHost(uint64_t *table) {
 *   Private access function to find a route from a given group, creates new if required.
 */
 static inline struct routeTable *findRoute(register uint32_t group, bool create) {
-    struct routeTable *croute, *nroute;
-    for (croute = routing_table; croute; croute = croute->next) {
+    struct   routeTable *croute, *nroute;
+    uint32_t mrtHash = murmurhash3(group) % CONFIG->routeTables;
+
+    // Initialize the routing tables if necessary.
+    if (! mrt) {
+        if (! (mrt = calloc(CONFIG->routeTables, sizeof(void *))))  // Freed by clearRoutes()
+            LOG(LOG_ERR, errno, "findRoute: Out of memory.");
+        memset(mrt, 0, CONFIG->routeTables * sizeof(void *));
+    }
+
+    // Find the route (or place for new route) in the table.
+    for (croute = mrt[mrtHash]; croute; croute = croute->next) {
         if (croute->group == group)
             return croute;
         if (! croute->next || croute->next->group > group) {
@@ -155,8 +167,8 @@ static inline struct routeTable *findRoute(register uint32_t group, bool create)
         LOG(LOG_ERR, errno, "insertRoute: Out of memory.");
     memset(nroute, 0, sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize);
     nroute->group = group;
-    if (! routing_table || routing_table->group > group) {
-        routing_table = nroute;
+    if (! mrt[mrtHash] || mrt[mrtHash]->group > group) {
+        mrt[mrtHash] = nroute;
         if (croute) {
             croute->prev = nroute;
             nroute->next = croute;
@@ -165,7 +177,7 @@ static inline struct routeTable *findRoute(register uint32_t group, bool create)
         nroute->prev = croute;
         nroute->next = croute->next;
         if (nroute->next)
-            nroute->next->prev = croute;
+            nroute->next->prev = nroute;
         croute->next = nroute;
     }
 
@@ -180,7 +192,8 @@ uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp) {
     struct originAddrs *oAddr;
     register uint64_t   bw = 0;
 
-    for (croute = routing_table; croute; croute = croute->next) {
+    // Go over all routes and calculate combined bandwith for all routes for subnet/mask.
+    GETMRT(croute) {
         if (IS_UPSTREAM(IfDp->state) && (croute->group & group.mask) == group.ip) {
             for (oAddr = croute->origins; oAddr; oAddr = oAddr->next)
                 bw = oAddr->vif == (IfDp->index) ? bw + oAddr->rate : bw;
@@ -234,10 +247,11 @@ void bwControl(uint64_t *tid) {
     struct originAddrs *oAddr;
 
     // Reset all interface rate counters.
-    for (GETIFL(IfDp)) IfDp->rate = 0;
+    for (GETIFL(IfDp))
+        IfDp->rate = 0;
 
     // Go over all routes.
-    for (croute = routing_table; croute; croute = croute->next) {
+    GETMRT(croute) {
         // Go over all sources.
         for (oAddr = croute->origins; oAddr; oAddr = oAddr->next) {
 #ifndef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -338,9 +352,8 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, struct IfDesc *IfDp
             continue;
         } else if (! join) {
             LOG(LOG_INFO, 0, "Leaving group %s upstream on IF address %s", inetFmt(croute->group, 1), inetFmt(checkVIF->InAdr.s_addr, 2));
-            if (k_leaveMcGroup(checkVIF, croute->group)) {
+            if (k_leaveMcGroup(checkVIF, croute->group))
                 BIT_CLR(croute->upstrState, checkVIF->index);
-            }
         } else if (checkVIF == IfDp) {
             LOG(LOG_DEBUG, 0, "Not joining group %s on interface that received request (%s)", inetFmt(croute->group, 1), IfDp->Name);
         } else if (! (bw = checkFilters(checkVIF, 0, IF_STATE_UPSTREAM, 0, croute->group))) {
@@ -358,33 +371,34 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, struct IfDesc *IfDp
 }
 
 /**
-*   Clears / Updates all routes and routing table, and sends Joins / Leaves upstream. If called with NULL pointer all routes are removed.
+*   Clears / Updates all routes and routing table, and sends Joins / Leaves upstream.
+*   If called with NULL pointer all routes are removed.
 */
 void clearRoutes(void *Dp) {
-    struct routeTable *croute, *nextroute;
+    struct routeTable *croute;
     struct IfDesc     *IfDp = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
     register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
     // Loop through all routes...
-    for (croute = routing_table; croute; croute = nextroute) {
+    GETMRT(croute) {
         struct originAddrs *oAddr, *pAddr;
         register bool       keep = false;
-        nextroute = croute->next;
 
         if (!NOSIG && Dp == CONFIG) {
             struct dSources **src;
-            // Quickleave was enabled or disabled, or hastable size was changed. Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
+            // Quickleave was enabled or disabled, or hastable size was changed.
+            // Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
             for (src = &(croute->dSources); *src; src = &(*src)->next) {
-                if (! (*src = (struct dSources *)realloc(*src, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize)))
+                if (! (*src = realloc(*src, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize)))
                     LOG(LOG_ERR, errno, "clearRoutes: Out of memory.");
                 if (CONFIG->fastUpstreamLeave)
                     memset((*src)->downstreamHostsHashTable, 0, CONFIG->downstreamHostsHashTableSize);
-            if (! (croute = (struct routeTable *)realloc(croute, sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize)))
+            if (! (croute = realloc(croute, sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize)))
                 LOG(LOG_ERR, errno, "clearRoutes: Out of memory.");
             if (CONFIG->fastUpstreamLeave)
                 memset(croute->downstreamHostsHashTable, 0, CONFIG->downstreamHostsHashTableSize);
             if (! croute->prev)
-                routing_table = croute;
+                mrt[iz] = croute;
             else
                 croute->prev->next = croute;
             if (croute->next)
@@ -503,13 +517,19 @@ void clearRoutes(void *Dp) {
             LOG(LOG_DEBUG, 0, "clearRoutes: Removing route entry for %s", inetFmt(croute->group, 1));
 
             // Remove the route from routing table.
-            removeRoute(croute);
+            struct routeTable *rroute = croute;
+            croute = croute->prev;
+            removeRoute(rroute);
         }
     }
 
-    if (! routing_table)
+    // Check if routing tables are empty.
+    for (iz = 0; mrt && iz < CONFIG->routeTables && ! mrt[iz]; iz++);
+    if (iz == CONFIG->routeTables) {
+        free(mrt);  // Alloced by findRoute()
+        mrt = NULL;
         LOG(LOG_INFO, 0, "clearRoutes: Routing table is empty.");
-    else
+    } else
         logRouteTable("Clear Routes", 1, NULL, 0);
 }
 
@@ -703,7 +723,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
                 if (i >= nsrcs)
                     addSrcToQlst(dsrc, IfDp, qlst);
             }
-            qlst[qlst[0] + 1] = 8;
+            qlst[qlst[0] + 1] = croute->mode ? 8 : 4;
             startQuery(croute, IfDp, qlst);
         }
 
@@ -986,8 +1006,9 @@ static void removeRoute(struct routeTable* croute) {
     }
 
     // Update pointers.
-    if (croute == routing_table)
-        routing_table = croute->next;
+    uint64_t mrtHash = murmurhash3(croute->group) % CONFIG->routeTables;
+    if (croute == mrt[mrtHash])
+        mrt[mrtHash] = croute->next;
     else
         croute->prev->next = croute->next;
     if (croute->next)
@@ -1001,15 +1022,15 @@ static void removeRoute(struct routeTable* croute) {
 }
 
 /**
-*   Ages a specific route
+*   Ages active routes in tables.
 */
 void ageRoutes(struct IfDesc *IfDp) {
-    struct routeTable *croute = routing_table;
+    struct routeTable *croute;
     struct dSources   *dsrc, *psrc;
+
     LOG(LOG_DEBUG, 0, "ageRoutes: Aging active routes on %s.", IfDp->Name);
-    while (croute) {
+    GETMRT(croute) {
         if (BIT_TST(croute->lmBits, IfDp->index)) {
-            croute = croute->next;
             continue;
         } else if (BIT_TST(croute->vifBits, IfDp->index)) {
             // Age v1 and v2 compatibility mode.
@@ -1059,10 +1080,9 @@ void ageRoutes(struct IfDesc *IfDp) {
         if (croute->mode == 0 && ! croute->dSources) {
             LOG(LOG_DEBUG, 0, "ageRoutes: Removed group %s after aging.", inetFmt(croute->prev->group, 2), IfDp->Name);
             struct routeTable *rroute = croute;
-            croute = croute->next;
+            croute = croute->prev;
             removeRoute(rroute);
-        } else
-            croute = croute->next;
+        }
     }
 
     logRouteTable("Age routes", 1, NULL, 0);
@@ -1075,7 +1095,7 @@ static void internUpdateKernelRoute(struct routeTable *croute, int activate) {
     struct  IfDesc      *IfDp = NULL;
     struct  originAddrs *oAddr = croute->origins;
     uint8_t              ttlVc[MAXVIFS] = {0};
-    unsigned int         i = 0;
+    uint16_t             i = 0;
 
     while (oAddr) {
         struct  originAddrs *fAddr = NULL;
@@ -1124,7 +1144,7 @@ static void internUpdateKernelRoute(struct routeTable *croute, int activate) {
 *   Debug function that writes the routing table entries to the log or sends them to the cli socket specified in arguments.
 */
 void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd) {
-    struct routeTable  *croute = routing_table;
+    struct routeTable  *croute;
     struct originAddrs *oAddr;
     struct IfDesc      *IfDp = NULL;
     char                msg[CLI_CMD_BUF] = "", buf[CLI_CMD_BUF] = "";
@@ -1138,9 +1158,7 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
         sprintf(buf, "Current Routing Table:\n_____|______SRC______|______DST______|_______In_______|_____Out____|____dHost____|_______Data_______|______Rate_____\n");
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
-    if (! croute) {
-        LOG(LOG_DEBUG, 0, "No routes in table...");
-    } else do {
+    GETMRT(croute) {
         oAddr = croute->origins;
         do {
             if (oAddr) {
@@ -1164,9 +1182,7 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
             oAddr = oAddr ? oAddr->next : NULL;
             rcount++;
         } while (oAddr);
-
-        croute = croute->next;
-    } while (croute);
+    }
 
     if (! cliSockAddr) {
         LOG(LOG_DEBUG, 0, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s", totalb, totalr);
