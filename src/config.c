@@ -861,12 +861,9 @@ static struct vifConfig *parsePhyintToken(void) {
             }
 
         } else if (strcasecmp("lastmembercount", token) == 0 && INTTOKEN) {
-            if (intToken < 1)
-                LOG(LOG_WARNING, 0, "Config IF: Last member count should be more than 1.");
-            else {
-                tmpPtr->qry.lmCount = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Setting last member query count to %d.", intToken);
-            }
+            tmpPtr->qry.lmCount = intToken < 0 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
+            tmpPtr->qry.lmCount = intToken;
+            LOG(LOG_NOTICE, 0, "Config: IF: Setting last member query count to %d.", tmpPtr->qry.lmCount);
 
         } else if (! strstr(options, token)) {
             // Unknown token.

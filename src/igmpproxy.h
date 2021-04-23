@@ -360,7 +360,13 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 /**
 *   rttable.c
 */
-#define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip)
+#define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
+#define GETMRT(x) uint16_t iz; if (mrt) for (iz = 0; iz < CONFIG->routeTables; iz++) \
+                                        for (x = mrt[iz]; x; x = ! x ? mrt[iz] : x->next)
+#define IS_EX(x,y)    BIT_TST(x->mode, y->index)
+#define IS_IN(x,y)   !BIT_TST(x->mode, y->index)
+#define IS_SET(x,y)   BIT_TST(x->vifBits, y->index)
+#define NOT_SET(x,y) !BIT_TST(x->vifBits, y->index)
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
