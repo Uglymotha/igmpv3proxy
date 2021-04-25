@@ -54,6 +54,7 @@ struct originAddrs {
 struct dSources {
     struct dSources    *prev;
     struct dSources    *next;
+    struct routeTable  *croute;
     uint32_t            ip;                         // Source IP adress
     uint32_t            lmBits;                     // Per vif last member state
     uint8_t             qCnt[MAXVIFS];              // Keeps track of GSQs
@@ -104,7 +105,7 @@ static inline struct routeTable *findRoute(register uint32_t group, bool create)
 static uint64_t      checkFilters(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group);
 static void          sendJoinLeaveUpstream(struct routeTable* croute, struct IfDesc * IfDp, int join);
 static inline struct dSources *newSrc(struct routeTable *croute, uint32_t ip, struct dSources *dsrc);
-static inline struct dSources *delSrc(struct routeTable *croute, struct dSources *dsrc);
+static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t src);
 static inline void   addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t group, uint32_t src);
 static inline void   toInclude(struct IfDesc *IfDp, struct routeTable *croute);
 static inline void   startQuery(struct routeTable *croute, struct IfDesc *IfDp, uint32_t *qlst);
@@ -160,12 +161,11 @@ static inline struct routeTable *findRoute(register uint32_t group, bool create)
             LOG(LOG_ERR, errno, "findRoute: Out of memory.");
         memset(mrt, 0, CONFIG->routeTables * sizeof(void *));
     }
-
     // Find the route (or place for new route) in the table.
-    for (croute = mrt[mrtHash]; croute; croute = croute->next) {
-        if (croute->group == group)
+    for (croute = mrt[mrtHash];; croute = croute->next) {
+        if (croute && croute->group == group)
             return croute;
-        if (! croute->next || croute->next->group > group) {
+        if (! croute || ! croute->next || croute->next->group > group) {
             if (!create)
                 return NULL;
             else
@@ -560,10 +560,12 @@ static inline struct dSources *newSrc(struct routeTable *croute, uint32_t ip, st
         LOG(LOG_ERR, errno, "newSrc: Out of memory.");   // Freed by delSrc()
     memset(nsrc, 0, sizeof(struct dSources) + CONFIG->downstreamHostsHashTableSize);
     nsrc->ip = ip;
+    nsrc->croute = croute;
     if (! croute->dSources) {
         if (dsrc)
             LOG(LOG_WARNING, 0, "Empty source list for %s, but %s should exist already.", inetFmt(croute->group, 1), inetFmt(dsrc->ip, 2));
         croute->dSources = nsrc;
+        nsrc->prev = nsrc;
     } else if (! dsrc) {
         nsrc->prev = croute->dSources->prev;
         nsrc->prev->next = croute->dSources->prev = nsrc;
@@ -583,17 +585,26 @@ static inline struct dSources *newSrc(struct routeTable *croute, uint32_t ip, st
 /**
 *   Removes a source from the list of group sources.
 */
-static inline struct dSources *delSrc(struct routeTable *croute, struct dSources *dsrc) {
-    void *psrc;
-    if (dsrc == croute->dSources)
-        psrc = (void *)&croute;
-    else {
-        psrc = dsrc->prev;
-        dsrc->prev->next = dsrc->next;
-    }
-    dsrc->next->prev = dsrc->prev;
-    free(dsrc);  // Alloced by newSrc()
-    return psrc;
+static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t src) {
+    struct dSources *nsrc = dsrc->next;
+
+    BIT_CLR(dsrc->vifBits, IfDp->index);
+    dsrc->age[IfDp->index] = 0;
+    if (dsrc->vifBits == 0) {
+        LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2));
+        dsrc->croute->nsrcs--;
+        if (dsrc->next)
+            dsrc->next->prev = dsrc->prev;
+        if (dsrc == dsrc->croute->dSources) {
+            dsrc->croute->dSources = dsrc->next;
+            dsrc->next->prev = dsrc->prev;
+        } else
+            dsrc->prev->next = dsrc->next;
+        free(dsrc);  // Alloced by newSrc()
+    } else
+        clearDownstreamHost(dsrc->downstreamHostsHashTable, src);
+
+    return nsrc;
 }
 
 /**
@@ -628,7 +639,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
                  || grec->grec_type == IGMP_V2_LEAVE_GROUP       ? 0
                   : ntohs(grec->grec_nsrcs),
                 i = 0;
-    struct routeTable *croute = findRoute(group, type != IGMPV3_BLOCK_OLD_SOURCES ? true : false);
+    struct routeTable *croute = findRoute(group, type == IGMPV3_BLOCK_OLD_SOURCES ? false : true);
     struct dSources   *dsrc;
     uint32_t qlst[(CONFIG->maxOrigins > nsrcs ? CONFIG->maxOrigins : nsrcs) + 2];
     qlst[0] = 0;
@@ -663,29 +674,22 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
         BIT_CLR(croute->lmBits, IfDp->index);
         setDownstreamHost(croute->downstreamHostsHashTable, src);
 
-        for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; dsrc = dsrc == (void *)&croute ? croute->dSources : dsrc ? dsrc->next : dsrc) {
-            if (nsrcs == 0 || i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr) {
+        for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; i++) {
+            if (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr) {
                 // IN: Delete (A-B) / EX: Delete (X - A), Delete (Y - A)
-                dsrc = delSrc(croute, dsrc);
-            } else if (i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)) {
-                struct dSources *tsrc = dsrc;
-                do if ((dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc))) {
-                    BIT_SET(dsrc->vifBits, IfDp->index);
-                    if (type == IGMPV3_CHANGE_TO_EXCLUDE && IS_EX(croute, IfDp))
-                        // EX: Send Q(G, A-Y), (A - X - Y) = Group Timer?
-                        addSrcToQlst(dsrc, IfDp, qlst, group, src);
-                    else if (IS_IN(croute, IfDp))
-                        // IN: (B-A) = 0
-                        dsrc->age[IfDp->index] = 0;
-                } while (++i < nsrcs && (! tsrc || tsrc->ip > grec->grec_src[i].s_addr));
-            } else if (dsrc && dsrc->ip == grec->grec_src[i].s_addr) {
-                // IN: Send Q(G, A*B) / EX: Send Q(A-Y)
-                if (type == IGMPV3_CHANGE_TO_EXCLUDE && ( (IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
-                    || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0)) ))
-                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
+                for (;dsrc && (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr); dsrc = delSrc(dsrc, IfDp, src));
+                continue;
+            } else if ((i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)
+                                  && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, dsrc)))
+                                  || dsrc->ip == grec->grec_src[i].s_addr) { 
+                // IN: Send Q(G, A*B), (B-A) = 0 / EX: Send Q(G, A-Y), (A - X - Y) = Group Timer?
                 BIT_SET(dsrc->vifBits, IfDp->index);
-                i++;
+                if (type == IGMPV3_CHANGE_TO_EXCLUDE && ( (! dsrc || dsrc->ip > grec->grec_src[i].s_addr) && IS_EX(croute, IfDp) )
+                            || dsrc && dsrc->ip == grec->grec_src[i].s_addr && (IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
+                            || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0)))
+                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
             }
+            dsrc = dsrc->next;
         }
         qlst[qlst[0] + 1] = 4;
         startQuery(croute, IfDp, qlst);
@@ -715,16 +719,16 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
 
         for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; dsrc = dsrc ? dsrc->next : dsrc) {
             while (nsrcs > 0 && checkFilters(IfDp, 0, IF_STATE_DOWNSTREAM, grec->grec_src[i].s_addr, group) < ALLOW)
-                LOG(LOG_INFO, 0, "Group %s from %s may not be requested on %s.", inetFmt(group, 1),
-                                  inetFmt(grec->grec_src[i++].s_addr, 2), IfDp->Name);
-
-            if (nsrcs == 0 || i >= nsrcs || (dsrc && dsrc->ip < grec->grec_src[i].s_addr)) {
+                LOG(LOG_INFO, 0, "updateRoute: Group %s from %s may not be requested on %s.", inetFmt(group, 1),
+                                                            inetFmt(grec->grec_src[i++].s_addr, 2), IfDp->Name);
+            if (i >= nsrcs || (dsrc && dsrc->ip < grec->grec_src[i].s_addr)) {
                 if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(dsrc, IfDp) && (IS_IN(croute, IfDp) || dsrc->age[IfDp->index] > 0))
                     // EX: Send Q(G, X-A) IN: Send Q(G, A-B)
                     addSrcToQlst(dsrc, IfDp, qlst, group, src);
             } else if (i < nsrcs && (! dsrc || dsrc->ip >= grec->grec_src[i].s_addr)) {
                 struct dSources *tsrc = dsrc;
-                do if ((! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc))) {
+                do if (((! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc)))
+                        || tsrc->ip == grec->grec_src[i].s_addr) {
                     // IN (B) = GMI, (A + B) / EX: (A) = GMI, (X + A) (Y - A)
                     BIT_SET(dsrc->vifBits, IfDp->index);
                     BIT_CLR(dsrc->lmBits, IfDp->index);
@@ -749,24 +753,15 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
             return;
         }
 
-        for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; dsrc = dsrc ? dsrc->next : dsrc) {
-            if (dsrc && dsrc->ip == grec->grec_src[i].s_addr) {
-                // IN: Send Q(G,A*B) / EX: Send Q(G,A-Y)
-                BIT_SET(dsrc->vifBits, IfDp->index);
-                if ((IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp)) || (IS_EX(croute, IfDp) && dsrc->age[IfDp->index] > 0))
-                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
-            } else if (IS_IN(croute, IfDp) && (! dsrc || ! dsrc->next)) {
-                break;
-            } else if (dsrc && dsrc->next && dsrc->next->ip > grec->grec_src[i].s_addr) {
-                i++;
-            } else if (IS_EX(croute, IfDp) && i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)) {
-                // EX: (A-X-Y) = Group Timer?, Send Q(G,A-Y)
-                struct dSources *tsrc = dsrc;
-                do if (! (dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc))) {
-                    BIT_SET(dsrc->vifBits, IfDp->index);
-                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
-                } while (++i < nsrcs && (! tsrc || tsrc->ip > grec->grec_src[i].s_addr));
+        for (i = 0, dsrc = croute->dSources; (dsrc || i < nsrcs) && !(IS_IN(croute, IfDp) && ! dsrc); i++) {
+            if ((dsrc && dsrc->ip == grec->grec_src[i].s_addr && IS_SET(dsrc, IfDp)
+                     && (IS_IN(croute, IfDp) || (IS_EX(croute, IfDp) && dsrc->age[IfDp->index] == 0)))
+                     || (IS_EX(croute, IfDp) && i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)
+                                             && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, dsrc)))) {
+                // IN: Send Q(G,A*B) / EX: Send Q(G,A-Y), (A-X-Y) = Group Timer?
+                addSrcToQlst(dsrc, IfDp, qlst, group, src);
             }
+            for (;dsrc && dsrc->ip <= grec->grec_src[i].s_addr; dsrc = dsrc->next);
         }
         qlst[qlst[0] + 1] = 4;
         startQuery(croute, IfDp, qlst);
@@ -941,22 +936,16 @@ static void sendGroupSpecificQuery(void *rec) {
 *   Switches a group from exclude to include mode.
 */
 static inline void toInclude(struct IfDesc *IfDp, struct routeTable *croute) {
-    struct dSources *dsrc, *psrc;
+    struct dSources *dsrc = croute->dSources;
 
     LOG(LOG_INFO, 0, "TO_IN: Switching mode for %s to include on %s.", inetFmt(croute->group, 1), IfDp->Name);
     BIT_CLR(croute->mode, IfDp->index);
-    for (psrc = NULL, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
+    while (dsrc) {
          if (IS_SET(dsrc, IfDp) && dsrc->age[IfDp->index] == 0) {
-             if (! psrc)
-                 croute->dSources = dsrc->next;
-             else {
-                 LOG(LOG_DEBUG, 0, "TO_IN: Removed inactive source %s from group %s.", inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2));
-                 psrc->next = dsrc->next;
-                 free(dsrc);   // Alloced by newSrc()
-                 croute->nsrcs--;
-                 dsrc = psrc ? psrc : NULL;
-             }
-         }
+             LOG(LOG_DEBUG, 0, "TO_IN: Removed inactive source %s from group %s.", inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2));
+             dsrc = delSrc(dsrc, IfDp, (uint32_t)-1);
+         } else
+             dsrc = dsrc->next;
     }
 }
 
@@ -1032,7 +1021,7 @@ static void removeRoute(struct routeTable* croute) {
 */
 void ageRoutes(struct IfDesc *IfDp) {
     struct routeTable *croute;
-    struct dSources   *dsrc, *psrc;
+    struct dSources   *dsrc;
 
     LOG(LOG_DEBUG, 0, "ageRoutes: Aging active routes on %s.", IfDp->Name);
     GETMRT(croute) {
@@ -1050,21 +1039,16 @@ void ageRoutes(struct IfDesc *IfDp) {
                 croute->v2Age[IfDp->index]--;
 
             // Age sources in group.
-            for (psrc = NULL, dsrc = croute->dSources; dsrc; dsrc = dsrc->next) {
+            dsrc = croute->dSources;
+            while (dsrc) {
                 if (NOT_SET(dsrc, IfDp) || BIT_TST(dsrc->lmBits, IfDp->index))
-                    psrc = dsrc;
+                    dsrc = dsrc->next;
                 else if (dsrc->age[IfDp->index] == 0 && IS_IN(croute, IfDp)) {
                     LOG(LOG_INFO, 0, "ageRoutes: Removed source %s from %s on %s after aging.", inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
-                    if (! psrc)
-                        croute->dSources = dsrc->next;
-                    else
-                        psrc->next = dsrc->next;
-                    free(dsrc);   // Alloced by newSrc()
-                    croute->nsrcs--;
-                    dsrc = psrc ? psrc : NULL;
+                    dsrc = delSrc(dsrc, IfDp, (uint32_t)-1);
                 } else if (dsrc->age[IfDp->index] > 0) {
                     dsrc->age[IfDp->index]--;
-                    psrc = dsrc;
+                    dsrc = dsrc->next;
                 }
             }
 
@@ -1089,6 +1073,7 @@ void ageRoutes(struct IfDesc *IfDp) {
             croute = croute->prev;
             removeRoute(rroute);
         }
+        internUpdateKernelRoute(croute, 1);
     }
 
     logRouteTable("Age routes", 1, NULL, 0);
