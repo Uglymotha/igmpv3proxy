@@ -251,6 +251,7 @@ struct IfDesc {
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
 #define NOSIG      (sigstatus == 0)
 #define STARTUP    (sigstatus == 1)
+#define SHUTDOWN   (sigstatus == (uint8_t)-1)
 
 // CLI Defines.
 #define CLI_CMD_BUF    256
@@ -312,7 +313,7 @@ void cliCmd(char *cmd);
 *   ifvc.c
 */
 #define GETIFL(x) x = getIfL(); x; x = x->next
-void           freeIfDescL(bool clean);
+void           freeIfDescL();
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfByName(const char *IfName);

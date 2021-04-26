@@ -194,7 +194,7 @@ static void igmpProxyCleanUp(void) {
         ctrlQuerier(0, IfDp);
     timer_freeQueue();      // Free all timeouts.
     clearRoutes(NULL);      // Remove all routes.
-    freeIfDescL(false);     // Free IfDesc table.
+    freeIfDescL();          // Free IfDesc table.
     freeConfig(0);          // Free config.
     k_disableMRouter();       // Disable the MRouter API.
     if (strstr(CONFIG->runPath, "/igmpproxy/")) {
@@ -279,6 +279,7 @@ static void signalHandler(int sig) {
         /* FALLTHRU */
     case SIGTERM:
         myLog(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
+        sigstatus = (uint8_t)-1;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
     case SIGURG:

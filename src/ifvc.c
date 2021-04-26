@@ -40,24 +40,24 @@ static struct IfDesc *IfDescL = NULL;
 /**
 *   Frees the IfDesc table. Paramter specifies cleanup after an interface rebuild.
 */
-void freeIfDescL(bool clean) {
+void freeIfDescL() {
     struct IfDesc *IfDp = NULL, *pIfDp = NULL, *nIfDp = NULL;
 
     for (IfDp = IfDescL; IfDp; IfDp = nIfDp) {
         nIfDp = IfDp->next;
-        if (!clean || (clean && (IfDp->state & 0x80) && !IfDp->gsq)) {
+        if (SHUTDOWN || ((IfDp->state & 0x80) && !IfDp->gsq)) {
             // On shutdown, or when interface is marked for deletion, remove it and its aliases.
-            if (clean) {
+            if (!SHUTDOWN) {
                 LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
                 if (pIfDp)
                     pIfDp->next = IfDp->next;
                 else
                     IfDescL = IfDp->next;
             }
-            for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);  // Alloced by buildIfVc()
+            for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);
             free(IfDp);  // Alloced by buildIfvc()
         } else {
-            if (clean && (IfDp->state & 0x80) && IfDp->gsq) {
+            if (!SHUTDOWN && (IfDp->state & 0x80) && IfDp->gsq) {
                 LOG(LOG_NOTICE, 0, "Interface %s actively queried, Delaying removal.", IfDp->Name);
                 IfDp->state = IF_STATE_DISABLED;
                 IfDp->mtu   = IfDp->Flags = 0;
@@ -86,7 +86,7 @@ void rebuildIfVc(uint64_t *tid) {
     configureVifs();
 
     // Free removed interfaces.
-    freeIfDescL(true);
+    freeIfDescL();
 
     // Restart timer when doing timed reload.
     if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif)
