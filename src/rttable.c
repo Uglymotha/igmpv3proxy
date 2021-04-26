@@ -39,7 +39,6 @@
 */
 
 #include "igmpproxy.h"
-#include "igmpv3.h"
 
 /**
 *   Routing table structure definitions.
@@ -105,48 +104,13 @@ static inline struct routeTable *findRoute(register uint32_t group, bool create)
 static uint64_t      checkFilters(struct IfDesc *IfDp, register int old, register int dir, register uint32_t src, register uint32_t group);
 static void          sendJoinLeaveUpstream(struct routeTable* croute, struct IfDesc * IfDp, int join);
 static inline struct dSources *newSrc(struct routeTable *croute, uint32_t ip, struct dSources *dsrc);
-static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t src);
-static inline void   addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t group, uint32_t src);
+static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t srcHash);
+static inline void   addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t srcHash);
 static inline void   toInclude(struct IfDesc *IfDp, struct routeTable *croute);
 static inline void   startQuery(struct routeTable *croute, struct IfDesc *IfDp, uint32_t *qlst);
 static void          sendGroupSpecificQuery(void *rec);
 static void          internUpdateKernelRoute(struct routeTable *route, int activate);
 static void          removeRoute(struct routeTable *croute);
-
-static inline void setDownstreamHost(register uint64_t *table, register uint32_t src) {
-    if (CONFIG->fastUpstreamLeave) {
-        register uint32_t hash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize * 8);
-        BIT_SET(table[hash / 64], hash % 64);
-    }
-}
-
-static inline void clearDownstreamHost(register uint64_t *table, register uint32_t src) {
-    if (CONFIG->fastUpstreamLeave) {
-        register uint32_t hash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize * 8);
-        BIT_CLR(table[hash / 64], hash % 64);
-    }
-}
-
-static inline bool testNoDownstreamHost(register uint64_t *table) {
-    if (!CONFIG->fastUpstreamLeave)
-        return false;
-
-    register uint64_t i, n = CONFIG->downstreamHostsHashTableSize / 8;
-    for (i = 0; i < n && table[i] == 0; i++);
-    return i < n ? false : true;
-}
-
-static const char *grecKind(unsigned int type) {
-    switch (type) {
-    case IGMPV3_MODE_IS_INCLUDE:    return "IS_IN";
-    case IGMPV3_MODE_IS_EXCLUDE:    return "IS_EX";
-    case IGMPV3_CHANGE_TO_INCLUDE:  return "TO_IN";
-    case IGMPV3_CHANGE_TO_EXCLUDE:  return "TO_EX";
-    case IGMPV3_ALLOW_NEW_SOURCES:  return "ALLOW";
-    case IGMPV3_BLOCK_OLD_SOURCES:  return "BLOCK";
-    }
-    return "???";
-}
 
 /**
 *   Private access function to find a route from a given group, creates new if required.
@@ -585,7 +549,7 @@ static inline struct dSources *newSrc(struct routeTable *croute, uint32_t ip, st
 /**
 *   Removes a source from the list of group sources.
 */
-static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t src) {
+static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t srcHash) {
     struct dSources *nsrc = dsrc->next;
 
     BIT_CLR(dsrc->vifBits, IfDp->index);
@@ -595,14 +559,13 @@ static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp
         dsrc->croute->nsrcs--;
         if (dsrc->next)
             dsrc->next->prev = dsrc->prev;
-        if (dsrc == dsrc->croute->dSources) {
+        if (dsrc == dsrc->croute->dSources)
             dsrc->croute->dSources = dsrc->next;
-            dsrc->next->prev = dsrc->prev;
-        } else
+        else
             dsrc->prev->next = dsrc->next;
         free(dsrc);  // Alloced by newSrc()
     } else
-        clearDownstreamHost(dsrc->downstreamHostsHashTable, src);
+        clearHash(dsrc->downstreamHostsHashTable, srcHash);
 
     return nsrc;
 }
@@ -610,10 +573,10 @@ static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp
 /**
 *   Adds a source to list of sources to query.
 */
-static inline void addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t group, uint32_t src) {
+static inline void addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t srcHash) {
     if (IQUERY && !BIT_TST(dsrc->lmBits, IfDp->index)) {
-        LOG(LOG_INFO, 0, "addSrcToQlst: Adding source %s to query list for %s.", inetFmt(dsrc->ip, 1), inetFmt(group, 2));
-        clearDownstreamHost(dsrc->downstreamHostsHashTable, src);
+        LOG(LOG_INFO, 0, "addSrcToQlst: Adding source %s to query list for %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2));
+        clearHash(dsrc->downstreamHostsHashTable, srcHash);
         BIT_SET(dsrc->vifBits, IfDp->index);
         BIT_SET(dsrc->lmBits, IfDp->index);
         dsrc->age[IfDp->index] = IfDp->conf->qry.lmCount;
@@ -627,24 +590,16 @@ static inline void addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint
 *   Function will implement group table and proces group reports per RFC.
 *   See paragraph 6.4 of RFC3376 for more information.
 */
-void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
-    struct igmpv3_grec *grec   = (struct igmpv3_grec *)rec;
-    uint32_t            group  = grec->grec_mca.s_addr;
-    uint16_t type = grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
-                 || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT ? IGMPV3_MODE_IS_EXCLUDE
-                  : grec->grec_type == IGMP_V2_LEAVE_GROUP       ? IGMPV3_CHANGE_TO_INCLUDE
-                  : grec->grec_type,
-            nsrcs = grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
-                 || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT
-                 || grec->grec_type == IGMP_V2_LEAVE_GROUP       ? 0
-                  : ntohs(grec->grec_nsrcs),
-                i = 0;
-    struct routeTable *croute = findRoute(group, type == IGMPV3_BLOCK_OLD_SOURCES ? false : true);
-    struct dSources   *dsrc;
-    uint32_t qlst[(CONFIG->maxOrigins > nsrcs ? CONFIG->maxOrigins : nsrcs) + 2];
+void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
+    uint16_t     i = 0, type    = grecType(grec), nsrcs = grecNscrs(grec);
+    uint32_t            group   = grec->grec_mca.s_addr,
+                        srcHash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize * 8),
+                        qlst[(CONFIG->maxOrigins > nsrcs ? CONFIG->maxOrigins : nsrcs) + 2];
+    struct routeTable  *croute  = findRoute(group, type == IGMPV3_BLOCK_OLD_SOURCES ? false : true);
+    struct dSources    *dsrc, *tsrc;
+
     qlst[0] = 0;
     sortArr((uint32_t *)grec->grec_src, ntohs(grec->grec_nsrcs));
-
     LOG(LOG_DEBUG, 0, "updateRoute: Processing %s with %d sources for %s on %s.", grecKind(type), nsrcs, inetFmt(group, 1), IfDp->Name);
 
     // Toggle compatibility modes if older version reports are received.
@@ -672,24 +627,24 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
         croute->age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
         BIT_SET(croute->vifBits, IfDp->index);
         BIT_CLR(croute->lmBits, IfDp->index);
-        setDownstreamHost(croute->downstreamHostsHashTable, src);
+        setHash(croute->downstreamHostsHashTable, srcHash);
 
         for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; i++) {
             if (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr) {
                 // IN: Delete (A-B) / EX: Delete (X - A), Delete (Y - A)
-                for (;dsrc && (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr); dsrc = delSrc(dsrc, IfDp, src));
-                continue;
-            } else if ((i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)
+                while (dsrc && (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr))
+                    dsrc = delSrc(dsrc, IfDp, srcHash);
+            } else if ((i < nsrcs && (! (tsrc = dsrc) || tsrc->ip > grec->grec_src[i].s_addr)
                                   && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, dsrc)))
-                                  || dsrc->ip == grec->grec_src[i].s_addr) { 
+                                  || tsrc->ip == grec->grec_src[i].s_addr) {
                 // IN: Send Q(G, A*B), (B-A) = 0 / EX: Send Q(G, A-Y), (A - X - Y) = Group Timer?
                 BIT_SET(dsrc->vifBits, IfDp->index);
-                if (type == IGMPV3_CHANGE_TO_EXCLUDE && ( (! dsrc || dsrc->ip > grec->grec_src[i].s_addr) && IS_EX(croute, IfDp) )
-                            || dsrc && dsrc->ip == grec->grec_src[i].s_addr && (IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
-                            || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0)))
-                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
+                if (type == IGMPV3_CHANGE_TO_EXCLUDE && (( (! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && IS_EX(croute, IfDp) )
+                            || (tsrc->ip == grec->grec_src[i].s_addr && ((IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
+                            || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0))))))
+                    addSrcToQlst(dsrc, IfDp, qlst, srcHash);
+                dsrc = dsrc->next;
             }
-            dsrc = dsrc->next;
         }
         qlst[qlst[0] + 1] = 4;
         startQuery(croute, IfDp, qlst);
@@ -701,8 +656,8 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
             LOG(LOG_INFO, 0, "updateRoute: Ignoring TO_IN for %s on %s, v1 host/querier present.", inetFmt(group, 1), IfDp->Name);
             return;
         } else if (nsrcs == 0) {
-            clearDownstreamHost(croute->downstreamHostsHashTable, src);
-            if (testNoDownstreamHost(croute->downstreamHostsHashTable)) {
+            clearHash(croute->downstreamHostsHashTable, srcHash);
+            if (noHash(croute->downstreamHostsHashTable)) {
                 LOG(LOG_INFO, 0, "Quickleave enabled, %s was the last downstream host, leaving group %s now", inetFmt(src, 1), inetFmt(group, 2));
                 croute->vifBits = 0;
                 sendJoinLeaveUpstream(croute, IfDp, 0);
@@ -724,16 +679,15 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
             if (i >= nsrcs || (dsrc && dsrc->ip < grec->grec_src[i].s_addr)) {
                 if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(dsrc, IfDp) && (IS_IN(croute, IfDp) || dsrc->age[IfDp->index] > 0))
                     // EX: Send Q(G, X-A) IN: Send Q(G, A-B)
-                    addSrcToQlst(dsrc, IfDp, qlst, group, src);
+                    addSrcToQlst(dsrc, IfDp, qlst, srcHash);
             } else if (i < nsrcs && (! dsrc || dsrc->ip >= grec->grec_src[i].s_addr)) {
-                struct dSources *tsrc = dsrc;
-                do if (((! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc)))
-                        || tsrc->ip == grec->grec_src[i].s_addr) {
+                do if (((! (tsrc = dsrc) || tsrc->ip > grec->grec_src[i].s_addr) &&
+                           (dsrc = newSrc(croute, grec->grec_src[i].s_addr, tsrc))) || tsrc->ip == grec->grec_src[i].s_addr) {
                     // IN (B) = GMI, (A + B) / EX: (A) = GMI, (X + A) (Y - A)
                     BIT_SET(dsrc->vifBits, IfDp->index);
                     BIT_CLR(dsrc->lmBits, IfDp->index);
                     dsrc->age[IfDp->index] = IfDp->querier.qrv;
-                    setDownstreamHost(dsrc->downstreamHostsHashTable, src);
+                    setHash(dsrc->downstreamHostsHashTable, srcHash);
                 } while (++i < nsrcs && (! tsrc || tsrc->ip > grec->grec_src[i].s_addr));
             }
         }
@@ -748,9 +702,6 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
         } else if (BIT_TST(croute->v1Bits, IfDp->index) || BIT_TST(croute->v2Bits, IfDp->index) || IfDp->querier.ver < 3) {
             LOG(LOG_INFO, 0, "updateRoute: Ignoring BLOCK for %s on %s, v1 or v2 host/querier present.", inetFmt(group, 1), IfDp->Name);
             return;
-        } else if (checkFilters(IfDp, 0, IF_STATE_DOWNSTREAM, INADDR_ANY, group) < ALLOW) {
-            LOG(LOG_NOTICE, 0, "Group %s may not be requested on %s.", inetFmt(group, 1), IfDp->Name);
-            return;
         }
 
         for (i = 0, dsrc = croute->dSources; (dsrc || i < nsrcs) && !(IS_IN(croute, IfDp) && ! dsrc); i++) {
@@ -759,9 +710,10 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, void *rec) {
                      || (IS_EX(croute, IfDp) && i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)
                                              && (dsrc = newSrc(croute, grec->grec_src[i].s_addr, dsrc)))) {
                 // IN: Send Q(G,A*B) / EX: Send Q(G,A-Y), (A-X-Y) = Group Timer?
-                addSrcToQlst(dsrc, IfDp, qlst, group, src);
+                addSrcToQlst(dsrc, IfDp, qlst, srcHash);
             }
-            for (;dsrc && dsrc->ip <= grec->grec_src[i].s_addr; dsrc = dsrc->next);
+            while (dsrc && dsrc->ip <= grec->grec_src[i].s_addr)
+                dsrc = dsrc->next;
         }
         qlst[qlst[0] + 1] = 4;
         startQuery(croute, IfDp, qlst);
@@ -1164,10 +1116,10 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
             }
             if (! cliSockAddr) {
                 LOG(LOG_DEBUG, 0, msg, rcount, oAddr ? inetFmt(oAddr->src, 1) : "-", inetFmt(croute->group, 2), oAddr ? IfDp->Name : "",
-                    croute->vifBits, ! CONFIG->fastUpstreamLeave || !croute->mode ? "not tracked" : testNoDownstreamHost(croute->downstreamHostsHashTable) ? "no" : "yes", oAddr ? oAddr->bytes : 0, oAddr ? oAddr->rate : 0);
+                    croute->vifBits, ! CONFIG->fastUpstreamLeave || !croute->mode ? "not tracked" : noHash(croute->downstreamHostsHashTable) ? "no" : "yes", oAddr ? oAddr->bytes : 0, oAddr ? oAddr->rate : 0);
             } else {
                 sprintf(buf, strcat(msg, "\n"), rcount, oAddr ? inetFmt(oAddr->src, 1) : "-", inetFmt(croute->group, 2), oAddr ? IfDp->Name : "",
-                    croute->vifBits, ! CONFIG->fastUpstreamLeave || !croute->mode ? "not tracked" : testNoDownstreamHost(croute->downstreamHostsHashTable) ? "no" : "yes", oAddr ? oAddr->bytes : 0, oAddr ? oAddr->rate : 0);
+                    croute->vifBits, ! CONFIG->fastUpstreamLeave || !croute->mode ? "not tracked" : noHash(croute->downstreamHostsHashTable) ? "no" : "yes", oAddr ? oAddr->bytes : 0, oAddr ? oAddr->rate : 0);
                 sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
             }
             oAddr = oAddr ? oAddr->next : NULL;

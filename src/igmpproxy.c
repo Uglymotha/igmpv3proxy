@@ -40,24 +40,6 @@
 
 #include "igmpproxy.h"
 
-static const char Usage[] =
-"Usage: igmpproxy [-h | -v] [-c [-cbrift...] [-h]] [[-n | -d] <configfile>]\n"
-"\n"
-"   -h   Display this help screen\n"
-"   -v   Display version.\n"
-"   -n   Do not run as a daemon\n"
-"   -d   Run in debug mode. Output all messages on stderr. Implies -n.\n"
-"   -c   Daemon control and statistics.\n"
-"        -c   Reload Configuration.\n"
-"        -b   Rebuild Interfaces.\n"
-"        -r   Display routing table.\n"
-"        -i   Display interface statistics.\n"
-"        -f   Display configured filters.\n"
-"        -t   Display running timers.\n"
-"        -h   Do not display headers.\n"
-"\n"
-PACKAGE_STRING "\n";
-
 // Local function Prototypes
 static void signalHandler(int);
 static void igmpProxyInit(void);

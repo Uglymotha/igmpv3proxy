@@ -63,6 +63,8 @@
 #include <net/if.h>
 #include <arpa/inet.h>
 
+#include "igmpv3.h"
+
 //#################################################################################
 //  Global definitions and declarations.
 //#################################################################################
@@ -79,7 +81,7 @@
 #define IFINFO IP_RECVIF
 #endif
 
-// Buffering.
+// In / output buffering (Jumbo MTU).
 #define BUF_SIZE 9216
 
 // Limit of configuration token.
@@ -257,7 +259,10 @@ struct IfDesc {
 //#################################################################################
 //  Global Variables.
 //############A#####################################################################
-// Timekeeping
+// Help string.
+extern const char Usage[];
+
+// Timekeeping.
 extern struct   timespec curtime, utcoff;
 
 // Process Signaling.
@@ -330,13 +335,23 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 */
 int     qdlm;    // Quick & dirty Macro to reduce logging impact.
 #define LOG(x, ...) qdlm = (x <= CONFIG->logLevel && myLog(x, __VA_ARGS__))
-char    *inetFmt(uint32_t addr, int pos);
-char    *inetFmts(uint32_t addr, uint32_t mask, int pos);
-uint16_t inetChksum(uint16_t *addr, int len);
-uint32_t murmurhash3(register uint32_t x);
-void     sortArr(register uint32_t *arr, register uint32_t nr);
-uint16_t getIgmpExp(register int val, register int d);
-bool     myLog(int Serverity, int Errno, const char *FmtSt, ...);
+const char     *inetFmt(uint32_t addr, int pos);
+const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
+uint16_t        inetChksum(uint16_t *addr, int len);
+struct timespec timeDiff(struct timespec t1, struct timespec t2);
+uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
+bool            parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask);
+uint32_t        murmurhash3(register uint32_t x);
+void            setHash(register uint64_t *table, register uint32_t hash);
+void            clearHash(register uint64_t *table, register uint32_t hash);
+bool            noHash(register uint64_t *table);
+void            sortArr(register uint32_t *arr, register uint32_t nr);
+const char     *igmpPacketKind(unsigned int type, unsigned int code);
+const char     *grecKind(unsigned int type);
+uint16_t        grecType(struct igmpv3_grec *grec);
+uint16_t        grecNscrs(struct igmpv3_grec *grec);
+uint16_t        getIgmpExp(register int val, register int d);
+bool            myLog(int Serverity, int Errno, const char *FmtSt, ...);
 
 /**
 *   kern.c
@@ -370,7 +385,7 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
-void     updateRoute(struct IfDesc *IfDp, register uint32_t src, void *rec);
+void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);

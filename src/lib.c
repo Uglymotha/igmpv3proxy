@@ -34,13 +34,31 @@
 
 #include "igmpproxy.h"
 
+const char Usage[] =
+"Usage: igmpproxy [-h | -v] [-c [-cbrift...] [-h]] [[-n | -d] <configfile>]\n"
+"\n"
+"   -h   Display this help screen\n"
+"   -v   Display version.\n"
+"   -n   Do not run as a daemon\n"
+"   -d   Run in debug mode. Output all messages on stderr. Implies -n.\n"
+"   -c   Daemon control and statistics.\n"
+"        -c   Reload Configuration.\n"
+"        -b   Rebuild Interfaces.\n"
+"        -r   Display routing table.\n"
+"        -i   Display interface statistics.\n"
+"        -f   Display configured filters.\n"
+"        -t   Display running timers.\n"
+"        -h   Do not display headers.\n"
+"\n"
+PACKAGE_STRING "\n";
+
 // buffers to hold the string representations of IP addresses, to be passed to inet_fmt() or inet_fmts().
 static char s[4][19];
 
 /**
 *   Convert an IP address in u_long (network) format into a printable string.
 */
-inline char *inetFmt(uint32_t addr, int pos) {
+inline const char *inetFmt(uint32_t addr, int pos) {
     sprintf(s[pos - 1], "%u.%u.%u.%u", ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], ((uint8_t *)&addr)[3]);
     return s[pos - 1];
 }
@@ -48,7 +66,7 @@ inline char *inetFmt(uint32_t addr, int pos) {
 /**
 *   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
 */
-inline char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
+inline const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
     int bits = 33 - ffs(ntohl(mask));
 
     if ((addr == 0) && (mask == 0))
@@ -63,6 +81,48 @@ inline char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
         sprintf(s[pos - 1], "%u/%d",          ((uint8_t *)&addr)[0], bits);
 
     return s[pos - 1];
+}
+
+/**
+*   Calculate time difference between two timespecs. Return 0,-1 if t1 is already past t2.
+*/
+inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
+    return t1.tv_sec  > t2.tv_sec || (t1.tv_sec == t2.tv_sec && t1.tv_nsec > t2.tv_nsec) ? (struct timespec){ 0, -1 } :
+           t1.tv_nsec > t2.tv_nsec ? (struct timespec){ t2.tv_sec - t1.tv_sec - 1, 1000000000 - t1.tv_nsec + t2.tv_nsec }
+                                   : (struct timespec){ t2.tv_sec - t1.tv_sec, t2.tv_nsec - t1.tv_nsec };
+}
+
+/**
+*   Copies s_addr from struct sockaddr to struct sockaddr_in.
+*/
+inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
+    struct sockaddr_in addr_in;
+    memcpy(&addr_in, addr, sizeof(addr_in));
+    return addr_in.sin_addr.s_addr;
+}
+
+/**
+*   Parses a subnet address string on the format a.b.c.d/n into a subnet addr and mask.
+*/
+inline bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
+    // First get the network part of the address...
+    char *tmpStr = strtok(addrstr, "/");
+    *addr = inet_addr(tmpStr);
+    if (*addr == (in_addr_t)-1)
+        return false;
+
+    // Next parse the subnet mask.
+    tmpStr = strtok(NULL, "/");
+    if (tmpStr) {
+        int bitcnt = atoi(tmpStr);
+        if (bitcnt < 0 || bitcnt > 32)
+            return false;
+        else
+            *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
+    } else
+        return false;
+
+    return true;
 }
 
 /**
@@ -94,6 +154,30 @@ inline uint32_t murmurhash3(register uint32_t x) {
     return x ^ (x >> 16);
 }
 
+// Sets hash in table.
+inline void setHash(register uint64_t *table, register uint32_t hash) {
+    if (CONFIG->fastUpstreamLeave) {
+        BIT_SET(table[hash / 64], hash % 64);
+    }
+}
+
+// Clears hash in table.
+inline void clearHash(register uint64_t *table, register uint32_t hash) {
+    if (CONFIG->fastUpstreamLeave) {
+        BIT_CLR(table[hash / 64], hash % 64);
+    }
+}
+
+// Tests if hash table is empty.
+inline bool noHash(register uint64_t *table) {
+    if (!CONFIG->fastUpstreamLeave)
+        return false;
+
+    register uint64_t i, n = CONFIG->downstreamHostsHashTableSize / 8;
+    for (i = 0; i < n && table[i] == 0; i++);
+    return i < n ? false : true;
+}
+
 /**
 *   Sort array in numerical asceding order. (Insertion Sort)
 */
@@ -104,6 +188,58 @@ inline void sortArr(register uint32_t *arr, register uint32_t nr) {
             for (t = arr[j]; j > 0 && arr[j - 1] > t; arr[j] = arr[j - 1], j--, o++);
         LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
     }
+}
+
+/**
+*   Finds the textual name of the supplied IGMP request.
+*/
+inline const char *igmpPacketKind(unsigned int type, unsigned int code) {
+    switch (type) {
+    case IGMP_MEMBERSHIP_QUERY:      return "Membership query  ";
+    case IGMP_V1_MEMBERSHIP_REPORT:  return "V1 member report  ";
+    case IGMP_V2_MEMBERSHIP_REPORT:  return "V2 member report  ";
+    case IGMP_V3_MEMBERSHIP_REPORT:  return "V3 member report  ";
+    case IGMP_V2_LEAVE_GROUP:        return "Leave message     ";
+    }
+
+    static char unknown[20];
+    sprintf(unknown, "unk: 0x%02x/0x%02x    ", type, code);
+    return unknown;
+}
+
+/**
+*   Returns the IGMP group record type in string.
+*/
+inline const char *grecKind(unsigned int type) {
+    switch (type) {
+    case IGMPV3_MODE_IS_INCLUDE:    return "IS_IN";
+    case IGMPV3_MODE_IS_EXCLUDE:    return "IS_EX";
+    case IGMPV3_CHANGE_TO_INCLUDE:  return "TO_IN";
+    case IGMPV3_CHANGE_TO_EXCLUDE:  return "TO_EX";
+    case IGMPV3_ALLOW_NEW_SOURCES:  return "ALLOW";
+    case IGMPV3_BLOCK_OLD_SOURCES:  return "BLOCK";
+    }
+    return "???";
+}
+
+/**
+*   Returns the igmpv3 group record normalized type.
+*/
+inline uint16_t grecType(struct igmpv3_grec *grec) {
+    return grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
+                           || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT ? IGMPV3_MODE_IS_EXCLUDE
+                            : grec->grec_type == IGMP_V2_LEAVE_GROUP       ? IGMPV3_CHANGE_TO_INCLUDE
+                            : grec->grec_type;
+}
+
+/**
+*   Returns the igmpv3 group record normalized inumber of sources.
+*/
+inline uint16_t grecNscrs(struct igmpv3_grec *grec) {
+    return grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
+                           || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT
+                           || grec->grec_type == IGMP_V2_LEAVE_GROUP       ? 0
+                            : ntohs(grec->grec_nsrcs);
 }
 
 /**

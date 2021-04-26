@@ -45,15 +45,6 @@ static struct timeOutQueue {
 }     *queue = NULL;
 static uint64_t id = 1;
 
-/*
-*   Calculate time difference between two timespecs. Return 0,-1 if t1 is already past t2.
-*/
-static inline struct timespec timer_Diff(struct timespec t1, struct timespec t2) {
-    return t1.tv_sec  > t2.tv_sec || (t1.tv_sec == t2.tv_sec && t1.tv_nsec > t2.tv_nsec) ? (struct timespec){ 0, -1 } :
-           t1.tv_nsec > t2.tv_nsec ? (struct timespec){ t2.tv_sec - t1.tv_sec - 1, 1000000000 - t1.tv_nsec + t2.tv_nsec }
-                                   : (struct timespec){ t2.tv_sec - t1.tv_sec, t2.tv_nsec - t1.tv_nsec };
-}
-
 /**
 *   Clears all scheduled timeouts...
 */
@@ -71,8 +62,8 @@ struct timespec timer_ageQueue() {
     uint64_t i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (i = 1, node = queue; i <= 4 && node && timer_Diff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
-        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timer_Diff(node->time, curtime).tv_nsec / 1000);
+    for (i = 1, node = queue; i <= 4 && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
+        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
         queue = node->next;
         node->func(node->data, node->id);
         free(node);     // Alloced by timer_setTimer()
@@ -80,7 +71,7 @@ struct timespec timer_ageQueue() {
     if (i > 1)
         DEBUGQUEUE("Age Queue", 1, NULL, 0);
 
-    return queue ? timer_Diff(curtime, queue->time) : (struct timespec){-1, -1};
+    return queue ? timeDiff(curtime, queue->time) : (struct timespec){-1, -1};
 }
 
 /**
@@ -104,18 +95,18 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     }
 
     uint64_t i = 1;
-    if (!queue || timer_Diff(queue->time, node->time).tv_nsec == -1) {
+    if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
         node->next = queue;
         queue = node;
     } else {
         // chase the queue looking for the right place.
-        for (ptr = queue, i++; ptr->next && timer_Diff(ptr->next->time, node->time).tv_nsec != -1; ptr = ptr->next, i++);
+        for (ptr = queue, i++; ptr->next && timeDiff(ptr->next->time, node->time).tv_nsec != -1; ptr = ptr->next, i++);
         node->next = ptr->next;
         ptr->next = node;
     }
 
-    delay = timer_Diff(curtime, node->time);
+    delay = timeDiff(curtime, node->time);
     LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
     DEBUGQUEUE("Set Timer", 1, NULL, 0);
     return node->id;
@@ -162,7 +153,7 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
     for (i = 1, node = queue; node; node = node->next, i++) {
-        struct timespec delay = timer_Diff(curtime, node->time);
+        struct timespec delay = timeDiff(curtime, node->time);
         if (! cliSockAddr)
             LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
         else {

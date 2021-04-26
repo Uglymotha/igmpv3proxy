@@ -37,13 +37,6 @@
 // Linked list of igmpproxy interfaces.
 static struct IfDesc *IfDescL = NULL;
 
-// We need a temporary copy to not break strict aliasing rules
-static inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
-    struct sockaddr_in addr_in;
-    memcpy(&addr_in, addr, sizeof(addr_in));
-    return addr_in.sin_addr.s_addr;
-}
-
 /**
 *   Frees the IfDesc table. Paramter specifies cleanup after an interface rebuild.
 */

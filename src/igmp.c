@@ -37,7 +37,6 @@
 */
 
 #include "igmpproxy.h"
-#include "igmpv3.h"
 
 // Local prototypes.
 static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uint8_t ifstate);
@@ -90,25 +89,6 @@ char *initIgmp(void) {
     alligmp3_group   = htonl(INADDR_ALLIGMPV3_GROUP);
 
     return recv_buf;
-}
-
-/**
-*   Finds the textual name of the supplied IGMP request.
-*/
-static const char *igmpPacketKind(unsigned int type, unsigned int code) {
-    static char unknown[20];
-
-    switch (type) {
-    case IGMP_MEMBERSHIP_QUERY:      return "Membership query  ";
-    case IGMP_V1_MEMBERSHIP_REPORT:  return "V1 member report  ";
-    case IGMP_V2_MEMBERSHIP_REPORT:  return "V2 member report  ";
-    case IGMP_V3_MEMBERSHIP_REPORT:  return "V3 member report  ";
-    case IGMP_V2_LEAVE_GROUP:        return "Leave message     ";
-
-    default:
-        sprintf(unknown, "unk: 0x%02x/0x%02x    ", type, code);
-        return unknown;
-    }
 }
 
 /**
@@ -211,7 +191,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         case IGMP_V2_LEAVE_GROUP:
         case IGMP_V2_MEMBERSHIP_REPORT:
             if (checkIgmp(IfDp, igmp->igmp_group.s_addr, IF_STATE_DOWNSTREAM))
-                updateRoute(IfDp, src, igmp);
+                updateRoute(IfDp, src, (void *)igmp);
             return;
 
         case IGMP_V3_MEMBERSHIP_REPORT:

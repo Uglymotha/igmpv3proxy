@@ -45,7 +45,6 @@ static bool              configFile(char *filename, int open);
 static char             *nextConfigToken(void);
 static void              initCommonConfig();
 static struct vifConfig *parsePhyintToken(void);
-static bool              parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask);
 static void              allocFilter(struct filters fil);
 
 // Daemon Configuration.
@@ -215,30 +214,6 @@ static void allocFilter(struct filters fil) {
     ***tmpFil = fil;
 
     *tmpFil = &(***tmpFil).next;
-}
-
-/**
-*   Parses a subnet address string on the format a.b.c.d/n into a subnet addr and mask.
-*/
-static bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
-    // First get the network part of the address...
-    char *tmpStr = strtok(addrstr, "/");
-    *addr = inet_addr(tmpStr);
-    if (*addr == (in_addr_t)-1)
-        return false;
-
-    // Next parse the subnet mask.
-    tmpStr = strtok(NULL, "/");
-    if (tmpStr) {
-        int bitcnt = atoi(tmpStr);
-        if (bitcnt < 0 || bitcnt > 32)
-            return false;
-        else
-            *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
-    } else
-        return false;
-
-    return true;
 }
 
 /**
