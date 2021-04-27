@@ -72,7 +72,7 @@
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
 #define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
-#define BIT_TST(X,n)     ((X) & 1 << (n))
+#define BIT_TST(X,n)     (((X) >> (n)) & 1)
 
 // Set type of control message structure for received socket data.
 #ifdef IP_PKTINFO

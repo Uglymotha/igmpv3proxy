@@ -112,7 +112,8 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t mcastaddr) {
 
     if (setsockopt(mrouterFD, IPPROTO_IP, Cmd == 'j' ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
         int mcastGroupExceeded = (Cmd == 'j' && errno == ENOBUFS);
-        LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE", inetFmt(mcastaddr, 1), IfDp->Name)
+        LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE",
+                                 inetFmt(mcastaddr, 1), IfDp->Name)
 ;
         if (mcastGroupExceeded) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
@@ -166,7 +167,8 @@ int k_enableMRouter(void) {
     else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_ERR, errno, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0) || ! (Va & MRT_MFC_BW_UPCALL)) {
+    if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
+               || ! (Va & MRT_MFC_BW_UPCALL)) {
         LOG(LOG_WARNING, errno, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
         CONFIG->bwControlInterval = 0;
     }
@@ -195,7 +197,8 @@ void k_delVIF(struct IfDesc *IfDp) {
     if (IfDp->index == (uint8_t)-1) return;
     vifCtl.vifc_vifi = IfDp->index;
 
-    LOG(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d", IfDp->index, IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->conf->threshold, IfDp->conf->ratelimit);
+    LOG(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d", IfDp->index,
+                        IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->conf->threshold, IfDp->conf->ratelimit);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)
         LOG(LOG_WARNING, errno, "delVIF: Error removing VIF %d:%s", IfDp->index, IfDp->Name);
 
@@ -230,7 +233,8 @@ bool k_addVIF(struct IfDesc *IfDp) {
     IfDp->bytes = IfDp->rate = 0;
 
     // Log the VIF information.
-    LOG(LOG_NOTICE, 0, "adding VIF %s, Ix %d, Fl 0x%x, IP %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi, vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
+    LOG(LOG_NOTICE, 0, "adding VIF %s, Ix %d, Fl 0x%x, IP %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
+                 vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
     for (struct filters *filter = IfDp->aliases; filter; filter = filter->next)
         LOG(LOG_DEBUG, 0, "        Network for [%s] : %s", IfDp->Name, inetFmts(filter->src.ip, filter->src.mask, 1));
 
@@ -259,7 +263,8 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
     // Add the mfc to the kernel.
-    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1), inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
+    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+                      inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -287,7 +292,8 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #endif
 
     // Remove mfc from kernel.
-    LOG(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1), inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
+    LOG(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+                        inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
 }

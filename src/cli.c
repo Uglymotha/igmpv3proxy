@@ -58,19 +58,21 @@ int openCliSock(void) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = malloc(strlen(path) + 12))) LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
+            if (! (CONFIG->runPath = malloc(strlen(path) + 12)))
+                LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
             strcpy(CONFIG->runPath, strcat(path, "/igmpproxy/"));
             break;
         }
     }
 
     // Open the socket after directory exists / created etc.
-    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770) || chmod(cliSockAddr.sun_path, S_ISVTX | S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH)))
+    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770)
+        || chmod(cliSockAddr.sun_path, S_ISVTX | S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH)))
         || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)
         || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-        || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
+        || !u(cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
 #else
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
@@ -115,7 +117,8 @@ void processCliCon(int fd) {
     // Receive and answer the cli request.
     unsigned int s = sizeof(cliSockAddr);
     int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
-    if (len <= 0) return;
+    if (len <= 0 || len > CLI_CMD_BUF)
+        return;
     if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0)
         logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
     else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0)
@@ -179,24 +182,29 @@ void cliCmd(char *cmd) {
     }
 
     // Open and bind socket for receiving answers from daemon.
-    if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
+    if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1
+               || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
         fprintf(stdout, "Cannot open socket %s. %s\n", srvSockAddr.sun_path, strerror(errno));
         exit(-1);
     }
 
-    for (cmd = cli ? fgets(buf, CLI_CMD_BUF, stdin) : strcpy(buf, cmd); cmd && strcmp("done\n", buf) != 0 && strcmp(".\n", buf) != 0 && strlen(buf) < CLI_CMD_BUF; cmd = fgets(buf, CLI_CMD_BUF, stdin)) {
-        if (sendto(srvSock, buf, cli ? strlen(buf) - 1 : strlen(buf), 0, (struct sockaddr *)&srvSockAddr, sizeof(srvSockAddr)) == -1) {
+    for (cmd = cli ? fgets(buf, CLI_CMD_BUF, stdin) : strcpy(buf, cmd); cmd && strcmp("done\n", buf) != 0
+                   && strcmp(".\n", buf) != 0 && strlen(buf) < CLI_CMD_BUF; cmd = fgets(buf, CLI_CMD_BUF, stdin)) {
+        if (sendto(srvSock, buf, cli ? strlen(buf) - 1 : strlen(buf), 0, (struct sockaddr *)&srvSockAddr,
+                                                                          sizeof(srvSockAddr)) == -1) {
             fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
             exit(-1);
         }
 
         // Receive the daemon's answer. It will be closed by one single byte.
         unsigned int s = sizeof(srvSockAddr);
-        for (int len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s); len > 1; len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s)) {
+        for (int len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s);
+                 len > 1; len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s)) {
             fprintf(stdout, "%s", buf);
             memset(buf, 0, len);
         }
-        if (! cli) break;
+        if (! cli)
+            break;
     }
 
     unlink(ownSockAddr.sun_path);

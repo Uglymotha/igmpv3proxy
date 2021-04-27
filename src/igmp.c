@@ -83,7 +83,6 @@ char *initIgmp(void) {
     ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[2] = 0x00;
     ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[3] = 0x00;
 
-
     allhosts_group   = htonl(INADDR_ALLHOSTS_GROUP);
     allrouters_group = htonl(INADDR_ALLRTRS_GROUP);
     alligmp3_group   = htonl(INADDR_ALLIGMPV3_GROUP);
@@ -227,11 +226,13 @@ void sendIgmp(struct IfDesc *IfDp, void *rec) {
     int                  len    = 0;
     struct sockaddr_in   sdst;
 
-    if (IS_DISABLED(IfDp->state)) {
-        LOG(LOG_NOTICE, 0, "Interface %s disabled, not sending query for %s.", IfDp->Name, inetFmt(grec->grec_mca.s_addr, 1));
+    if (IS_DISABLED(IfDp->state) || !IQUERY) {
+        LOG(LOG_NOTICE, 0, "Not sending query for %s on %s interface %s.", inetFmt(grec->grec_mca.s_addr, 1),
+                            IS_DISABLED(IfDp->state) ? "disabled" : "non querier", IfDp->Name);
         return;
     } else if (grec && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && grec->grec_nsrcs > 0))) {
-        LOG(LOG_NOTICE, 0, "Request to send group specific query on %s while in v%d mode, not sending.", IfDp->Name, IfDp->querier.ver);
+        LOG(LOG_NOTICE, 0, "Request to send group specific query on %s while in v%d mode, not sending.",
+                            IfDp->Name, IfDp->querier.ver);
         return;
     } else if (grec && !IN_MULTICAST(ntohl(grec->grec_mca.s_addr))) {
         LOG(LOG_WARNING, 0, "IGMP request to %s on %s not valid, not sending.", inetFmt(grec->grec_mca.s_addr, 1), IfDp->Name);

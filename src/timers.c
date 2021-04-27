@@ -63,7 +63,8 @@ struct timespec timer_ageQueue() {
 
     clock_gettime(CLOCK_REALTIME, &curtime);
     for (i = 1, node = queue; i <= 4 && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
-        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
+        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
+                          timeDiff(node->time, curtime).tv_nsec / 1000);
         queue = node->next;
         node->func(node->data, node->id);
         free(node);     // Alloced by timer_setTimer()
@@ -89,9 +90,11 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
         if (curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 > 1000000000)
-            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10 + 1, curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 - 1000000000 };
+            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10 + 1,
+                                            curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 - 1000000000 };
         else
-            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10, curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
+            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10,
+                                            curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
     }
 
     uint64_t i = 1;
@@ -107,7 +110,8 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
     }
 
     delay = timeDiff(curtime, node->time);
-    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay.tv_sec, delay.tv_nsec / 100000000);
+    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name,
+                      delay.tv_sec, delay.tv_nsec / 100000000);
     DEBUGQUEUE("Set Timer", 1, NULL, 0);
     return node->id;
 }

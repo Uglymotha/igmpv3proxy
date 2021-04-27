@@ -196,7 +196,7 @@ static void igmpProxyCleanUp(void) {
     clearRoutes(NULL);      // Remove all routes.
     freeIfDescL();          // Free IfDesc table.
     freeConfig(0);          // Free config.
-    k_disableMRouter();       // Disable the MRouter API.
+    k_disableMRouter();     // Disable the MRouter API.
     if (strstr(CONFIG->runPath, "/igmpproxy/")) {
         char rFile[strlen(CONFIG->runPath) + 14];
         remove(strcat(strcpy(rFile, CONFIG->runPath), "igmpproxy.pid"));

@@ -106,13 +106,14 @@ void buildIfVc(void) {
     if ((getifaddrs (&IfAddrsP)) == -1)
         LOG(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
 
-    // Loop over interfaces. Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
+    // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
-        if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0 ||
+        if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
+            || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
-           (! (tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG)) ||
+            || (! (tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-           (! ((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))) {
+            || (! ((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))) {
             continue;
         }
 
@@ -130,7 +131,8 @@ void buildIfVc(void) {
                     LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by Self or freeIfDescL()
                 *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, fil };
             }
-            LOG(LOG_INFO, 0, "builfIfVc: Interface %s Addr: %s, Network: %s, Ptr: %p", IfDp->Name ,inetFmt(addr, 1), inetFmts(subnet, mask, 2), IfDp->aliases);
+            LOG(LOG_INFO, 0, "builfIfVc: Interface %s Addr: %s, Network: %s, Ptr: %p", IfDp->Name,
+                              inetFmt(addr, 1), inetFmts(subnet, mask, 2), IfDp->aliases);
             continue;
 
         } else if (! IfDp) {
@@ -180,7 +182,9 @@ void buildIfVc(void) {
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
         // Debug log the result...
-        LOG( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p", IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->Flags, IfDp->mtu, inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
+        LOG( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
+                            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->Flags, IfDp->mtu,
+                            inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
     }
     
     // Free the getifadds struct.
