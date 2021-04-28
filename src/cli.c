@@ -72,7 +72,7 @@ int openCliSock(void) {
         || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-        || !u(cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
+        || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
 #else
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif

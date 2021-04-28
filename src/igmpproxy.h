@@ -190,10 +190,10 @@ struct querier {                                        // igmp querier status f
     uint64_t       ageTimer;                            // Route aging timer
 };
 
-struct routes {
-    struct routes *prev;
-    void          *route;        // Pointer to route in routing table
-    struct routes *next;
+struct ifRoutes {
+    struct ifRoutes *prev;
+    void            *croute;        // Pointer to route in routing table
+    struct ifRoutes *next;
 };
 
 // Interfaces configuration.
@@ -209,10 +209,11 @@ struct IfDesc {
     struct querier                querier;                  // igmp querier for interface
     uint64_t                      bytes, rate;              // Counters for bandwith control
     uint8_t                       index;                    // MCast vif index
-    struct routes                *routes;                   // Pointers to active routes for vif
+    struct ifRoutes              *dRoutes;                  // Pointers to active routes for vif
+    struct ifRoutes              *uRoutes;                  // Pointers to active routes for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, 0, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, (uint8_t)-1, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, 0, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.

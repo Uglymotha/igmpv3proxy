@@ -45,24 +45,32 @@ void freeIfDescL() {
 
     for (IfDp = IfDescL; IfDp; IfDp = nIfDp) {
         nIfDp = IfDp->next;
-        if (SHUTDOWN || ((IfDp->state & 0x80) && !IfDp->gsq)) {
+        if (SHUTDOWN || (IfDp->state & 0x80)) {
+            // Free filter dSources and uSources.
+            for (struct ifRoutes *ifr = IfDp->dRoutes, *nifr = NULL; ifr; nifr = ifr->next, free(ifr), ifr = nifr);
+            IfDp->dRoutes = NULL;
+            for (struct ifRoutes *ifr = IfDp->uRoutes, *nifr = NULL; ifr; nifr = ifr->next, free(ifr), ifr = nifr);
+            IfDp->uRoutes = NULL;
             // On shutdown, or when interface is marked for deletion, remove it and its aliases.
-            if (!SHUTDOWN) {
-                LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
-                if (pIfDp)
-                    pIfDp->next = IfDp->next;
-                else
-                    IfDescL = IfDp->next;
-            }
-            for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);
-            free(IfDp);  // Alloced by buildIfvc()
-        } else {
-            if (!SHUTDOWN && (IfDp->state & 0x80) && IfDp->gsq) {
+            if (SHUTDOWN || !IfDp->gsq) {
+                for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);
+                if (!SHUTDOWN) {
+                    LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
+                    if (pIfDp)
+                        pIfDp->next = IfDp->next;
+                    else
+                        IfDescL = IfDp->next;
+                }
+                free(IfDp);  // Alloced by buildIfvc()
+            } else {
                 LOG(LOG_NOTICE, 0, "Interface %s actively queried, Delaying removal.", IfDp->Name);
                 IfDp->state = IF_STATE_DISABLED;
                 IfDp->mtu   = IfDp->Flags = 0;
                 IfDp->conf->state = IF_STATE_DISABLED | 0x40;
+                IfDp->oldconf = NULL;
+                pIfDp = IfDp;
             }
+        } else {
             IfDp->oldconf = NULL;
             pIfDp = IfDp;
         }

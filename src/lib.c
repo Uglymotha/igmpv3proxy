@@ -112,15 +112,15 @@ inline bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
         return false;
 
     // Next parse the subnet mask.
+    int bitcnt;
     tmpStr = strtok(NULL, "/");
     if (tmpStr) {
-        int bitcnt = atoi(tmpStr);
+        bitcnt = atoi(tmpStr);
         if (bitcnt < 0 || bitcnt > 32)
             return false;
-        else
-            *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
     } else
-        return false;
+        bitcnt = 32;
+    *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
 
     return true;
 }

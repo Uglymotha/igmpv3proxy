@@ -349,11 +349,12 @@ bool loadConfig(void) {
             // Got a hashtablesize token...
             if (! commonConfig.fastUpstreamLeave)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
-            else if (intToken < 8 || intToken > 536870912)
-                LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 536870912 bytes (multiples of 8), using default %d.", commonConfig.downstreamHostsHashTableSize);
+            else if (intToken < 8 || intToken > 131072)
+                LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8), using default %d.",
+                                     commonConfig.downstreamHostsHashTableSize);
             else {
-                commonConfig.downstreamHostsHashTableSize = intToken - intToken % 8;
-                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.downstreamHostsHashTableSize);
+                commonConfig.downstreamHostsHashTableSize = (intToken - intToken % 8) * 8;
+                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.downstreamHostsHashTableSize / 8);
             }
 
         } else if (strcasecmp("routetables", token) == 0 && INTTOKEN) {
