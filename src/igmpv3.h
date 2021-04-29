@@ -30,8 +30,8 @@ struct igmpv3_query {
                                     /*  (zero for queries)             */
     u_char          igmp_misc;      /* reserved/suppress/robustness    */
     u_char          igmp_qqi;       /* querier's query interval        */
-    u_short         igmp_numsrc;    /* number of sources               */
-    struct in_addr  igmp_sources[]; /* source addresses */
+    u_short         igmp_nsrcs;     /* number of sources               */
+    struct in_addr  igmp_src[];     /* source addresses */
 };
 
 struct igmpv3_grec {

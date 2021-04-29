@@ -252,7 +252,7 @@ static void initCommonConfig(void) {
 
     // Log to file disabled by default.
     commonConfig.log2File = false;
-    commonConfig.logLevel = !commonConfig.log2Stderr ? LOG_WARNING : LOG_DEBUG;
+    commonConfig.logLevel = !commonConfig.log2Stderr ? LOG_WARNING : commonConfig.logLevel;
 
     // Default no timed rebuild interfaces / reload config.
     commonConfig.rescanVif  = 0;
@@ -600,7 +600,7 @@ bool loadConfig(void) {
         if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0 || ! (Va & MRT_MFC_BW_UPCALL))) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             commonConfig.bwControlInterval = 0;
-        } else
+        } else if (!STARTUP)
             clearRoutes(getConfig);
 #endif
         if (commonConfig.bwControlInterval)
@@ -955,10 +955,6 @@ void configureVifs(void) {
                 IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
                 IfDp->oldconf->state = IF_STATE_DISABLED;
             }
-        } else if (IfDp->oldconf->state & 0x40) {
-            // Interface had removal delayed, flag for removal again.
-            IfDp->oldconf->state = IF_STATE_DISABLED;
-            IfDp->state          = IF_STATE_DISABLED | 0x80;
         } else {
             // Existing interface, oldstate is current state with default filter flag, newstate is configured state without default filter flag.
             IfDp->oldconf->state = IfDp->state | (IfDp->conf->state & 0x80);
@@ -1012,9 +1008,6 @@ void configureVifs(void) {
             if (IS_UPSTREAM(oldstate)   && upsvifcount)
                 upsvifcount--;
         }
-
-        // Unlink old configuration from interface.
-        IfDp->oldconf = NULL;
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.

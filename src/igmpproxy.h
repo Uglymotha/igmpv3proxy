@@ -189,6 +189,8 @@ struct querier {                                        // igmp querier status f
     uint64_t       Timer;                               // Self / Other Querier timer
     uint64_t       ageTimer;                            // Route aging timer
 };
+#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
+#define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 struct ifRoutes {
     struct ifRoutes *prev;
@@ -204,7 +206,6 @@ struct IfDesc {
     uint32_t                      Flags;                    // Operational flags
     uint32_t                      mtu;                      // Interface MTU
     uint8_t                       state;                    // Operational state
-    uint8_t                       gsq;                      // Interface query flag
     struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
     struct querier                querier;                  // igmp querier for interface
     uint64_t                      bytes, rate;              // Counters for bandwith control
@@ -213,7 +214,7 @@ struct IfDesc {
     struct ifRoutes              *uRoutes;                  // Pointers to active routes for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, 0, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -224,8 +225,8 @@ struct IfDesc {
 #define IS_DOWNSTREAM(x)       (x & 0x2)
 #define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
-#define IF_OLDSTATE(x)         x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED
-#define IF_NEWSTATE(x)         x ?               x->state          & ~0x80 : IF_STATE_DISABLED
+#define IF_OLDSTATE(x)         (x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
+#define IF_NEWSTATE(x)         (x ?               x->state          & ~0x80 : IF_STATE_DISABLED)
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -237,7 +238,6 @@ struct IfDesc {
 #define DEFAULT_INTERVAL_QUERY_RESPONSE 100
 
 // IGMP Global Values.
-#define MAX_IP_PACKET_LEN	576
 #define MIN_IP_HEADER_LEN	20
 #define MAX_IP_HEADER_LEN	60
 #define IP_HEADER_RAOPT_LEN	24
@@ -336,7 +336,7 @@ void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 char *initIgmp(void);
 void  acceptIgmp(int recvlen, struct msghdr msgHdr);
 void  ctrlQuerier(int start, struct IfDesc *IfDp);
-void  sendIgmp(struct IfDesc *IfDp, void *rec);
+void  sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 
 /**
@@ -396,6 +396,7 @@ void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
+void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC

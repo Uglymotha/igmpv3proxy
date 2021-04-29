@@ -67,9 +67,12 @@ int main(int ArgCn, char *ArgVc[]) {
     srand(time(NULL) * getpid());
 
     // Parse the commandline options and setup basic settings..
-    for (c = getopt(ArgCn, ArgVc, "cvdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvdnh")) {
+    for (c = getopt(ArgCn, ArgVc, "cvVdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnh")) {
         switch (c) {
+        case 'v':
+            CONFIG->logLevel = LOG_INFO; // FALLTHRU
         case 'd':
+            CONFIG->logLevel = !CONFIG->logLevel ? LOG_DEBUG : CONFIG->logLevel;
             CONFIG->log2Stderr = true; // FALLTHRU
         case 'n':
             CONFIG->notAsDaemon = true;
@@ -99,7 +102,7 @@ int main(int ArgCn, char *ArgVc[]) {
             }
             cliCmd("cli");
             exit(0);
-        case 'v':
+        case 'V':
             fprintf(stdout, "Igmpproxy %s\n", PACKAGE_VERSION);
             exit(0);
         default:

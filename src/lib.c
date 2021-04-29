@@ -35,12 +35,13 @@
 #include "igmpproxy.h"
 
 const char Usage[] =
-"Usage: igmpproxy [-h | -v] [-c [-cbrift...] [-h]] [[-n | -d] <configfile>]\n"
+"Usage: igmpproxy [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
-"   -v   Display version.\n"
+"   -V   Display version.\n"
 "   -n   Do not run as a daemon\n"
-"   -d   Run in debug mode. Output all messages on stderr. Implies -n.\n"
+"   -v   Run in Verbose mode, Output all messages on stderr. Implies -n.\n"
+"   -d   Run in debug mode. Implies -v.\n"
 "   -c   Daemon control and statistics.\n"
 "        -c   Reload Configuration.\n"
 "        -b   Rebuild Interfaces.\n"
