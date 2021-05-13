@@ -100,7 +100,7 @@ void buildIfVc(void) {
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
     struct filters *nfil, *fil;
     if ((getifaddrs (&IfAddrsP)) == -1)
-        LOG(STARTUP ? LOG_ERR : LOG_WARNING, errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
+        LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
 
     // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {

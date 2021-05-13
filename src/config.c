@@ -1012,5 +1012,5 @@ void configureVifs(void) {
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
     if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0)
-        LOG(STARTUP ? LOG_ERR : LOG_WARNING, 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
+        LOG((STARTUP ? LOG_ERR : LOG_WARNING), 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }

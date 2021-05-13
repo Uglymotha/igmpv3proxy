@@ -410,7 +410,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
                                                                        : IfDp->querier.qqi, 0);
         else
             timeout = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi;
-        IfDp->querier.Timer = timer_setTimer(TDELAY((timeout * 10) + (rand() % 8)),
+        IfDp->querier.Timer = timer_setTimer(TDELAY((timeout * 10) + (rand() % 4)),
                                              strcat(strcpy(msg, "General Query: "), IfDp->Name),
                                              (timer_f)sendGeneralMemberQuery, IfDp);
         // Set timer for route aging.
