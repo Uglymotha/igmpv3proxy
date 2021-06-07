@@ -60,7 +60,9 @@ static char          *recv_buf;
 *   pointer to the arguments are received on the line...
 */
 int main(int ArgCn, char *ArgVc[]) {
-    int            c, h;
+    int       c, h, i = 0, j = 0;
+    uint32_t  addr, mask;
+    char     *opts[2] = { NULL, NULL }, cmd[2] = "";
 
     memset(CONFIG, 0, sizeof(struct Config));
     openlog("igmpproxy", LOG_PID, LOG_USER);
@@ -81,10 +83,8 @@ int main(int ArgCn, char *ArgVc[]) {
             fputs(Usage, stderr);
             exit(0);
         case 'c':
-            c = getopt(ArgCn, ArgVc, "cbrifth");
+            c = getopt(ArgCn, ArgVc, "cbr::ifth");
             while (c != -1) {
-                char cmd[2] = "";
-                h = getopt(ArgCn, ArgVc, "cbrifth");
                 switch (c) {
                 case 'b':
                 case 'c':
@@ -94,9 +94,23 @@ int main(int ArgCn, char *ArgVc[]) {
                 case 'i':
                 case 't':
                 case 'r':
-                    cliCmd(h == 'h' ? strcat(strcat(cmd, (char *)&c), (char *)&h) : (char *)&c);
+                    if (i == 0 && optarg && !parseSubnetAddress(optarg, &addr, &mask)) {
+                        j = optind;
+                        optind = i = 1;
+                        opts[1] = malloc(strlen(optarg) - 1);
+                        sprintf(opts[1], "-%s", optarg);
+                    }
+                    h = getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth");
+                    cliCmd(h == 'h' ? strcat(strcpy(cmd, (char *)&c), (char *)&h) : (char *)&c);
                 }
-                c = h == 'h' ? getopt(ArgCn, ArgVc, "riftcvdnh") : h;
+                c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
+                fprintf(stdout,"bla %c", c);
+                if (c == -1 && i == 1) {
+                    free(opts[1]);
+                    i = 0;
+                    optind = j;
+                    c = getopt(ArgCn, ArgVc, "cbr::ifth");
+                }
                 if (c == -1)
                     exit(0);
             }
