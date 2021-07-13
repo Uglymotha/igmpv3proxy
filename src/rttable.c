@@ -643,7 +643,7 @@ static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp
 void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
     uint16_t     i = 0, type    = grecType(grec), nsrcs = grecNscrs(grec);
     uint32_t            group   = grec->grec_mca.s_addr,
-                        srcHash = murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize),
+                        srcHash = CONFIG->fastUpstreamLeave ? murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize) : 0,
                         qlst[CONFIG->maxOrigins + 3];
     struct routeTable  *croute;
     struct dSources    *dsrc, *tsrc;
@@ -664,7 +664,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
         BIT_SET(croute->v1Bits, IfDp->index);
         croute->v1Age[IfDp->index] = IfDp->querier.qrv;
     } else if (grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT || grec->grec_type == IGMP_V2_LEAVE_GROUP) {
-        LOG(LOG_INFO, 0, "Detected v2 host on %s. Setting compatibility mode for %s.", IfDp->Name, inetFmt(group, 2));
+        LOG(LOG_INFO, 0, "Detected v2 host on %s. Setting compatibility mode for %s.", IfDp->Name, inetFmt(group, 1));
         BIT_SET(croute->v2Bits, IfDp->index);
         croute->v2Age[IfDp->index] = IfDp->querier.qrv;
     }
