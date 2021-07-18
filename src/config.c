@@ -542,7 +542,8 @@ bool loadConfig(void) {
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group %s.", token);
             else {
                 commonConfig.socketGroup = *getgrnam(token);
-                if (!STARTUP) cliSetGroup(commonConfig.socketGroup.gr_gid);
+                if (!STARTUP)
+                    cliSetGroup(commonConfig.socketGroup.gr_gid);
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: %s.", commonConfig.socketGroup.gr_name);
             }
 
