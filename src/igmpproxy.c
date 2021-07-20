@@ -62,7 +62,7 @@ static char          *recv_buf;
 int main(int ArgCn, char *ArgVc[]) {
     int       c, h, i = 0, j = 0;
     uint32_t  addr, mask;
-    char     *opts[2] = { NULL, NULL }, cmd[2] = "";
+    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL;
 
     memset(CONFIG, 0, sizeof(struct Config));
     openlog("igmpproxy", LOG_PID, LOG_USER);
@@ -94,20 +94,35 @@ int main(int ArgCn, char *ArgVc[]) {
                 case 'i':
                 case 't':
                 case 'r':
-                    if (i == 0 && optarg && !parseSubnetAddress(optarg, &addr, &mask)) {
-                        j = optind;
-                        optind = i = 1;
-                        opts[1] = malloc(strlen(optarg) - 1);
-                        sprintf(opts[1], "-%s", optarg);
+                    arg = optarg;
+                    if (optarg && !parseSubnetAddress(optarg, &addr, &mask)) {
+                        arg = NULL;
+                        if (i == 0) {
+                            j = optind;
+                            optind = i = 1;
+                            opts[1] = malloc(strlen(optarg) - 1);  // Freed by self.
+                            sprintf(opts[1], "-%s", optarg);
+                        }
                     }
                     h = getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth");
-                    cliCmd(h == 'h' ? strcat(strcpy(cmd, (char *)&c), (char *)&h) : (char *)&c);
+                    if (i == 1 && h == -1) {
+                        free(opts[1]);  // Alloced by self.
+                        i = opts[1] = 0;
+                        optind = j;
+                        h = getopt(ArgCn, ArgVc, "cbr::ifth");
+                    }
+                    strncpy(cmd, (char *)&c, 1);
+                    if (h == 'h')
+                        strcat(cmd, "h");
+                    if (arg)
+                        strcat(cmd, arg);
+                    cliCmd(cmd);
+                    memset(cmd, 0, 20);
                 }
                 c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
-                fprintf(stdout,"bla %c", c);
                 if (c == -1 && i == 1) {
-                    free(opts[1]);
-                    i = 0;
+                    free(opts[1]);  // Alloced by self.
+                    i = opts[1] = 0;
                     optind = j;
                     c = getopt(ArgCn, ArgVc, "cbr::ifth");
                 }

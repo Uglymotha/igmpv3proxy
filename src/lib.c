@@ -105,7 +105,9 @@ inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
 /**
 *   Parses a subnet address string on the format a.b.c.d/n into a subnet addr and mask.
 */
-inline bool parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask) {
+inline bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask) {
+    char addrstr[19];
+    strncpy(addrstr, str, 18);
     // First get the network part of the address...
     char *tmpStr = strtok(addrstr, "/");
     *addr = inet_addr(tmpStr);

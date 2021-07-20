@@ -117,20 +117,24 @@ void processCliCon(int fd) {
     // Receive and answer the cli request.
     unsigned int s = sizeof(cliSockAddr);
     int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
+    uint32_t addr, mask;
     if (len <= 0 || len > CLI_CMD_BUF)
         return;
-    if (strcmp("r", buf) == 0 || strcmp("rh", buf) == 0)
-        logRouteTable("", strcmp("r", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("i", buf) == 0 || strcmp("ih", buf) == 0)
-        getIfStats(strcmp("i", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("f", buf) == 0 || strcmp("fh", buf) == 0)
-        getIfFilters(strcmp("f", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("t", buf) == 0 || strcmp("th", buf) == 0)
-        debugQueue("", strcmp("t", buf) == 0 ? 1 : 0, &cliSockAddr, fd);
-    else if (strcmp("c", buf) == 0) {
+    if (buf[0] == 'r') {
+        if (len > 2 && parseSubnetAddress(buf[1] == 'h'? &buf[2] : &buf[1], &addr, &mask))
+            sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+        else
+            logRouteTable("", buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
+    } else if (buf[0] == 'i')
+        getIfStats(buf[1] == 'h' ?  0 : 1, &cliSockAddr, fd);
+    else if (buf[0] == 'f')
+        getIfFilters(buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
+    else if (buf[0] == 't')
+        debugQueue("", buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
+    else if (buf[0] == 'c') {
         sighandled |= GOT_SIGUSR1;
         sendto(fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
-    } else if (strcmp("b", buf) == 0) {
+    } else if (buf[0] == 'b') {
         sighandled |= GOT_SIGUSR2;
         sendto(fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
     } else

@@ -349,7 +349,7 @@ const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
 uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
-bool            parseSubnetAddress(char *addrstr, uint32_t *addr, uint32_t *mask);
+bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
 void            setHash(register uint64_t *table, register uint32_t hash);
 void            clearHash(register uint64_t *table, register uint32_t hash);
