@@ -60,7 +60,7 @@ static char          *recv_buf;
 *   pointer to the arguments are received on the line...
 */
 int main(int ArgCn, char *ArgVc[]) {
-    int       c, h, i = 0, j = 0;
+    int       c = 0, h = 0, i = 0, j = 0;
     uint32_t  addr, mask;
     char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL;
 
