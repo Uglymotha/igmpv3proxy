@@ -1,7 +1,7 @@
 AC_PREREQ([2.63])
-AC_INIT([igmpproxy], [0.9.0])
+AC_INIT([igmpv3proxy], [0.9.0])
 AM_INIT_AUTOMAKE
-AC_CONFIG_SRCDIR([src/igmpproxy.c])
+AC_CONFIG_SRCDIR([src/igmpv3proxy.c])
 AC_CONFIG_HEADERS([config.h])
 AC_PROG_CC_C99
 
@@ -90,7 +90,7 @@ AC_CONFIG_FILES([
 	Makefile
 	doc/Makefile
 	src/Makefile
-	doc/igmpproxy.8
-	doc/igmpproxy.conf.5
+	doc/igmpv3proxy.8
+	doc/igmpv3proxy.conf.5
 ])
 AC_OUTPUT

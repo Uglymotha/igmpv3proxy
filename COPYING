@@ -1,5 +1,5 @@
-igmpproxy - IGMP proxy based multicast router 
-Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
+igmpv3proxy - IGMPv3 proxy based multicast router
+Copyright (C) 2021 Sietse van Zanen <uglymotha@wizdom.nu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 This software is derived work from the following software. The original
 source code has been modified from it's original state by the author
-of igmpproxy.
+of igmv3pproxy.
 
 smcroute 0.92 - Copyright (C) 2001 Carsten Schill <carsten@cschill.de>
 - Licensed under the GNU General Public License, either version 2 or
@@ -29,7 +29,7 @@ Leland Stanford Junior University.
 - Licensed under the 3-clause BSD license, see Stanford.txt file.
 
 
-Since 2017-03-25 igmpproxy is GPLv2+ compatible, mrouted licensed
+Since 2021-07-20 igmpv3proxy is GPLv2+ compatible, mrouted licensed
 was switched from the proprietary Stanford to 3-clause BSD. New
-igmpproxy contributions and patches must be under GPLv2+ license,
+igmpv3proxy contributions and patches must be under GPLv2+ license,
 old proprietary Stanford is not accepted.

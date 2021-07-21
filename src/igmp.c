@@ -1,5 +1,5 @@
 /*
-**  igmpproxy - IGMP proxy based multicast router
+**  igmpv3proxy - IGMP proxy based multicast router
 **  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
 **
 **  This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,7 @@
 **
 **  This software is derived work from the following software. The original
 **  source code has been modified from it's original state by the author
-**  of igmpproxy.
+**  of igmpv3proxy.
 **
 **  smcroute 0.92 - Copyright (C) 2001 Carsten Schill <carsten@cschill.de>
 **  - Licensed under the GNU General Public License, either version 2 or
@@ -36,7 +36,7 @@
 *   igmp.c - Implements RFC3376 IGMPv3.
 */
 
-#include "igmpproxy.h"
+#include "igmpv3proxy.h"
 
 // Local prototypes.
 static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uint8_t ifstate);

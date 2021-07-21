@@ -3,17 +3,17 @@
 .\" .I  - green or kursive (on HTML)
 .\" .TP - paragraph ? (header line, followed by indented lines)
 .\"
-.TH igmpproxy 8 "" "@PACKAGE_STRING@"
+.TH igmpv3proxy 8 "" "@PACKAGE_STRING@"
 .SH NAME
-igmpproxy \- Multicast router utilizing IGMP forwarding
+igmpv3proxy \- Multicast router utilizing IGMP forwarding
 
 .SH SYNOPSIS
-.B igmpproxy [-h] [-n] [-d] [-v [-v]]
+.B igmpv3proxy [-h] [-n] [-d] [-v [-v]]
 .I config-file
 
 
 .SH DESCRIPTION
-.B igmpproxy
+.B igmpv3proxy
 is a simple multicast routing daemon which uses IGMP forwarding to
 dynamically route multicast traffic. Routing is done by defining an
 "upstream" interface on which the daemon act as a normal Multicast
@@ -22,7 +22,7 @@ on the destination networks. This is useful in situations where other
 dynamic multicast routers (like 'mrouted' or 'pimd') cannot be used.
 
 Since 
-.B igmpproxy
+.B igmpv3proxy
 only uses IGMP signalling, the daemon is only suited for situations
 where multicast traffic comes from only one neighbouring network.
 In more advanced cases, 'mrouted' or 'pimd' is probably more suited.
@@ -69,7 +69,7 @@ use IGMPv2 on eth0 (provided this is the upstream interface).
 
 
 .SH SEE ALSO
-.BR igmpproxy.conf (5),
+.BR igmpv3proxy.conf (5),
 .BR mrouted,
 .BR pimd,
 .BR smcroute

@@ -1,12 +1,12 @@
-sbin_PROGRAMS = igmpproxy
-igmpproxy_SOURCES = \
+sbin_PROGRAMS = igmpv3proxy
+igmpv3proxy_SOURCES = \
 	cli.c \
 	config.c \
 	ifvc.c \
 	igmp.c \
 	igmpv3.h \
-	igmpproxy.c \
-	igmpproxy.h \
+	igmpv3proxy.c \
+	igmpv3proxy.h \
 	kern.c \
 	lib.c \
 	os-dragonfly.h \

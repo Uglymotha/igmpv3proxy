@@ -1,5 +1,5 @@
 /*
-**  igmpproxy - IGMP proxy based multicast router
+**  igmpv3proxy - IGMP proxy based multicast router
 **  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
 **
 **  This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,7 @@
 **
 **  This software is derived work from the following software. The original
 **  source code has been modified from it's original state by the author
-**  of igmpproxy.
+**  of igmpv3proxy.
 **
 **  smcroute 0.92 - Copyright (C) 2001 Carsten Schill <carsten@cschill.de>
 **  - Licensed under the GNU General Public License, either version 2 or
@@ -36,7 +36,7 @@
 *   Contains function for cli control of daemon. It's a simple question -> answer implementation.
 */
 
-#include "igmpproxy.h"
+#include "igmpv3proxy.h"
 
 // Local Prototypes.
 static void signalHandler(int sig);
@@ -60,7 +60,7 @@ int openCliSock(void) {
         if (stat(path, &st) != -1) {
             if (! (CONFIG->runPath = malloc(strlen(path) + 12)))
                 LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
-            strcpy(CONFIG->runPath, strcat(path, "/igmpproxy/"));
+            strcpy(CONFIG->runPath, strcat(path, "/igmpv3proxy/"));
             break;
         }
     }
@@ -83,7 +83,7 @@ int openCliSock(void) {
 
     // Write PID.
     char  pidFile[strlen(CONFIG->runPath) + 14];
-    FILE *pidFilePtr = fopen(strcat(strcpy(pidFile, CONFIG->runPath), "igmpproxy.pid"), "w");
+    FILE *pidFilePtr = fopen(strcat(strcpy(pidFile, CONFIG->runPath), "igmpv3proxy.pid"), "w");
     fprintf(pidFilePtr, "%d\n", getpid());
     fclose(pidFilePtr);
 
@@ -176,7 +176,7 @@ void cliCmd(char *cmd) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
     path = strtok(paths, " ");
     while (path) {
-        strcat(strcpy(tpath, path), "/igmpproxy/cli.sock");
+        strcat(strcpy(tpath, path), "/igmpv3proxy/cli.sock");
         if (stat(tpath, &st) != -1) {
             strcpy(srvSockAddr.sun_path, tpath);
             sprintf(ownSockAddr.sun_path, "%s.%d", tpath, getpid());

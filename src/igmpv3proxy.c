@@ -1,5 +1,5 @@
 /*
-**  igmpproxy - IGMP proxy based multicast router
+**  igmpv3proxy - IGMP proxy based multicast router
 **  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
 **
 **  This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,7 @@
 **
 **  This software is derived work from the following software. The original
 **  source code has been modified from it's original state by the author
-**  of igmpproxy.
+**  of igmpv3proxy.
 **
 **  smcroute 0.92 - Copyright (C) 2001 Carsten Schill <carsten@cschill.de>
 **  - Licensed under the GNU General Public License, either version 2 or
@@ -33,12 +33,12 @@
 */
 
 /**
-*   igmpproxy.c - The main file for the IGMP proxy application.
+*   igmpv3proxy.c - The main file for the IGMP proxy application.
 *
 *   February 2005 - Johnny Egeland, September 2020 - Sietse van Zanen
 */
 
-#include "igmpproxy.h"
+#include "igmpv3proxy.h"
 
 // Local function Prototypes
 static void signalHandler(int);
@@ -65,7 +65,7 @@ int main(int ArgCn, char *ArgVc[]) {
     char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL;
 
     memset(CONFIG, 0, sizeof(struct Config));
-    openlog("igmpproxy", LOG_PID, LOG_USER);
+    openlog("igmpv3proxy", LOG_PID, LOG_USER);
     srand(time(NULL) * getpid());
 
     // Parse the commandline options and setup basic settings..
@@ -107,7 +107,7 @@ int main(int ArgCn, char *ArgVc[]) {
                     h = getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth");
                     if (i == 1 && h == -1) {
                         free(opts[1]);  // Alloced by self.
-                        i = opts[1] = 0;
+                        i = 0;
                         optind = j;
                         h = getopt(ArgCn, ArgVc, "cbr::ifth");
                     }
@@ -122,7 +122,7 @@ int main(int ArgCn, char *ArgVc[]) {
                 c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
                 if (c == -1 && i == 1) {
                     free(opts[1]);  // Alloced by self.
-                    i = opts[1] = 0;
+                    i = 0;
                     optind = j;
                     c = getopt(ArgCn, ArgVc, "cbr::ifth");
                 }
@@ -141,7 +141,7 @@ int main(int ArgCn, char *ArgVc[]) {
 
     if (geteuid() != 0) {
         // Check that we are root.
-        fprintf(stderr, "igmpproxy: must be root\n");
+        fprintf(stderr, "igmpv3proxy: must be root\n");
         exit(-1);
     } else if (optind != ArgCn - 1) {
         fprintf(stdout, "You must specify the configuration file.\n");
@@ -229,9 +229,9 @@ static void igmpProxyCleanUp(void) {
     freeIfDescL();          // Free IfDesc table.
     freeConfig(0);          // Free config.
     k_disableMRouter();     // Disable the MRouter API.
-    if (strstr(CONFIG->runPath, "/igmpproxy/")) {
+    if (strstr(CONFIG->runPath, "/igmpv3proxy/")) {
         char rFile[strlen(CONFIG->runPath) + 14];
-        remove(strcat(strcpy(rFile, CONFIG->runPath), "igmpproxy.pid"));
+        remove(strcat(strcpy(rFile, CONFIG->runPath), "igmpv3proxy.pid"));
         remove(strcat(strcpy(rFile, CONFIG->runPath), "cli.sock"));
         rmdir(CONFIG->runPath);
     }
