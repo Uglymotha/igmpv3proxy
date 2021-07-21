@@ -447,7 +447,7 @@ void clearRoutes(void *Dp) {
     struct IfDesc     *IfDp = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
     register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
-    if (SHUTDOWN || Dp == CONFIG || Dp == getConfig() || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
+    if (SHUTDOWN || Dp == CONFIG || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
         GETMRT(croute) {
             if (SHUTDOWN) {
                 proute = croute->prev;
