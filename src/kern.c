@@ -35,11 +35,11 @@
 #include "igmpv3proxy.h"
 
 static int curttl = 0, mrouterFD = -1;
-static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t mcastaddr);
+static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group);
 
 /**
-*   Set the socket buffer.  If we can't set it as large as we want, search around to try to find the highest acceptable
-*   value.  The highest acceptable value being smaller than minsize is a fatal error.
+*   Set the socket buffer. If we can't set it as large as we want, search around to try to find the highest acceptable
+*   value. The highest acceptable value being smaller than minsize is a fatal error.
 */
 void k_set_rcvbuf(int bufsize, int minsize) {
     int delta = bufsize / 2;
@@ -94,26 +94,26 @@ inline void k_set_if(struct IfDesc *IfDp) {
 /**
 *   Common function for joining or leaving a MCast group.
 */
-static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t mcastaddr) {
+static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
 #if defined HAVE_STRUCT_GROUP_REQ_GR_INTERFACE
     struct group_req GrpReq;
  #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
-    struct sockaddr_in Grp = { sizeof(struct sockaddr_in), AF_INET, 0, mcastaddr };
+    struct sockaddr_in Grp = { sizeof(struct sockaddr_in), AF_INET, 0, group };
  #else
-    struct sockaddr_in Grp = { AF_INET, 0, {mcastaddr}, {0} };
+    struct sockaddr_in Grp = { AF_INET, 0, {group}, {0} };
  #endif
     GrpReq.gr_interface = IfDp ? if_nametoindex(IfDp->Name) : 0;
     memcpy(&GrpReq.gr_group, &Grp, sizeof(Grp));
 #else
     struct ip_mreq GrpReq;
-    GrpReq.imr_multiaddr.s_addr = mcastaddr;
+    GrpReq.imr_multiaddr.s_addr = group;
     GrpReq.imr_interface.s_addr = IfDp ? IfDp->InAdr.s_addr : (struct in_addr){ 0 };
 #endif
 
     if (setsockopt(mrouterFD, IPPROTO_IP, Cmd == 'j' ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
         int mcastGroupExceeded = (Cmd == 'j' && errno == ENOBUFS);
         LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE",
-                                 inetFmt(mcastaddr, 1), IfDp->Name)
+                                 inetFmt(group, 1), IfDp->Name)
 ;
         if (mcastGroupExceeded) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
@@ -132,17 +132,41 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t mcastaddr) {
 *   The join is bound to the UDP socket 'udpSock', so if this socket is
 *   closed the membership is dropped.
 */
-inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr) {
-    bool r = k_joinleave('j', IfDp, mcastaddr);
+inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
+    bool r = k_joinleave('j', IfDp, group);
     return r;
 }
 
 /**
 *   Leaves the MC group with the address 'McAdr' on the interface 'IfName'.
 */
-inline bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr) {
-    bool r = k_joinleave('l', IfDp, mcastaddr);
+inline bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t group) {
+    bool r = k_joinleave('l', IfDp, group);
     return r;
+}
+
+/**
+*   Sets group filter for group on iupstream interface.
+*/
+inline void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
+    uint32_t i, size = sizeof(struct sockaddr_storage) + nsrcs * sizeof(struct sockaddr_storage) - sizeof(struct sockaddr_storage);
+    struct sockaddr_storage *ss;
+    if (! (ss = malloc(size)))  // Freed by self.
+        LOG(LOG_ERR, errno, "k_setSourceFilter: Out of Memory.");
+#ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
+    struct sockaddr_in sin = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, group };
+    for(i = 0; i < nsrcs; i++)
+        *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, slist[i]};
+#else
+    struct sockaddr_in sin = (struct sockaddr_in){ AF_INET, 0, {group}, {0} };
+    for(i = 0; i < nsrcs; i++)
+        *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
+#endif
+    LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter for %s (%s) with %d sources.", inetFmt(group, 1),
+                     fmode ? "IN" : "EX", nsrcs);
+    if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in), fmode, nsrcs, ss) < 0)
+        LOG(LOG_WARNING, errno, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
+    free(ss);  // Alloced by self.
 }
 
 /**

@@ -117,7 +117,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     char               ifName[IF_NAMESIZE];
     struct ip         *ip = (struct ip *)recv_buf;
     register uint32_t  src = ip->ip_src.s_addr, dst = ip->ip_dst.s_addr;
-    register int       ipdatalen = IPDATALEN, iphdrlen = ip->ip_hl << 2, ngrec, ifindex = 0;
+    register int       ipdatalen = IPDATALEN, iphdrlen = ip->ip_hl << 2, ifindex = 0;
     struct igmp       *igmp = (struct igmp *)(recv_buf + iphdrlen);
     struct cmsghdr    *cmsgPtr;
     struct IfDesc     *IfDp = NULL;
@@ -191,7 +191,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
-        LOG(LOG_DEBUG, 0, "RECV %s from %-15s to %s", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
+        LOG(LOG_DEBUG, 0, "acceptIgmp: RECV %s from %-15s to %s", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
                            inetFmt(src, 1), inetFmt(dst, 2) );
 
         switch (igmp->igmp_type) {
@@ -202,17 +202,20 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
                 updateRoute(IfDp, src, (void *)igmp);
             return;
 
-        case IGMP_V3_MEMBERSHIP_REPORT:
-            ngrec = ntohs(igmpv3gr->igmp_ngrec);
-            while (ngrec-- && (uint8_t *)igmpv3gr + ipdatalen >= (uint8_t *)grec + sizeof(*grec)) {
+        case IGMP_V3_MEMBERSHIP_REPORT: {
+            int ngrec = ntohs(igmpv3gr->igmp_ngrec);
+            LOG(LOG_INFO, 0, "acceptIgmp: Processing %d group records for %s.", ngrec, inetFmt(src, 1));
+            if (ngrec > 0) do {
+                int nsrcs = ntohs(grec->grec_nsrcs);
                 if (grec->grec_type < 1 || grec->grec_type > 6)
-                    LOG(LOG_NOTICE, 0, "ignoring unknown IGMPv3 group record type %x from %s to %s for %s",
+                    LOG(LOG_NOTICE, 0, "Ignoring unknown IGMPv3 group record type %x from %s to %s for %s",
                                         grec->grec_type, inetFmt(src, 1), inetFmt(dst, 2), inetFmt(grec->grec_mca.s_addr, 3));
                 else if (checkIgmp(IfDp, grec->grec_mca.s_addr, IF_STATE_DOWNSTREAM))
                     updateRoute(IfDp, src, grec);
-                grec = (struct igmpv3_grec *)(&grec->grec_src[grec->grec_nsrcs] + grec->grec_auxwords * 4);
-            }
+                grec = (struct igmpv3_grec *)(&grec->grec_src[nsrcs] + grec->grec_auxwords * 4);
+            } while (--ngrec && (char *)igmpv3gr + ipdatalen >= (char *)grec + sizeof(*grec));
             return;
+        }
 
         case IGMP_MEMBERSHIP_QUERY:
             if (IN_MULTICAST(ntohl(dst)) && CONFIG->querierElection && IfDp->conf->qry.election && !IS_DISABLED(IfDp->state))
@@ -337,8 +340,8 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
 *   Processes a received general membership query and updates igmp timers for the interface.
 */
 static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, struct igmpv3_query *igmpv3, int ipdatalen) {
-    uint32_t ver = ipdatalen >= IGMPV3_MINLEN ? 3 : igmpv3->igmp_code == 0 ? 1 : 2,
-             timeout;
+    uint8_t  ver = ipdatalen >= IGMPV3_MINLEN ? 3 : igmpv3->igmp_code == 0 ? 1 : 2;
+    uint32_t timeout;
 
     if (ver < IfDp->querier.ver || (ver == IfDp->querier.ver && (htonl(src) <= htonl(IfDp->querier.ip)))) {
         if (dst == allhosts_group || src != IfDp->querier.ip) {
@@ -381,7 +384,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                     IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
         }
         if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8))
-            processGroupQuery(IfDp, igmpv3);
+            processGroupQuery(IfDp, igmpv3, ver);
     } else
         LOG(LOG_DEBUG, 0, "Received IGMP v%d query from %s on %s, but it does not have priority over %s. Ignoring",
                            ver, inetFmt(src, 1), IfDp->Name,

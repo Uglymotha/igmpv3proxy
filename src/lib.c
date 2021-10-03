@@ -35,7 +35,7 @@
 #include "igmpv3proxy.h"
 
 const char Usage[] =
-"Usage: igmpv3proxy [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
+"Usage: %s [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
 "   -V   Display version.\n"
@@ -97,9 +97,7 @@ inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
 *   Copies s_addr from struct sockaddr to struct sockaddr_in.
 */
 inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
-    struct sockaddr_in addr_in;
-    memcpy(&addr_in, addr, sizeof(addr_in));
-    return addr_in.sin_addr.s_addr;
+    return ((struct sockaddr_in *)addr)->sin_addr.s_addr;
 }
 
 /**
@@ -246,7 +244,8 @@ inline uint16_t grecNscrs(struct igmpv3_grec *grec) {
 }
 
 /**
-*   Calculate QQIC / RESV value from given 15 bit integer (RFC Max). We use our own implementation, as various OS do not provide a common one.
+*   Calculate QQIC / RESV value from given 15 bit integer (RFC Max).
+*   We use our own implementation, as various OS do not provide a common one.
 */
 inline uint16_t getIgmpExp(register int val, register int d) {
     int i, exp;

@@ -58,9 +58,9 @@ int openCliSock(void) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = malloc(strlen(path) + 12)))
+            if (! (CONFIG->runPath = malloc(strlen(path) + strlen(fileName) + 3)))
                 LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
-            strcpy(CONFIG->runPath, strcat(path, "/igmpv3proxy/"));
+            sprintf(CONFIG->runPath, "%s/%s/", path, fileName);
             break;
         }
     }
@@ -82,8 +82,9 @@ int openCliSock(void) {
     }
 
     // Write PID.
-    char  pidFile[strlen(CONFIG->runPath) + 14];
-    FILE *pidFilePtr = fopen(strcat(strcpy(pidFile, CONFIG->runPath), "igmpv3proxy.pid"), "w");
+    char  pidFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
+    sprintf(pidFile, "%s/%s.pid", CONFIG->runPath, fileName);
+    FILE *pidFilePtr = fopen(pidFile, "w");
     fprintf(pidFilePtr, "%d\n", getpid());
     fclose(pidFilePtr);
 
@@ -176,7 +177,7 @@ void cliCmd(char *cmd) {
     char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
     path = strtok(paths, " ");
     while (path) {
-        strcat(strcpy(tpath, path), "/igmpv3proxy/cli.sock");
+        sprintf(tpath, "%s/%s/cli.sock", path, fileName);
         if (stat(tpath, &st) != -1) {
             strcpy(srvSockAddr.sun_path, tpath);
             sprintf(ownSockAddr.sun_path, "%s.%d", tpath, getpid());

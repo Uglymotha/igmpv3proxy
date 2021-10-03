@@ -443,7 +443,7 @@ bool loadConfig(void) {
         } else if (strcasecmp("defaultrobustness", token) == 0 && INTTOKEN) {
             // Got a robustnessvalue token...
             if (intToken < 1 || intToken > 7)
-                LOG(LOG_WARNING, 0, "Config IF: Robustness value mus be between 1 and 7.");
+                LOG(LOG_WARNING, 0, "Config IF: Robustness value must be between 1 and 7.");
             else {
                 commonConfig.robustnessValue = intToken;
                 commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS ? commonConfig.lastMemberQueryCount : commonConfig.robustnessValue;
@@ -479,7 +479,7 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("defaultlastmembercount", token) == 0 && INTTOKEN) {
             // Got a lastmembercount token...
-            commonConfig.lastMemberQueryCount = intToken < 0 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
+            commonConfig.lastMemberQueryCount = intToken < 1 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
             LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
 
         } else if (strcasecmp("bwcontrol", token) == 0 && INTTOKEN) {
@@ -838,7 +838,7 @@ static struct vifConfig *parsePhyintToken(void) {
             }
 
         } else if (strcasecmp("lastmembercount", token) == 0 && INTTOKEN) {
-            tmpPtr->qry.lmCount = intToken < 0 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
+            tmpPtr->qry.lmCount = intToken < 1 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
             tmpPtr->qry.lmCount = intToken;
             LOG(LOG_NOTICE, 0, "Config: IF: Setting last member query count to %d.", tmpPtr->qry.lmCount);
 

@@ -49,6 +49,7 @@ static void igmpProxyRun(void);
 // Global Variables Signal Handling / Timekeeping.
 uint8_t               sighandled, sigstatus;
 struct timespec       curtime, utcoff;
+const char           *fileName;
 
 // Polling and buffering local statics.
 static struct pollfd  pollFD[2];
@@ -63,9 +64,10 @@ int main(int ArgCn, char *ArgVc[]) {
     int       c = 0, h = 0, i = 0, j = 0;
     uint32_t  addr, mask;
     char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL;
+    fileName = basename(ArgVc[0]);
 
     memset(CONFIG, 0, sizeof(struct Config));
-    openlog("igmpv3proxy", LOG_PID, LOG_USER);
+    openlog(fileName, LOG_PID, LOG_USER);
     srand(time(NULL) * getpid());
 
     // Parse the commandline options and setup basic settings..
@@ -80,7 +82,7 @@ int main(int ArgCn, char *ArgVc[]) {
             CONFIG->notAsDaemon = true;
             break;
         case 'h':
-            fputs(Usage, stderr);
+            fprintf(stdout, Usage, fileName);
             exit(0);
         case 'c':
             c = getopt(ArgCn, ArgVc, "cbr::ifth");
@@ -141,7 +143,7 @@ int main(int ArgCn, char *ArgVc[]) {
 
     if (geteuid() != 0) {
         // Check that we are root.
-        fprintf(stderr, "igmpv3proxy: must be root\n");
+        fprintf(stderr, "%s: must be root.\n", fileName);
         exit(-1);
     } else if (optind != ArgCn - 1) {
         fprintf(stdout, "You must specify the configuration file.\n");
@@ -229,10 +231,12 @@ static void igmpProxyCleanUp(void) {
     freeIfDescL();          // Free IfDesc table.
     freeConfig(0);          // Free config.
     k_disableMRouter();     // Disable the MRouter API.
-    if (strstr(CONFIG->runPath, "/igmpv3proxy/")) {
-        char rFile[strlen(CONFIG->runPath) + 14];
-        remove(strcat(strcpy(rFile, CONFIG->runPath), "igmpv3proxy.pid"));
-        remove(strcat(strcpy(rFile, CONFIG->runPath), "cli.sock"));
+    if (strstr(CONFIG->runPath, fileName)) {
+        char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
+        sprintf(rFile, "%s/%s.pid", CONFIG->runPath, fileName);
+        remove(rFile);
+        sprintf(rFile, "%s/cli.sock", CONFIG->runPath);
+        remove(rFile);
         rmdir(CONFIG->runPath);
     }
     free(CONFIG->logFilePath);

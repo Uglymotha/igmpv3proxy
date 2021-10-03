@@ -269,7 +269,7 @@ struct IfDesc {
 //  Global Variables.
 //############A#####################################################################
 // Help string.
-extern const char Usage[];
+extern const char *fileName, Usage[];
 
 // Timekeeping.
 extern struct   timespec curtime, utcoff;
@@ -285,19 +285,6 @@ extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
-
-/**
-*   callout.c
-*/
-#define TMNAMESZ 48
-#define TDELAY(x) (struct timespec){ -1, x }
-#define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
-typedef void  (*timer_f)();
-void            timer_freeQueue(void);
-struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
-void           *timer_clearTimer(uint64_t timer_id);
-void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 
 /**
 *   config.c
@@ -370,8 +357,9 @@ void k_set_rcvbuf(int bufsize, int minsize);
 int  k_set_ttl(uint8_t t);
 void k_set_loop(int l);
 void k_set_if(struct IfDesc *IfDp);
-bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr);
-bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t mcastaddr);
+bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group);
+bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t group);
+void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int  k_getMrouterFD(void);
 int  k_enableMRouter(void);
 void k_disableMRouter(void);
@@ -396,9 +384,23 @@ void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
-void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query);
+void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
+
+/**
+*   timers.c
+*/
+#define TMNAMESZ 48
+#define TDELAY(x) (struct timespec){ -1, x }
+#define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
+typedef void  (*timer_f)();
+void            timer_freeQueue(void);
+struct timespec timer_ageQueue();
+uint64_t        timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
+void           *timer_clearTimer(uint64_t timer_id);
+void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+

@@ -56,15 +56,10 @@ struct dSources {
     struct routeTable  *croute;
     uint32_t            ip;                         // Source IP adress
     uint32_t            lmBits;                     // Per vif last member state
-    uint8_t             qCnt[MAXVIFS];              // Keeps track of GSQs
+    uint32_t            qryBits;                    // Active query interfaces flag
     uint8_t             age[MAXVIFS];               // Age value for source
     uint32_t            vifBits;                    // Active vifs for source
     uint64_t            downstreamHostsHashTable[]; // Host tracking table
-};
-
-struct uSources {
-    struct uSources    *next;
-    uint32_t            ip;                       // Source IP adress
 };
 
 struct routeTable {
@@ -74,15 +69,14 @@ struct routeTable {
     uint32_t            group;                    // The group to route
     uint32_t            nsrcs;                    // Number of sources for group
     uint32_t            norgs;                    // Number of origins for group
-    struct uSources    *uSources;                 // Upstream source list for group
     struct dSources    *dSources;                 // Downstream source list for group
     struct originAddrs *origins;                  // The origin adresses (only set on activated routes)
 
     // Keeps the group states. Per vif flags.
     uint32_t            mode;                     // Mode (include/exclude) for group
     uint32_t            upstrState;               // Upstream membership state
+    uint32_t            qryBits;                  // Active query interfaces flag
     uint32_t            lmBits;                   // Last member flag
-    uint8_t             qCnt[MAXVIFS];            // Keeps track of GSQs
     uint32_t            v1Bits;                   // v1 compatibility flags
     uint8_t             v1Age[MAXVIFS];           // v1 compatibility timer
     uint32_t            v2Bits;                   // v2 compatibility flags
@@ -94,23 +88,38 @@ struct routeTable {
     uint64_t            downstreamHostsHashTable[];
 };
 
-// Keeper for the routing table.
-static struct routeTable **mrt = NULL;
-static char                msg[TMNAMESZ];
+struct qlst {
+    struct qlst       *prev;
+    struct qlst       *next;
+    struct routeTable *croute;                    // Pointer to route being queried
+    struct IfDesc     *IfDp;                      // Interface for query
+    uint8_t            type;                      // Query type (GSQ/GSSQ)
+    uint8_t            code;                      // Query max response code
+    uint8_t            misc;                      // Query misc (RA/QRV)
+    uint8_t            cnt;                       // Nr of queries sent
+    uint16_t           nsrcs;                     // Nr of sources in query
+    struct dSources   *src[];                     // Array of pointers to sources
+};
+
+// Routing table static vars.
+static struct routeTable **mrt           = NULL;   // Route tables
+static struct qlst        *qL            = NULL;   // List of running GSQ
+static uint32_t            qC            = 0;      // Querier count.
+static char                msg[TMNAMESZ] = "";     // Timer name buffer
 
 // Prototypes
-static struct routeTable *findRoute(register uint32_t group, bool create);
-static inline void        addRoute(struct routeTable* croute, struct IfDesc *IfDp, int dir);
-static struct ifRoutes   *delRoute(struct routeTable *croute, struct IfDesc *IfDp, struct ifRoutes *ifr, int dir);
-static uint64_t           checkFilters(struct IfDesc *IfDp, int old, int dir, uint32_t src, uint32_t group);
-static void               sendJoinLeaveUpstream(struct routeTable* croute, int join);
-static inline struct      dSources *addSrc(struct routeTable *croute, uint32_t ip, struct dSources *dsrc);
-static inline struct      dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t srcHash);
-static inline void        addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t srcHash);
-static void               toInclude(struct routeTable *croute, struct IfDesc *IfDp);
-static inline void        startQuery(struct routeTable *croute, struct IfDesc *IfDp, uint32_t *qlst);
-static void               groupSpecificQuery(struct igmpv3_query *query);
-static void               internUpdateKernelRoute(struct routeTable *route, int activate);
+static struct routeTable      *findRoute(register uint32_t group, bool create);
+static inline void             addRoute(struct routeTable* croute, struct IfDesc *IfDp, int dir);
+static struct ifRoutes        *delRoute(struct routeTable *croute, struct IfDesc *IfDp, struct ifRoutes *ifr, int dir);
+static uint64_t                checkFilters(struct IfDesc *IfDp, int old, int dir, uint32_t src, uint32_t group);
+static void                    sendJoinLeaveUpstream(struct routeTable* croute, int join);
+static inline struct dSources *addSrc(struct routeTable *croute, uint32_t ip, struct dSources *dsrc);
+static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t srcHash);
+static inline struct qlst     *addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
+static bool                    toInclude(struct routeTable *croute, struct IfDesc *IfDp);
+static inline void             startQuery(struct IfDesc *IfDp, struct qlst *qlst);
+static void                    groupSpecificQuery(struct qlst *qlst);
+static void                    internUpdateKernelRoute(struct routeTable *route, int activate);
 
 /**
 *   Private access function to find a route from a given group, creates new if required.
@@ -138,7 +147,7 @@ static struct routeTable *findRoute(register uint32_t group, bool create) {
     }
 
     // Create and initialize the new route table entry. Freed by delRoute()
-    LOG(LOG_INFO, 0, "No existing route for %s. Create new in table %d.", inetFmt(group, 1), mrtHash);
+    LOG(LOG_INFO, 0, "findRoute: No existing route for %s. Create new in table %d.", inetFmt(group, 1), mrtHash);
     if (! (nroute = malloc(sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize)))
         LOG(LOG_ERR, errno, "insertRoute: Out of memory.");
     memset(nroute, 0, sizeof(struct routeTable) + CONFIG->downstreamHostsHashTableSize);
@@ -198,14 +207,14 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
             BIT_CLR(croute->vifBits, IfDp->index);
             if (croute->vifBits) {
                 // Clear interface and sources flags and Update kernel route table if route still active on other interface.
+                BIT_CLR(croute->qryBits, IfDp->index);
                 BIT_CLR(croute->lmBits, IfDp->index);
                 BIT_CLR(croute->mode, IfDp->index);
                 BIT_CLR(croute->v1Bits, IfDp->index);
                 BIT_CLR(croute->v2Bits, IfDp->index);
-                croute->qCnt[IfDp->index] = croute->age[IfDp->index] = croute->v1Age[IfDp->index] = croute->v2Age[IfDp->index] = 0;
+                croute->age[IfDp->index] = croute->v1Age[IfDp->index] = croute->v2Age[IfDp->index] = 0;
                 for (struct dSources *dsrc = croute->dSources; dsrc; dsrc = delSrc(dsrc, IfDp, (uint32_t)-1));
                 internUpdateKernelRoute(croute, 1);
-                return ifr;
             }
         } else
             BIT_CLR(croute->upstrState, IfDp->index);
@@ -223,7 +232,9 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
             IfDp->uRoutes = ifr->next;
         free(ifr);  // Alloced by addRoute()
     }
-    if (dir) {
+
+    // Check if route should be removed from table.
+    if (dir && (! croute->dSources || SHUTDOWN)) {
         uint32_t mrtHash = murmurhash3(croute->group) % CONFIG->routeTables;
 
         LOG(LOG_DEBUG, 0, "delRoute: Deleting route %s from table %d.",inetFmt(croute->group, 1), mrtHash);
@@ -241,7 +252,6 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
 
         // Free the memory, and return. Alloced by addSrc() and findRoute().
         for (struct dSources *src; croute->dSources; src = croute->dSources->next, free(croute->dSources), croute->dSources = src);
-        for (struct uSources *src; croute->uSources; src = croute->uSources->next, free(croute->uSources), croute->uSources = src);
         free(croute);  // Alloced by findRoute()
     }
 
@@ -413,10 +423,9 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, int join) {
     for (GETIFL(IfDp)) {
         uint64_t bw = BLOCK;
         // Check if this Request is legit to be forwarded to upstream
-        if ( (join && (!IS_UPSTREAM(IfDp->state) || BIT_TST(croute->upstrState, IfDp->index)))
-                   || (!join && !BIT_TST(croute->upstrState, IfDp->index))) {
+        if ((join && !IS_UPSTREAM(IfDp->state)) || (!join && !BIT_TST(croute->upstrState, IfDp->index))) {
             continue;
-        } else if (! join && BIT_TST(croute->upstrState, IfDp->index)) {
+        } else if (!join && BIT_TST(croute->upstrState, IfDp->index)) {
             LOG(LOG_INFO, 0, "Leaving group %s upstream on interface %s", inetFmt(croute->group, 1), IfDp->Name);
             k_leaveMcGroup(IfDp, croute->group);
             delRoute(croute, IfDp, NULL, 0);
@@ -430,9 +439,50 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, int join) {
             LOG(LOG_INFO, 0, "Group %s bandwidth over limit (%lld) on %s. Not joining.",
                               inetFmt(croute->group, 1), bw, IfDp->Name);
         } else if (join) {
-            LOG(LOG_INFO, 0, "Joining group %s upstream on interface %s.", inetFmt(croute->group, 1), IfDp->Name);
-            if (k_joinMcGroup(IfDp, croute->group))
+            // Build source list for upstream interface.
+            // For IN: All active downstream and allowed sources are to be included in the list.
+            // For EX: All sources, with timer = 0 on all active interfaces are to be included.
+            uint32_t i, nsrcs, *slist;
+            struct dSources *src;
+            if (! (slist = malloc(croute->nsrcs * sizeof(uint32_t))))  // Freed by self
+                LOG(LOG_ERR, errno, "sendJoinLeaveUpstream: Out of Memory.");
+            for (nsrcs = 0, src = croute->dSources; src; src = src->next) {
+                if (!croute->mode) {
+                    if (!src->vifBits || noHash(src->downstreamHostsHashTable)) {
+                        LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: No downstream hosts %s:%s on %s, not adding to source list.",
+                                         inetFmt(src->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                        continue;
+                    }
+                    if (! checkFilters(IfDp, 0, IF_STATE_UPSTREAM, src->ip, croute->group)) {
+                        // Check if source is allowed for group on upstream interface.
+                        LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: Source %s not allowed for group %s on interface %s.",
+                                         inetFmt(src->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                        continue;
+                    }
+                } else {
+                    if (src->vifBits != croute->vifBits)
+                        continue;
+                    else for (i = 0; i < MAXVIFS && ( !((croute->vifBits >> i) & 0x1) || !croute->age[i] ); i++ );
+                    if (i >= MAXVIFS)
+                        continue;
+                }
+
+                LOG(LOG_DEBUG, 0, "sendJoinLeaveUpstream: Adding %s to source list for %s on %s.",
+                                   inetFmt(src->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                slist[nsrcs++] = src->ip;
+            }
+            // Join the group on interface if necessary.
+            if (!BIT_TST(croute->upstrState, IfDp->index) && !(!croute->mode && !nsrcs) && k_joinMcGroup(IfDp, croute->group)) {
+                LOG(LOG_INFO, 0, "Joining group %s upstream on interface %s.", inetFmt(croute->group, 1), IfDp->Name);
                 addRoute(croute, IfDp, 0);
+            }
+            // If the group is joined on interface update the source filter. If IN no sources, group is unjoined effectively.
+            if (BIT_TST(croute->upstrState, IfDp->index)) {
+                k_setSourceFilter(IfDp, croute->group, croute->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist);
+                if (!croute->mode && !nsrcs)
+                    BIT_CLR(croute->upstrState, IfDp->index);
+            }
+            free(slist);  // Alloced by self
         }
     }
 }
@@ -444,7 +494,7 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, int join) {
 void clearRoutes(void *Dp) {
     struct ifRoutes   *ifr;
     struct routeTable *croute, *proute;
-    struct IfDesc     *IfDp = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
+    struct IfDesc     *IfDp     = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
     register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
     if (SHUTDOWN || Dp == CONFIG || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
@@ -531,19 +581,21 @@ void clearRoutes(void *Dp) {
     // Downstream interface transition.
     for (ifr = IfDp->dRoutes; ifr; ifr = ifr ? ifr->next : IfDp->dRoutes) {
         croute = ifr->croute;
-        if (!IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)) {
+        if (!IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate))
             // Transition to disabled / upstream, remove from route.
-            ifr = delRoute(croute, IfDp, ifr, 1);
             LOG(LOG_INFO, 0, "clearRoutes: Vif %d - %s removed, removing from route %s.",
                               IfDp->index, IfDp->Name, inetFmt(croute->group, 1));
             // Check against bl / wl changes on config reload / sighup.
-        } else if (IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && (CONFRELOAD || SSIGHUP)
+        else if (IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && (CONFRELOAD || SSIGHUP)
                                            && checkFilters(IfDp, 0, IF_STATE_DOWNSTREAM, 0, croute->group) != ALLOW
-                                           && checkFilters(IfDp, 1, IF_STATE_DOWNSTREAM, 0, croute->group) == ALLOW) {
-            ifr = delRoute(croute, IfDp, ifr, 1);
+                                           && checkFilters(IfDp, 1, IF_STATE_DOWNSTREAM, 0, croute->group) == ALLOW)
             LOG(LOG_INFO, 0, "clearRoutes: Group %s no longer allowed on Vif %d - %s, removing from route.",
                               inetFmt(croute->group, 1), IfDp->index, IfDp->Name);
-        }
+        else
+            continue;
+
+        // Clear query bits and remove route.
+        ifr = delRoute(croute, IfDp, ifr, 1);
     }
 
     logRouteTable("Clear Routes", 1, NULL, 0);
@@ -602,11 +654,17 @@ static inline struct dSources *addSrc(struct routeTable *croute, uint32_t ip, st
 static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t srcHash) {
     struct dSources *nsrc = dsrc->next;
 
+    LOG(LOG_INFO, 0, "delSrc: Remove source %s from %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2));
+    if (srcHash != (uint32_t)-1)
+        clearHash(dsrc->downstreamHostsHashTable, srcHash);
     BIT_CLR(dsrc->vifBits, IfDp->index);
-    if (dsrc->vifBits == 0) {
-        LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2));
-        dsrc->croute->nsrcs--;
+    BIT_CLR(dsrc->qryBits, IfDp->index);
+    BIT_CLR(dsrc->lmBits, IfDp->index);
+    dsrc->age[IfDp->index] = 0;
+
+    if (!dsrc->vifBits) {
         dsrc->croute->nsrcs &= ~0x80000000;
+        dsrc->croute->nsrcs--;
         if (dsrc->next)
             dsrc->next->prev = dsrc->prev;
         if (dsrc == dsrc->croute->dSources)
@@ -614,11 +672,6 @@ static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp
         else
             dsrc->prev->next = dsrc->next;
         free(dsrc);  // Alloced by addSrc()
-    } else {
-        if (srcHash != (uint32_t)-1)
-            clearHash(dsrc->downstreamHostsHashTable, srcHash);
-        BIT_CLR(dsrc->lmBits, IfDp->index);
-        dsrc->age[IfDp->index] = dsrc->qCnt[IfDp->index] = 0;
     }
 
     return nsrc;
@@ -643,8 +696,8 @@ static inline struct dSources *delSrc(struct dSources *dsrc, struct IfDesc *IfDp
 void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
     uint16_t     i = 0, type    = grecType(grec), nsrcs = grecNscrs(grec);
     uint32_t            group   = grec->grec_mca.s_addr,
-                        srcHash = CONFIG->fastUpstreamLeave ? murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize) : 0,
-                        qlst[CONFIG->maxOrigins + 3];
+                        srcHash = CONFIG->fastUpstreamLeave ? murmurhash3(src) % (CONFIG->downstreamHostsHashTableSize) : 0;
+    struct qlst        *qlst;
     struct routeTable  *croute;
     struct dSources    *dsrc, *tsrc;
 
@@ -653,7 +706,10 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
        || ! (croute = findRoute(group, !((type == IGMPV3_CHANGE_TO_INCLUDE && nsrcs == 0) || type == IGMPV3_BLOCK_OLD_SOURCES))))
         return;
 
-    qlst[0] = qlst[1] = qlst[2] = 0;
+    // Initialze the query list and sort array of sources in group report..
+    if (! (qlst = malloc(sizeof(struct qlst))))  // Freed by startQuery() or groupSpecificQuery().
+        LOG(LOG_ERR, errno, "updateRoute: Out of Memory.");
+    *qlst = (struct qlst){ NULL, NULL, croute, IfDp, 0, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
     sortArr((uint32_t *)grec->grec_src, nsrcs);
     LOG(LOG_DEBUG, 0, "updateRoute: Processing %s with %d sources for %s on %s.",
                        grecKind(type), nsrcs, inetFmt(group, 1), IfDp->Name);
@@ -688,20 +744,21 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
         BIT_CLR(croute->lmBits, IfDp->index);
         setHash(croute->downstreamHostsHashTable, srcHash);
 
-        qlst[1] = 4;
+        qlst->type = 4;
         for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; i++) {
-            if (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr) {
+            if (i >= nsrcs || (dsrc && dsrc->ip < grec->grec_src[i].s_addr)) {
                 // IN: Delete (A-B) / EX: Delete (X - A), Delete (Y - A)
                 for (;dsrc && (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr); dsrc = delSrc(dsrc, IfDp, srcHash));
             } else if ((i < nsrcs && (! (tsrc = dsrc) || tsrc->ip > grec->grec_src[i].s_addr)
                                   && (dsrc = addSrc(croute, grec->grec_src[i].s_addr, tsrc)))
-                                  || tsrc->ip == grec->grec_src[i].s_addr) {
+                                  || (tsrc && tsrc->ip == grec->grec_src[i].s_addr)) {
                 // IN: Send Q(G, A*B), (B-A) = 0 / EX: Send Q(G, A-Y), (A - X - Y) = Group Timer?
                 BIT_SET(dsrc->vifBits, IfDp->index);
-                if (type == IGMPV3_CHANGE_TO_EXCLUDE && (( (! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && IS_EX(croute, IfDp) )
-                            || (tsrc->ip == grec->grec_src[i].s_addr && ((IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
-                            || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0))))))
-                    addSrcToQlst(dsrc, IfDp, qlst, srcHash);
+                if (type == IGMPV3_CHANGE_TO_EXCLUDE
+                          && ( ((! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && IS_EX(croute, IfDp))
+                          || (  (tsrc && tsrc->ip == grec->grec_src[i].s_addr) && ((IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp))
+                             || (IS_EX(croute, IfDp) && (NOT_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0)))) ))
+                    qlst = addSrcToQlst(dsrc, IfDp, qlst, srcHash);
                 dsrc = dsrc->next;
             }
         }
@@ -712,36 +769,43 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
         if (BIT_TST(croute->v1Bits, IfDp->index) || IfDp->querier.ver == 1) {
             LOG(LOG_INFO, 0, "updateRoute: Ignoring TO_IN for %s on %s, v1 host/querier present.", inetFmt(group, 1), IfDp->Name);
             return;
-        } else if (nsrcs == 0) {
+        }
+        if (nsrcs == 0) {
             clearHash(croute->downstreamHostsHashTable, srcHash);
             if (!(join = !noHash(croute->downstreamHostsHashTable)))
                 LOG(LOG_INFO, 0, "Quickleave enabled, %s was the last downstream host, leaving group %s now",
                                   inetFmt(src, 1), inetFmt(group, 2));
-            qlst[1] = 0x2;
-            startQuery(croute, IfDp, qlst);
+        }
+        if (IS_EX(croute, IfDp)) {
+            qlst->type = 0x2;
+            startQuery(IfDp, qlst);
         }  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
     case IGMPV3_MODE_IS_INCLUDE:
         if (nsrcs > 0 && !IS_SET(croute, IfDp))
             addRoute(croute, IfDp, 1);
 
-        qlst[1] = croute->mode ? 0x8 : 0x4;
+        qlst->type = croute->mode ? 0x8 : 0x4;
         for (i = 0, dsrc = croute->dSources; dsrc || i < nsrcs; dsrc = dsrc ? dsrc->next : dsrc) {
+            if (dsrc && (i >= nsrcs || dsrc->ip < grec->grec_src[i].s_addr)) {
+                if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(dsrc, IfDp) && (IS_IN(croute, IfDp) || dsrc->age[IfDp->index] > 0))
+                    // EX: Send Q(G, X-A) IN: Send Q(G, A-B)
+                    qlst = addSrcToQlst(dsrc, IfDp, qlst, (uint32_t)-1);
+                continue;
+            }
             for (;i < nsrcs && checkFilters(IfDp, 0, IF_STATE_DOWNSTREAM, grec->grec_src[i].s_addr, group) < ALLOW; i++)
                 LOG(LOG_INFO, 0, "updateRoute: Group %s from %s may not be requested on %s.", inetFmt(group, 1),
                                                             inetFmt(grec->grec_src[i].s_addr, 2), IfDp->Name);
-            if (i >= nsrcs || (dsrc && dsrc->ip < grec->grec_src[i].s_addr)) {
-                if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(dsrc, IfDp) && (IS_IN(croute, IfDp) || dsrc->age[IfDp->index] > 0))
-                    // EX: Send Q(G, X-A) IN: Send Q(G, A-B)
-                    addSrcToQlst(dsrc, IfDp, qlst, srcHash);
-            } else if (i < nsrcs && (! dsrc || dsrc->ip >= grec->grec_src[i].s_addr)) {
-                do if (((! (tsrc = dsrc) || tsrc->ip > grec->grec_src[i].s_addr) &&
-                           (dsrc = addSrc(croute, grec->grec_src[i].s_addr, tsrc))) || tsrc->ip == grec->grec_src[i].s_addr) {
+            if (i < nsrcs && (! dsrc || dsrc->ip >= grec->grec_src[i].s_addr)) {
+                if ((! (tsrc = dsrc) || tsrc->ip >= grec->grec_src[i].s_addr)) do {
+                    if ((! tsrc || tsrc->ip > grec->grec_src[i].s_addr))
+                        dsrc = addSrc(croute, grec->grec_src[i].s_addr, tsrc);
                     // IN (B) = GMI, (A + B) / EX: (A) = GMI, (X + A) (Y - A)
                     BIT_SET(dsrc->vifBits, IfDp->index);
                     BIT_CLR(dsrc->lmBits, IfDp->index);
                     dsrc->age[IfDp->index] = IfDp->querier.qrv;
                     setHash(dsrc->downstreamHostsHashTable, srcHash);
+                    dsrc = ! tsrc ? dsrc->next : dsrc;
                 } while (++i < nsrcs && (! tsrc || tsrc->ip >= grec->grec_src[i].s_addr));
             }
         }
@@ -753,23 +817,28 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
                               inetFmt(group, 1), IfDp->Name);
             return;
         }
-        join = IS_EX(croute, IfDp);
 
-        qlst[1] = 4;
+        qlst->type = 4;
         for (i = 0, dsrc = croute->dSources; (dsrc || i < nsrcs) && !(IS_IN(croute, IfDp) && ! dsrc); i++) {
             if ((dsrc && dsrc->ip == grec->grec_src[i].s_addr && IS_SET(dsrc, IfDp)
                      && (IS_IN(croute, IfDp) || (IS_EX(croute, IfDp) && dsrc->age[IfDp->index] == 0)))
                      || (IS_EX(croute, IfDp) && i < nsrcs && (! dsrc || dsrc->ip > grec->grec_src[i].s_addr)
                                              && (dsrc = addSrc(croute, grec->grec_src[i].s_addr, dsrc)))) {
                 // IN: Send Q(G,A*B) / EX: Send Q(G,A-Y), (A-X-Y) = Group Timer?
-                addSrcToQlst(dsrc, IfDp, qlst, srcHash);
+                qlst = addSrcToQlst(dsrc, IfDp, qlst, srcHash);
             }
             for (;dsrc && dsrc->ip <= grec->grec_src[i].s_addr; dsrc = dsrc->next);
         }
     }
 
-    // Sen d Query if required.
-    startQuery(croute, IfDp, qlst);
+    // Delete route if it is INCLUDE no sources.
+    if (!croute->mode && !croute->nsrcs) {
+        delRoute(croute, IfDp, NULL, 1);
+        return;
+    }
+
+    // Send Query if required.
+    startQuery(IfDp, qlst);
 
     // Send join message upstream.
     sendJoinLeaveUpstream(croute, join);
@@ -784,8 +853,9 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
 
 /**
 *   Switches a group from exclude to include mode.
+*   Returns false if route IS_IN no sources (can be deleted by caller).
 */
-static void toInclude(struct routeTable *croute, struct IfDesc *IfDp) {
+static bool toInclude(struct routeTable *croute, struct IfDesc *IfDp) {
     struct dSources *dsrc = croute->dSources;
 
     LOG(LOG_INFO, 0, "TO_IN: Switching mode for %s to include on %s.", inetFmt(croute->group, 1), IfDp->Name);
@@ -799,49 +869,64 @@ static void toInclude(struct routeTable *croute, struct IfDesc *IfDp) {
          } else
              dsrc = dsrc->next;
     }
-    if (croute->mode == 0 && ! croute->dSources)
+    if (croute->mode == 0 && ! croute->dSources) {
         sendJoinLeaveUpstream(croute, 0);
+        return false;
+    }
+
     internUpdateKernelRoute(croute, 1);  // upstream status
+    return true;
 }
 
 /**
 *   Adds a source to list of sources to query. Toggles appropriate flags and adds to qlst array.
 */
-static inline void addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, uint32_t *qlst, uint32_t srcHash) {
-    if ((BIT_TST(qlst[1], 5) || IQUERY) && !BIT_TST(dsrc->lmBits, IfDp->index) && qlst[qlst[0] + 2] != dsrc->ip) {
-        LOG(LOG_INFO, 0, "addSrcToQlst: Adding source %s to query list for %s.",
-                          inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2));
+static inline struct qlst *addSrcToQlst(struct dSources *dsrc, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash) {
+    uint16_t nsrcs = qlst->nsrcs;
+    if ((BIT_TST(qlst->type, 5) || IQUERY) && !BIT_TST(dsrc->qryBits, IfDp->index) && (!nsrcs || qlst->src[qlst->nsrcs - 1]->ip != dsrc->ip)) {
+        LOG(LOG_INFO, 0, "addSrcToQlst: Adding source %s to query list for %s (%d).",
+                          inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2), nsrcs + 1);
+        if (! (qlst = realloc(qlst, sizeof(struct qlst) + (nsrcs + 1) * sizeof(void *))))
+            LOG(LOG_ERR, errno, "addSrcToQlst; Out of Memory.");  // Freed by startQuery() or groupSpecificQuery().
         if (srcHash != (uint32_t)-1)
             clearHash(dsrc->downstreamHostsHashTable, srcHash);
         BIT_SET(dsrc->vifBits, IfDp->index);
+        BIT_SET(dsrc->qryBits, IfDp->index);
         BIT_SET(dsrc->lmBits, IfDp->index);
-        dsrc->age[IfDp->index] = IfDp->conf->qry.lmCount;
-        dsrc->qCnt[IfDp->index]++;
-        qlst[++qlst[0] + 2] = dsrc->ip;
+        dsrc->age[IfDp->index] = qlst->misc;
+        qlst->src[qlst->nsrcs++] = dsrc;
     }
+    return qlst;
 }
 
 /**
 *   Process a group specific query received from other querier.
 */
-void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query) {
-    uint32_t       i,  group  = query->igmp_group.s_addr,
-                       nsrcs  = ntohs(query->igmp_nsrcs),
-                       qlst[nsrcs + 3];
-    struct routeTable *croute = findRoute(group, false);
+void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint8_t ver) {
+    struct routeTable *croute = findRoute(query->igmp_group.s_addr, false);
+    uint16_t           nsrcs = ver == 2 ? 0 : ntohs(query->igmp_nsrcs);
+    struct qlst       *qlst;
     struct dSources   *dsrc;
+
+    // If no route found for query, or not active on interface return.
     if (! croute || !IS_SET(croute, IfDp))
         return;
 
+    // Initialize query list and sort array of sources in query.
+    if (! (qlst = malloc(sizeof(struct qlst) + nsrcs * sizeof(void *))))  // Freed by startQuery() or groupSpecificQuery().
+        LOG(LOG_ERR, errno, "processGroupQuery: Out of Memory.");
+    *qlst = (struct qlst){ NULL, NULL, croute, IfDp, 0,
+                           query->igmp_code, ver == 3 ? query->igmp_misc & ~0x8 : IfDp->conf->qry.lmCount, 0, 0 };
     sortArr((uint32_t *)query->igmp_src, nsrcs);
-    qlst[0] = 0;
+
     if (nsrcs == 0) {
-        LOG(LOG_DEBUG, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(group, 1), IfDp->Name);
-        qlst[1] = 0x10;
+        LOG(LOG_DEBUG, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(croute->group, 1), IfDp->Name);
+        qlst->type = 0x10;
     } else {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
-                           inetFmt(group, 1), nsrcs, IfDp->Name);
-        qlst[1] = 0x20;
+                           inetFmt(croute->group, 1), nsrcs, IfDp->Name);
+        qlst->type = 0x20;
+        uint16_t i;
         for (dsrc = croute->dSources, i = 0; dsrc && i < nsrcs; i++, dsrc = dsrc ? dsrc->next : dsrc) {
             if (dsrc->ip > query->igmp_src[i].s_addr)
                 for (; i < nsrcs && dsrc->ip > query->igmp_src[i].s_addr; i++);
@@ -850,8 +935,7 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query) {
             for(; dsrc && dsrc->next && dsrc->next->ip < query->igmp_src[i].s_addr; dsrc = dsrc->next);
         }
     }
-    qlst[2] = query->igmp_code;
-    startQuery(croute, IfDp, qlst);
+    startQuery(IfDp, qlst);
 }
 
 /**
@@ -860,29 +944,34 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query) {
 *   Hacky Tacky Piggy Backy interface name after sources list.
 *   Set appropriate flags for query, depending on type, copy sources from qlst to array.
 */
-static inline void startQuery(struct routeTable *croute, struct IfDesc *IfDp, uint32_t *qlst) {
-    struct igmpv3_query *query;
-    uint32_t            i, nsrcs = qlst[0];
-    if (  ( (BIT_TST(qlst[1], 2) || BIT_TST(qlst[1], 3) || BIT_TST(qlst[1], 5)) && nsrcs == 0)
-       || ( (BIT_TST(qlst[1], 1) || BIT_TST(qlst[1], 4)) && BIT_TST(croute->lmBits, IfDp->index))
-       || ( !BIT_TST(qlst[1], 4) && !BIT_TST(qlst[1], 5) && !IQUERY))
+static inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
+    // Check sanity of query list. Remove list andclear querybits of sources if not ok.
+    if (  ( (BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 3) || BIT_TST(qlst->type, 5)) && qlst->nsrcs == 0)
+       || ( (BIT_TST(qlst->type, 1) || BIT_TST(qlst->type, 4)) && BIT_TST(qlst->croute->qryBits, IfDp->index))
+       || ( !BIT_TST(qlst->type, 4) && !BIT_TST(qlst->type, 5) && !IQUERY)) {
+LOG(LOG_DEBUG,0,"KUT");
+        for (uint16_t i = 0; i < qlst->nsrcs; BIT_CLR(qlst->src[i++]->qryBits, IfDp->index));
+        free(qlst);  // Alloced by updateRoute, addSrcToQlst() or processGroupQuery().
         return;
-
-    if (! (query = malloc(sizeof(struct igmpv3_query) + nsrcs * sizeof(struct in_addr) + IF_NAMESIZE)))
-        LOG(LOG_ERR, errno, "startQuery: Out of memory.");  // Freed by groupSpecificQuery()
-
-    if (nsrcs == 0) {
-        LOG(LOG_INFO, 0, "startQuery: Querying group %s on %s.", inetFmt(croute->group, 1), IfDp->Name);
-        BIT_SET(croute->lmBits, IfDp->index);
-        croute->age[IfDp->index] = IfDp->conf->qry.lmCount;
-        croute->qCnt[IfDp->index]++;
-    } else {
-        LOG(LOG_INFO, 0, "startQuery: Querying %d sources for %s on %s.", qlst[0], inetFmt(croute->group, 1), IfDp->Name);
-        for (i = 0; i < qlst[0]; query->igmp_src[i].s_addr = qlst[i + 2], i++);
     }
-    *query = (struct igmpv3_query){ qlst[1], qlst[2], 0, {croute->group}, 0, 0, qlst[0] };
-    strcpy((char *)&query->igmp_src[nsrcs], IfDp->Name);
-    groupSpecificQuery(query);
+
+    // Allocate and assign new querier.
+    if (qL) {
+        qlst->next = qL;
+        qL->prev = qlst;
+    }
+    qL = qlst;
+    qC++;
+
+    if (qlst->nsrcs == 0) {
+        LOG(LOG_INFO, 0, "startQuery #%d: Querying group %s on %s.", qC, inetFmt(qlst->croute->group, 1), IfDp->Name);
+        BIT_SET(qlst->croute->qryBits, IfDp->index);
+        BIT_SET(qlst->croute->lmBits, IfDp->index);
+        qlst->croute->age[IfDp->index] = qlst->misc;
+    } else
+        LOG(LOG_INFO, 0, "startQuery #%d: Querying %d sources for %s on %s.",
+                         qC, qlst->nsrcs, inetFmt(qlst->croute->group, 1), IfDp->Name);
+    groupSpecificQuery(qlst);
 }
 
 /**
@@ -893,166 +982,113 @@ static inline void startQuery(struct routeTable *croute, struct IfDesc *IfDp, ui
 *   bit 3 - Group and Source Specific query only
 *   bit 4 - Group Specific Query (Other querier)
 *   bit 5 - Group and Source Specific query (Other querier)
-*   Cannot use direct pointers to interface and route, as they may be removed due to dynamic interfaces.
 */
-static void groupSpecificQuery(struct igmpv3_query *query) {
-    uint16_t  i, j, a, b, nsrcs = query->igmp_nsrcs;
-    struct routeTable   *croute = findRoute(query->igmp_group.s_addr, false);
-    struct IfDesc       *IfDp   = getIfByName((char *)&query->igmp_src[nsrcs]);
+static void groupSpecificQuery(struct qlst *qlst) {
     struct igmpv3_query *query1 = NULL, *query2 = NULL;
-    struct dSources     *dsrc;
-    uint32_t size = sizeof(struct igmpv3_query) + nsrcs * sizeof(struct in_addr) + IF_NAMESIZE;
-    if (! IfDp || ! croute) {
-        LOG(LOG_NOTICE, 0, "GSQ: %s %s disappeared, exiting.", ! croute ? "group" : "interface",
-                            ! croute ? inetFmt(query->igmp_group.s_addr, 1) : (char *)&query->igmp_src[nsrcs]);
-        free(query);   // Alloced by startQuery()
-        return;
-    }
+    bool                 keep = true;
 
+LOG(LOG_DEBUG,0,"BOE %d %d %s %d",qlst->type,qlst->cnt,inetFmt(qlst->croute->group, 1),qlst->croute->age[qlst->IfDp->index]);
     // Do aging upon reentry.
-    if (query->igmp_misc > 0) {
-        if (BIT_TST(query->igmp_type, 1) || BIT_TST(query->igmp_type, 4)) {
-            if (croute->qCnt[IfDp->index] > 1) {
-                // Corner case situation, we may have recevied report followed by new leave message when waiting in timer queue.
-                // In which case we should let the latest started query do the aging and exit ourselves.
-                LOG(LOG_INFO, 0, "GSQ: Other querier for %s on %s.", inetFmt(croute->group, 1), IfDp->Name);
-                croute->qCnt[IfDp->index]--;
-                free(query);   // Alloced by startQuery()
-                return;
-
-            // Check group and sources we still need to query.
-            } else if (!BIT_TST(croute->lmBits, IfDp->index)) {
-                LOG(LOG_INFO, 0, "GSQ: %s no longer in last member state on %s.", inetFmt(croute->group, 1), IfDp->Name);
-                BIT_SET(query->igmp_type, 0);  // Suppress router processing flag for next query.
-                if (BIT_TST(query->igmp_type, 4))
+    if (qlst->cnt > 0) {
+        if (BIT_TST(qlst->type, 1) || BIT_TST(qlst->type, 4)) {
+LOG(LOG_DEBUG,0,"BLA %d %s %d",qlst->cnt,inetFmt(qlst->croute->group, 1),qlst->croute->age[qlst->IfDp->index]);
+            if (!BIT_TST(qlst->croute->lmBits, qlst->IfDp->index)) {
+                LOG(LOG_INFO, 0, "GSQ: %s no longer in last member state on %s.", inetFmt(qlst->croute->group, 1), qlst->IfDp->Name);
+                BIT_SET(qlst->type, 0);  // Suppress router processing flag for next query.
+                if (BIT_TST(qlst->type, 4))
                     // If just aging because of other querier, we're done.
-                    query->igmp_misc = IfDp->conf->qry.lmCount;
-
-            } else if (--croute->age[IfDp->index] == 0) {
+                    qlst->cnt = qlst->misc;
+            } else if (--qlst->croute->age[qlst->IfDp->index] == 0) {
                 // Group in exclude mode has aged, switch to include.
-                LOG(LOG_DEBUG, 0, "GSQ: Switch group %s to inlcude on %s after querying.", inetFmt(croute->group, 1), IfDp->Name);
-                query->igmp_misc = IfDp->conf->qry.lmCount;  // Make sure we're done.
-                if (!BIT_TST(croute->v1Bits, IfDp->index))
+                LOG(LOG_DEBUG, 0, "GSQ: Switch group %s to inlcude on %s after querying.",
+                                  inetFmt(qlst->croute->group, 1), qlst->IfDp->Name);
+                qlst->cnt = qlst->misc;  // Make sure we're done.
+                if (!BIT_TST(qlst->croute->v1Bits, qlst->IfDp->index))
                     // RFC says v2 routes should not switch, but v2 hosts should respond to query, so should be safe
-                    toInclude(croute, IfDp);
-                else
-                    internUpdateKernelRoute(croute, 1);  // Upstream status
+                    keep = toInclude(qlst->croute, qlst->IfDp);
             }
-            if (query->igmp_misc >= IfDp->conf->qry.lmCount) {
-                croute->qCnt[IfDp->index] = 0;
-                BIT_CLR(croute->lmBits, IfDp->index);
-            }
-
-        } else if (BIT_TST(query->igmp_type, 2) || BIT_TST(query->igmp_type, 3) || BIT_TST(query->igmp_type, 5)) {
-            bool keep = false;
-            // Compare sources for route to query list.
-            for (i = a = b = 0, j = 1, dsrc = croute->dSources; i < query->igmp_nsrcs; j++) {
-                // Skip sources not on query list, set keep to true, when such source is active on interface.
-                for (;dsrc && dsrc->ip < query->igmp_src[i].s_addr; keep |= IS_SET(dsrc, IfDp), dsrc = dsrc->next);
-                if (! dsrc || dsrc->ip > query->igmp_src[i].s_addr || dsrc->qCnt[IfDp->index] > 1
-                           || !IS_SET(dsrc, IfDp) || --dsrc->age[IfDp->index] == 0) {
-                    // Sources that should be removed from the query list for various reasons, inlcuding aged sources.
-                    do {
-                        if (dsrc && dsrc->qCnt[IfDp->index] > 1) {
-                            // Corner case when received report followed by leave when waiting in timer queue.
-                            LOG(LOG_INFO, 0, "GSQ: Other querier for %s on %s.", inetFmt(dsrc->ip, 1), IfDp->Name);
-                            keep = true;
-                            dsrc->qCnt[IfDp->index]--;
-                        } else if (dsrc && dsrc->age[IfDp->index] == 0) {
-                            if (IS_IN(croute, IfDp)) {
-                                // Aged source in include mode should be removed.
-                                LOG(LOG_INFO, 0, "GSQ: Removed inactive source %s from group %s on %s.",
-                                                  inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
-                                dsrc = delSrc(dsrc, IfDp, (uint32_t)-1);
-                            } else {
-                                // in Exclude mode sources should be kept.
-                                BIT_CLR(dsrc->lmBits, IfDp->index);
-                                dsrc->qCnt[IfDp->index] = 0;
-                            }
-                        } else
-                            LOG(LOG_NOTICE, 0, "Source %s was removed from group %s on %s, stop querying.",
-                                            inetFmt(query->igmp_src[i].s_addr, 1), inetFmt(croute->group, 2), IfDp->Name);
-                        if (j < query->igmp_nsrcs)
-                            query->igmp_src[i].s_addr = query->igmp_src[j].s_addr;
-                        query->igmp_nsrcs--;
-                        // Continue removing sources from query list if they are not in sources list.
-                    } while (i < query->igmp_nsrcs && (! dsrc || dsrc->ip > query->igmp_src[i].s_addr));
-
-                } else if (dsrc->ip == query->igmp_src[i].s_addr) {
-                    // As per RFC build two queries, one for active sources and one for aging sources. Freed by self.
-                    if (query->igmp_misc < IfDp->conf->qry.lmCount) {
-                        keep = true;
-                        if (!BIT_TST(query->igmp_misc, 5) && BIT_TST(dsrc->lmBits, IfDp->index)
-                                   && (query1 || (query1 = malloc(size)))) {
-                            query1->igmp_src[a++] = query->igmp_src[i];
-                        } else if (BIT_TST(query->igmp_type, 2) && !BIT_TST(dsrc->lmBits, IfDp->index)
-                                   && (query2 || (query2 = malloc(size))) ) {
-                            LOG(LOG_INFO, 0, "GSQ: Source %s for group %s no longer in last member state on %s.",
-                                              inetFmt(dsrc->ip, 1), inetFmt(croute->group, 1), IfDp->Name);
-                            query2->igmp_src[b++] = query->igmp_src[i];
-                        }
-                    } else {
-                        // Done querying, make sure lm flag and qcnt are reset.
-                        keep = !BIT_TST(dsrc->lmBits, IfDp->index);
-                        BIT_CLR(dsrc->lmBits, IfDp->index);
-                        dsrc->qCnt[IfDp->index] = 0;
-                    }
-                    if (j > ++i && j < nsrcs)  // Shift array if sources were removed.
-                        query->igmp_src[i] = query->igmp_src[j];
+        } else if (BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 3) || BIT_TST(qlst->type, 5)) {
+LOG(LOG_DEBUG,0,"BLA1 %d %s %d",qlst->cnt,inetFmt(qlst->croute->group, 1),qlst->croute->age[qlst->IfDp->index]);
+            uint16_t i = 0;
+            if (! (query1 = malloc(sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr))) ||
+                ! (query2 = malloc(sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr))))  // Freed by self.
+                LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
+            *query1 = (struct igmpv3_query){ qlst->type      , qlst->code, 0, {qlst->croute->group}, qlst->misc, 0, 0 };
+            *query2 = (struct igmpv3_query){ qlst->type | 0x1, qlst->code, 0, {qlst->croute->group}, qlst->misc, 0, 0 };
+            while (i < qlst->nsrcs) {
+LOG(LOG_DEBUG,0,"BLA2 %d %s %d",qlst->cnt,inetFmt(qlst->src[i]->ip, 1),qlst->src[i]->age[qlst->IfDp->index]);
+                if (!BIT_SET(qlst->src[i]->lmBits, qlst->IfDp->index) || NOT_SET(qlst->src[i], qlst->IfDp)) {
+                    // Source no longer in last member state.
+                    LOG(LOG_INFO, 0, "GSQ: Source %s for group %s no longer in last member state on %s.",
+                                      inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->croute->group, 2), qlst->IfDp->Name);
+                    query2->igmp_src[query2->igmp_nsrcs++].s_addr = qlst->src[i]->ip;
+                } else if (--qlst->src[i]->age[qlst->IfDp->index] == 0) {
+                    // Source expired. Remove from query list.
+                    BIT_CLR(qlst->src[i]->qryBits, qlst->IfDp->index);
+                    BIT_CLR(qlst->src[i]->lmBits, qlst->IfDp->index);
+                    if (IS_IN(qlst->croute, qlst->IfDp)) {
+                        // Aged source in include mode should be removed.
+                        LOG(LOG_INFO, 0, "GSQ: Removed inactive source %s from group %s on %s.",
+                                          inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->croute->group, 2), qlst->IfDp->Name);
+                        delSrc(qlst->src[i], qlst->IfDp, (uint32_t)-1);
+                    } else
+                        // In exclude mode sources should be kept.
+                        LOG(LOG_INFO, 0, "GSQ: Source %s from group %s on %s expired.",
+                                          inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->croute->group, 2), qlst->IfDp->Name);
+                    qlst->src[i] = qlst->src[--qlst->nsrcs];
+                    continue;
                 }
+                query1->igmp_src[query1->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
             }
-            // Check if route can be removed, or if we're done.
-            if (query->igmp_misc >= IfDp->conf->qry.lmCount) {
-                if (IS_IN(croute, IfDp) && keep)
-                    internUpdateKernelRoute(croute, 1);  // Upstream status
-                else if (IS_IN(croute, IfDp)) {
-                    LOG(LOG_DEBUG, 0, "GSQ: Removed group %s from %s after querying.", inetFmt(croute->group, 1), IfDp->Name);
-                    query->igmp_misc = IfDp->conf->qry.lmCount;  // Make sure we're done.
-                    delRoute(croute, IfDp, NULL, 1);
-                }
-            }
-            // Send the two queries, query will not have been alloced if no sources, so will be suppressed as per rfc.
-            if (query->igmp_misc < IfDp->conf->qry.lmCount && query1)
-                *query1 = (struct igmpv3_query){ query->igmp_type, query->igmp_code, 0, {croute->group}, query->igmp_misc, 0, a };
-            if (query->igmp_misc < IfDp->conf->qry.lmCount && query2) {
-                *query2 = (struct igmpv3_query){ query->igmp_type, query->igmp_code, 0, {croute->group}, query->igmp_misc, 0, b };
-                BIT_SET(query2->igmp_type, 0);
-            }
+            // Route can be removed it IS_IN no sources.
+            keep = !(!qlst->croute->mode && !qlst->croute->nsrcs);
         }
     }
 
-    // Send query and set timeout for next round. Update pointers in auxwords field, as sources may have been removed.
-    if (query->igmp_misc++ < IfDp->conf->qry.lmCount) {
-        if (!BIT_TST(query->igmp_type, 4) && !BIT_TST(query->igmp_type, 5)) {
-            if (query2)
-                sendIgmp(IfDp, query2);
-            if (query1)
-                sendIgmp(IfDp, query1);
-            else if (BIT_TST(query->igmp_type, 1) || query->igmp_misc == 1)
-                // Use grec in case of group query, or first group and source query.
-                sendIgmp(IfDp, query);
+    if (!keep || qlst->cnt > qlst->misc) {
+        // Done querying. Remove current querier from list and free.
+        LOG(LOG_INFO, 0, "GSQ: done querying %d sources for %s on %s.",
+                          qlst->nsrcs, inetFmt(qlst->croute->group, 1), qlst->IfDp->Name);
+        if (!keep)
+            delRoute(qlst->croute, qlst->IfDp, NULL, 1);
+        if (qlst->next)
+            qlst->next->prev = qlst->prev;
+        if (qlst->prev)
+            qlst->prev->next = qlst->next;
+        if (qL == qlst)
+            qL = qlst->next;
+        qC--;
+        free(qlst);  // Alloced by updateRoute(), addSrcToQlst() or processGroupQueryt()
+    } else if (qlst->cnt++ <= qlst->misc) {
+        // Send a query if not aging for other querier.
+        if (!BIT_TST(qlst->type, 4) && !BIT_TST(qlst->type, 5)) {
+            if (qlst->cnt == 1 || BIT_TST(qlst->type, 1)) {
+                // Use qlst in case of group query, or first group and source query.
+                struct igmpv3_query *query;
+                if (! (query = malloc(sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr))))
+                    LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
+                *query = (struct igmpv3_query){ qlst->type, qlst->code, 0, {qlst->croute->group}, qlst->misc, 0, qlst->nsrcs };
+                if (BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 3))
+                    for (uint16_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
+                sendIgmp(qlst->IfDp, query);
+                free(query);
+            } else {
+                // Send two queries, with active and last member sources.
+                if (query1 && query1->igmp_nsrcs > 0)
+                    sendIgmp(qlst->IfDp, query1);
+                if (query2 && query2->igmp_nsrcs > 0)
+                    sendIgmp(qlst->IfDp, query2);
+            }
         }
-        strcpy((char *)&query->igmp_src[nsrcs], IfDp->Name);
-        sprintf(msg, "GSQ (%s): %15s/%u", IfDp->Name, inetFmt(query->igmp_group.s_addr, 1), query->igmp_nsrcs);
-        uint32_t timeout = BIT_TST(query->igmp_type, 4) || BIT_TST(query->igmp_type, 5) ? query->igmp_code
-                         : IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 0)
-                         : IfDp->conf->qry.lmInterval;
-        timer_setTimer(TDELAY(timeout), msg, (timer_f)groupSpecificQuery, query);
-    } else {
-        // Done, DO NOT access croute, it may have been removed.
-        if (BIT_TST(query->igmp_type, 1) || BIT_TST(query->igmp_type, 4))
-            LOG(LOG_DEBUG, 0, "GSQ: Done querying %s on %s.", inetFmt(query->igmp_group.s_addr, 1), IfDp->Name);
-        else if (BIT_TST(query->igmp_type, 2) || BIT_TST(query->igmp_type, 3) || BIT_TST(query->igmp_type, 5))
-            LOG(LOG_DEBUG, 0, "GSQ: Done querying %d sources for %s on %s.",
-                               nsrcs, inetFmt(query->igmp_group.s_addr, 1), IfDp->Name);
-        free(query);   // Alloced by startQuery()
+        sprintf(msg, "GSQ (%s): %15s/%u", qlst->IfDp->Name, inetFmt(qlst->croute->group, 1), qlst->nsrcs);
+        uint32_t timeout = BIT_TST(qlst->type, 4) || BIT_TST(qlst->type, 5) ? qlst->code
+                         : qlst->IfDp->querier.ver == 3 ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
+                         : qlst->IfDp->conf->qry.lmInterval;
+        timer_setTimer(TDELAY(timeout), msg, (timer_f)groupSpecificQuery, qlst);
     }
-
-    // Cleanup.
-    if (query1)
-        free(query1);  // Alloced by self
-    if (query2)
-        free(query2);
+    free(query1);  // Alloced by self.
+    free(query2);  // Alloced by self.
+LOG(LOG_DEBUG,0,"BOE2 %d %d %s %d",qlst->type,qlst->cnt,inetFmt(qlst->croute->group, 1),qlst->croute->age[qlst->IfDp->index]);
 }
 
 /**
@@ -1130,7 +1166,7 @@ void ageRoutes(struct IfDesc *IfDp) {
 
         // Next age group.
         if (IS_EX(croute, IfDp) && croute->age[IfDp->index] == 0 && !BIT_TST(croute->v1Bits, IfDp->index))
-            toInclude(croute, IfDp);
+            keep = toInclude(croute, IfDp);
         if (IS_IN(croute, IfDp) && !keep) {
             LOG(LOG_INFO, 0, "ageRoutes: Removed group %s from %s after aging.", inetFmt(croute->group, 2), IfDp->Name);
             ifr = delRoute(croute, IfDp, ifr, 1);
