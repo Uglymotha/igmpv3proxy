@@ -385,6 +385,7 @@ void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
+void     delQry(struct IfDesc *IfDP);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC

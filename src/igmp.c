@@ -307,8 +307,10 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start == 0 || start == 2) {
         // Remove all timers and reset all IGMP status.
-        if ((IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && IS_DISABLED(IF_NEWSTATE(IfDp)))
-            || (SHUTDOWN && IS_DOWNSTREAM(IfDp->state))) {
+        LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
+        if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
+             (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
+            delQry(IfDp);
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
             k_leaveMcGroup(IfDp, allrouters_group);
             k_leaveMcGroup(IfDp, alligmp3_group);
@@ -322,7 +324,7 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
     }
     if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
         // Join all routers groups and start querier process on new downstream interfaces.
-        LOG(LOG_INFO, 0, "ctrlQuerier: Joining all routers and all igmp groups on %s", IfDp->Name);
+        LOG(LOG_INFO, 0, "ctrlQuerier: Starting querier and joining all routers and all igmp groups on %s", IfDp->Name);
         k_joinMcGroup(IfDp, allrouters_group);
         k_joinMcGroup(IfDp, alligmp3_group);
         uint16_t interval = IfDp->conf->qry.ver == 3 ? getIgmpExp(IfDp->conf->qry.interval, 0)

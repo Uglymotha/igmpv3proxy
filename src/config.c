@@ -993,11 +993,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { clearRoutes(IfDp);  ctrlQuerier(1, IfDp); }
-        else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    {                     ctrlQuerier(1, IfDp); }
-        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { clearRoutes(IfDp);  ctrlQuerier(0, IfDp); }
-        else if ( oldstate != newstate)                                  { clearRoutes(IfDp);  ctrlQuerier(2, IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    { clearRoutes(IfDp);                        }
+        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearRoutes(IfDp); }
+        else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
+        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearRoutes(IfDp); }
+        else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearRoutes(IfDp); }
+        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    {                       clearRoutes(IfDp); }
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
