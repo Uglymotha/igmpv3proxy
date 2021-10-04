@@ -1157,14 +1157,16 @@ void delQry(struct IfDesc *IfDp) {
 }
 
 /**
-*   Activates a passive group. If the group is already activated, it's reinstalled in the kernel.
-*   If the route is activated, no originAddr is needed.
+*   Activates or updates a route in the kernel.
+*   If called with pointer to source, the route should be updated.
+*   If called from acceptRouteActivation a new route should be created.
 */
-inline void activateRoute(struct IfDesc *IfDp, register uint32_t src, register uint32_t group) {
-    struct routeTable *croute = findRoute(group, false);
+inline void activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group) {
+    struct sources    *dsrc   = src;
+    struct routeTable *croute = dsrc ? dsrc->croute : findRoute(group, false);
     struct uSources   *nusrc;
-    struct sources    *dsrc;
-    if (! croute || croute->nsrcs >= CONFIG->maxOrigins) {
+    // When creating new route for a group not in table or maxorigins exceeded return.
+    if (! dsrc && (! croute || croute->nsrcs >= CONFIG->maxOrigins)) {
         if (croute && croute->nsrcs >= CONFIG->maxOrigins) {
             LOG(LOG_WARNING, 0, "Max origins exceeded for %s.", inetFmt(croute->group, 1));
             if ((croute->nsrcs & 0x80000000) == 0)
@@ -1172,15 +1174,23 @@ inline void activateRoute(struct IfDesc *IfDp, register uint32_t src, register u
         }
         return;
     }
-    LOG(LOG_INFO, 0, "Route activation for group: %s from src: %s on VIF[%d - %s]",
-                      inetFmt(group, 1), inetFmt(src, 2), IfDp->index, IfDp->Name);
 
-    // find or create source in route.
-    for (dsrc = croute->sources; dsrc && !(dsrc->ip >= src); dsrc = dsrc->next);
-    if ((! dsrc || dsrc->ip > src) && ! (dsrc = addSrc(croute, src, dsrc))) {
-        LOG(LOG_WARNING, 0, "Unable to activate route %s to %s on %s. Cannot create source.",
-                            inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
-        return;
+    // When updating a route set the group and source correctly.
+    if (dsrc) {
+        group = ((struct sources *)dsrc)->croute->group;
+        ip    = ((struct sources *)dsrc)->ip;
+    }
+    LOG(LOG_INFO, 0, "activateRoute: For group: %s from src: %s on VIF[%d - %s]",
+                      inetFmt(group, 1), inetFmt(ip, 2), IfDp->index, IfDp->Name);
+
+    // Find or create source in route when new should be created.
+    if (! dsrc) {
+        for (dsrc = croute->sources; dsrc && !(dsrc->ip >= ip); dsrc = dsrc->next);
+        if ((! dsrc || dsrc->ip > ip) && ! (dsrc = addSrc(croute, ip, dsrc))) {
+            LOG(LOG_WARNING, 0, "Unable to activate route %s to %s on %s. Cannot create source.",
+                                 inetFmt(ip, 1), inetFmt(group, 2), IfDp->Name);
+            return;
+        }
     }
     // Create and initialize a new upstream source.
     if (! dsrc->usrc) {
@@ -1195,7 +1205,16 @@ inline void activateRoute(struct IfDesc *IfDp, register uint32_t src, register u
     }
 
     // Update kernel route table.
-    internUpdateKernelRoute(croute, 1);
+    uint8_t ttlVc[MAXVIFS] = {0};
+    for (GETIFL(IfDp)) {
+        if (IS_DOWNSTREAM(IfDp->state) && IS_SET(croute, IfDp) &&
+             (   (IS_IN(croute, IfDp) && IS_SET(dsrc, IfDp) && dsrc->age[IfDp->index] > 0)
+              || (IS_EX(croute, IfDp) && (!IS_SET(dsrc, IfDp) || dsrc->age[IfDp->index] > 0)))) {
+            LOG(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", IfDp->index, IfDp->conf->threshold);
+            ttlVc[IfDp->index] = IfDp->conf->threshold;
+        }
+    }
+    k_addMRoute(ip, croute->group, dsrc->usrc->vif, ttlVc);
 
     logRouteTable("Activate Route", 1, NULL, 0);
 }
