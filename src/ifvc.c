@@ -116,7 +116,8 @@ void buildIfVc(void) {
         struct IfDesc *IfDp;
         uint32_t addr   = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask),
                  subnet = (tmpIfAddrsP->ifa_flags & IFF_POINTOPOINT ? s_addr_from_sockaddr(tmpIfAddrsP->ifa_dstaddr) : addr) & mask;
-        if ((IfDp = getIfByName(tmpIfAddrsP->ifa_name)) && (! IfDp->conf)) {
+        unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
+        if ((IfDp = getIf(ix, 1)) && (! IfDp->conf)) {
             // Check if the interface is an alias for an already created or rebuild IfDesc.
             // If the alias lies within any of the existing subnets or is /32 it does not need to be added to the list of aliases.
             for (fil = IfDp->aliases; fil && ! ((addr & fil->src.mask) == fil->src.ip); fil = fil->next);
@@ -149,7 +150,8 @@ void buildIfVc(void) {
             IfDp->conf    = NULL;
         }
 
-        // Set the interface flags and IP.
+        // Set the interface flags, index and IP.
+        IfDp->sysidx       = ix;
         IfDp->Flags        = tmpIfAddrsP->ifa_flags;
         IfDp->InAdr.s_addr = addr;
 
@@ -196,20 +198,11 @@ inline struct IfDesc *getIfL(void) {
 }
 
 /**
-*   Returns pointer to interface based on given name or NULL if not found.
+*   Returns pointer to interface based on given sys or vif index or NULL if not found.
 */
-inline struct IfDesc *getIfByName(const char *IfName) {
+inline struct IfDesc *getIf(unsigned int ix, int sys) {
     struct IfDesc *IfDp;
-    for (IfDp = IfDescL; IfDp && strcmp(IfName, IfDp->Name) != 0; IfDp = IfDp->next);
-    return IfDp;
-}
-
-/**
-*   Returns pointer to interface based on given vif index or NULL if not found.
-*/
-inline struct IfDesc *getIfByIx(uint8_t ix) {
-    struct IfDesc *IfDp;
-    for (IfDp = IfDescL; IfDp && IfDp->index != ix; IfDp = IfDp->next);
+    for (IfDp = IfDescL; IfDp && !((sys && IfDp->sysidx == ix) || (!sys && IfDp->index == ix)); IfDp = IfDp->next);
     return IfDp;
 }
 

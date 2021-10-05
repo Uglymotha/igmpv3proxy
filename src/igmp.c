@@ -125,7 +125,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
-        if (igmp->igmp_type == IGMP_MEMBERSHIP_QUERY || ! (IfDp = getIfByIx(igmpMsg->im_vif)))
+        if (igmp->igmp_type == IGMP_MEMBERSHIP_QUERY || ! (IfDp = getIf(igmpMsg->im_vif, 0)))
             return;
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
@@ -161,7 +161,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
             ifindex = sdl->sdl_index;
 #endif
-            IfDp = getIfByName(if_indextoname(ifindex, ifName));
+            IfDp = getIf(ifindex, 1);
             break;
         }
     }
@@ -310,7 +310,7 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
-            delQry(IfDp);
+            delQry(IfDp, NULL);
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
             k_leaveMcGroup(IfDp, allrouters_group);
             k_leaveMcGroup(IfDp, alligmp3_group);

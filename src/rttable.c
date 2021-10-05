@@ -62,7 +62,7 @@ struct uSources {
     struct uSources    *prev;
     struct uSources    *next;
     struct sources     *src;                      // Pointer to source struct
-    uint8_t             vif;                      // Incoming vif index
+    struct IfDesc      *IfDp;                     // Incoming interface
     uint64_t            bytes, rate;              // Bwcontrol counters
 };
 
@@ -209,6 +209,7 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
     if (!SHUTDOWN) {
         if (dir) {
             BIT_CLR(croute->vifBits, IfDp->index);
+            delQry(IfDp, croute);
             if (croute->vifBits) {
                 // Clear interface and sources flags and Update kernel route table if route still active on other interface.
                 BIT_CLR(croute->qryBits, IfDp->index);
@@ -238,7 +239,7 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
     }
 
     // Check if route should be removed from table.
-    if (dir && (! croute->sources || SHUTDOWN)) {
+    if (dir && (!croute->vifBits || SHUTDOWN)) {
         uint32_t mrtHash = murmurhash3(croute->group) % CONFIG->routeTables;
 
         LOG(LOG_DEBUG, 0, "delRoute: Deleting route %s from table %d.",inetFmt(croute->group, 1), mrtHash);
@@ -256,6 +257,7 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
 
         // Free the memory, and return. Alloced by addSrc() and findRoute().
         for (struct sources *src; croute->sources; src = croute->sources->next, free(croute->sources), croute->sources = src);
+        for (struct uSources *src; croute->usources; src = croute->usources->next, free(croute->usources), croute->usources = src);
         free(croute);  // Alloced by findRoute()
     }
 
@@ -275,7 +277,7 @@ uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp) {
     GETMRT(croute) {
         if (IS_UPSTREAM(IfDp->state) && (croute->group & group.mask) == group.ip) {
             for (usrc = croute->usources; usrc; usrc = usrc->next)
-                bw = usrc->vif == (IfDp->index) ? bw + usrc->rate : bw;
+                bw = usrc->IfDp == IfDp ? bw + usrc->rate : bw;
         } else if (IS_DOWNSTREAM(IfDp->state) && (croute->group & group.mask) == group.ip && IS_SET(croute, IfDp)) {
             for (usrc = croute->usources; usrc; usrc = usrc->next)
                 bw += usrc->rate;
@@ -662,20 +664,23 @@ static inline struct sources *delSrc(struct sources *dsrc, struct IfDesc *IfDp, 
     if (srcHash != (uint32_t)-1)
         clearHash(dsrc->downstreamHostsHashTable, srcHash);
     BIT_CLR(dsrc->vifBits, IfDp->index);
-    BIT_CLR(dsrc->qryBits, IfDp->index);
-    BIT_CLR(dsrc->lmBits, IfDp->index);
-    dsrc->age[IfDp->index] = 0;
-
-    if (!dsrc->vifBits && !dsrc->usrc) {
-        dsrc->croute->nsrcs &= ~0x80000000;
-        dsrc->croute->nsrcs--;
-        if (dsrc->next)
-            dsrc->next->prev = dsrc->prev;
-        if (dsrc == dsrc->croute->sources)
-            dsrc->croute->sources = dsrc->next;
-        else
-            dsrc->prev->next = dsrc->next;
-        free(dsrc);  // Alloced by addSrc()
+    if (!BIT_SET(dsrc->qryBits, IfDp->index)) {
+        BIT_CLR(dsrc->lmBits, IfDp->index);
+        dsrc->age[IfDp->index] = 0;
+        if (!dsrc->vifBits) {
+            dsrc->croute->nsrcs &= ~0x80000000;
+            dsrc->croute->nsrcs--;
+            if (! dsrc->usrc) {
+                dsrc->croute->nsrcs--;
+                if (dsrc->next)
+                    dsrc->next->prev = dsrc->prev;
+                if (dsrc == dsrc->croute->sources)
+                    dsrc->croute->sources = dsrc->next;
+                else
+                    dsrc->prev->next = dsrc->next;
+                free(dsrc);  // Alloced by addSrc()
+            }
+        }
     }
 
     return nsrc;
@@ -740,7 +745,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
     case IGMPV3_MODE_IS_EXCLUDE:
         if (checkFilters(IfDp, 0, IF_STATE_DOWNSTREAM, INADDR_ANY, group) < ALLOW) {
             LOG(LOG_NOTICE, 0, "Group %s may not be requested on %s.", inetFmt(group, 1), IfDp->Name);
-            return;
+            break;
         }
         if (!IS_SET(croute, IfDp))
             addRoute(croute, IfDp, 1);
@@ -772,7 +777,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
     case IGMPV3_CHANGE_TO_INCLUDE:
         if (BIT_TST(croute->v1Bits, IfDp->index) || IfDp->querier.ver == 1) {
             LOG(LOG_INFO, 0, "updateRoute: Ignoring TO_IN for %s on %s, v1 host/querier present.", inetFmt(group, 1), IfDp->Name);
-            return;
+            break;
         }
         if (nsrcs == 0) {
             clearHash(croute->downstreamHostsHashTable, srcHash);
@@ -821,7 +826,7 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
         if (BIT_TST(croute->v1Bits, IfDp->index) || BIT_TST(croute->v2Bits, IfDp->index) || IfDp->querier.ver < 3) {
             LOG(LOG_INFO, 0, "updateRoute: Ignoring BLOCK for %s on %s, v1 or v2 host/querier present.",
                               inetFmt(group, 1), IfDp->Name);
-            return;
+            break;
         }
 
         qlst->type = 4;
@@ -837,22 +842,16 @@ void updateRoute(struct IfDesc *IfDp, uint32_t src, struct igmpv3_grec *grec) {
         }
     }
 
-    // Delete route if it is INCLUDE no sources.
-    if (!croute->mode && !croute->nsrcs) {
+    if (!croute->mode && !croute->nsrcs)
+        // Delete route if it is INCLUDE no sources.
         delRoute(croute, IfDp, NULL, 1);
-        return;
+    else {
+        // Send Query, update upstream and kernel.
+        startQuery(IfDp, qlst);
+        sendJoinLeaveUpstream(croute, join);
+        internUpdateKernelRoute(croute, 1);
     }
 
-    // Send Query if required.
-    startQuery(IfDp, qlst);
-
-    // Send join message upstream.
-    sendJoinLeaveUpstream(croute, join);
-
-    // Update route in kernel...
-    internUpdateKernelRoute(croute, 1);
-
-    // Log the update in debugmode...
     LOG(LOG_DEBUG, 0, "Updated route entry for %s on VIF #%d", inetFmt(group, 1), IfDp->index);
     logRouteTable("Update Route", 1, NULL, 0);
 }
@@ -1130,17 +1129,19 @@ static void groupSpecificQuery(struct qlst *qlst) {
 }
 
 /**
-*   Removes all active queriers on an interface.
+*   Removes all active queriers (for a group) on an interface.
 */
-void delQry(struct IfDesc *IfDp) {
+void delQry(struct IfDesc *IfDp, void *route) {
+    struct routeTable *croute = route;
     struct qlst *ql = qL;
     while (ql) {
         struct qlst *nql = ql->next;
-        // Find all queriers for interface.
-        if (ql->IfDp == IfDp) {
+        // Find all queriers for interface .
+        if (ql->IfDp == IfDp && (! croute || ql->croute == croute)) {
             // In case of GSSQ clear last member and query bits.
-            if (ql->nsrcs) for (uint16_t i = 0; i < ql->nsrcs; BIT_CLR(ql->src[i]->lmBits, IfDp->index),
-                                                               BIT_CLR(ql->src[i]->qryBits, IfDp->index), i++);
+            if (ql->nsrcs)
+                for (uint16_t i = 0; i < ql->nsrcs; BIT_CLR(ql->src[i]->lmBits, IfDp->index),
+                                                    BIT_CLR(ql->src[i]->qryBits, IfDp->index), i++);
             // Unlink from query list and free qlst.
             timer_clearTimer(ql->tid);
             if (ql->next)
@@ -1165,14 +1166,9 @@ inline void activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, 
     struct sources    *dsrc   = src;
     struct routeTable *croute = dsrc ? dsrc->croute : findRoute(group, false);
     struct uSources   *nusrc;
-    // When creating new route for a group not in table or maxorigins exceeded return.
-    if (! dsrc && (! croute || croute->nsrcs >= CONFIG->maxOrigins)) {
-        if (croute && croute->nsrcs >= CONFIG->maxOrigins) {
-            LOG(LOG_WARNING, 0, "Max origins exceeded for %s.", inetFmt(croute->group, 1));
-            if ((croute->nsrcs & 0x80000000) == 0)
-                croute->nsrcs |= 0x80000000;
-        }
-        return;
+    if (!croute->vifBits) {
+        addRoute(croute, IfDp, 0);
+        //timer_setTimer(
     }
 
     // When updating a route set the group and source correctly.
@@ -1186,17 +1182,20 @@ inline void activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, 
     // Find or create source in route when new should be created.
     if (! dsrc) {
         for (dsrc = croute->sources; dsrc && !(dsrc->ip >= ip); dsrc = dsrc->next);
-        if ((! dsrc || dsrc->ip > ip) && ! (dsrc = addSrc(croute, ip, dsrc))) {
-            LOG(LOG_WARNING, 0, "Unable to activate route %s to %s on %s. Cannot create source.",
-                                 inetFmt(ip, 1), inetFmt(group, 2), IfDp->Name);
-            return;
+        if (! dsrc || dsrc->ip > ip) {
+            if ( ! (dsrc = addSrc(croute, ip, dsrc))) {
+                LOG(LOG_WARNING, 0, "Unable to activate route %s to %s on %s. Cannot create source.",
+                                     inetFmt(ip, 1), inetFmt(group, 2), IfDp->Name);
+                return;
+            }
+            croute->nsrcs--;  // Source created here does not count as requested source.
         }
     }
     // Create and initialize a new upstream source.
     if (! dsrc->usrc) {
         if (! (dsrc->usrc = nusrc = malloc(sizeof(struct uSources))))
             LOG(LOG_ERR, errno, "activateRoute: Out of Memory!");  // Freed by internUpdateKernelRoute().
-        *nusrc = (struct uSources){ NULL, NULL, dsrc, IfDp->index, 0, 0 };
+        *nusrc = (struct uSources){ NULL, NULL, dsrc, IfDp, 0, 0 };
         if (croute->usources) {
             nusrc->next = croute->usources;
             croute->usources->prev = nusrc;
@@ -1214,7 +1213,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, 
             ttlVc[IfDp->index] = IfDp->conf->threshold;
         }
     }
-    k_addMRoute(ip, croute->group, dsrc->usrc->vif, ttlVc);
+    k_addMRoute(ip, croute->group, dsrc->usrc->IfDp->index, ttlVc);
 
     logRouteTable("Activate Route", 1, NULL, 0);
 }
@@ -1303,9 +1302,9 @@ static void internUpdateKernelRoute(struct routeTable *croute, int activate) {
 
         // Do the actual Kernel route update. Update return state, accordingly. add/delmroute returns 1 if failed.
         if (activate)
-            k_addMRoute(usrc->src->ip, croute->group, usrc->vif, ttlVc);
+            k_addMRoute(usrc->src->ip, croute->group, usrc->IfDp->index, ttlVc);
         else
-            k_delMRoute(usrc->src->ip, croute->group, usrc->vif);
+            k_delMRoute(usrc->src->ip, croute->group, usrc->IfDp->index);
         usrc = usrc->next;
         // Remove route from active routes list.
         if (fusrc) {
@@ -1343,7 +1342,7 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
         usrc = croute->usources;
         do {
             if (usrc) {
-                IfDp = getIfByIx(usrc->vif);
+                IfDp = usrc->IfDp;
                 totalb += usrc->bytes;
                 totalr += usrc->rate;
             }

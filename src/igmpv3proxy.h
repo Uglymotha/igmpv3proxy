@@ -209,12 +209,13 @@ struct IfDesc {
     struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
     struct querier                querier;                  // igmp querier for interface
     uint64_t                      bytes, rate;              // Counters for bandwith control
+    unsigned int                  sysidx;                   // Interface system index
     uint8_t                       index;                    // MCast vif index
     struct ifRoutes              *dRoutes;                  // Pointers to active routes for vif
     struct ifRoutes              *uRoutes;                  // Pointers to active routes for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -311,9 +312,8 @@ void cliCmd(char *cmd);
 void           freeIfDescL();
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
-struct IfDesc *getIfByName(const char *IfName);
-struct IfDesc *getIfByIx(uint8_t ix);
 struct IfDesc *getIfL(void);
+struct IfDesc *getIf(unsigned int ix, int sys);
 void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
 void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 
@@ -385,7 +385,7 @@ void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
-void     delQry(struct IfDesc *IfDP);
+void     delQry(struct IfDesc *IfDP, void *route);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
