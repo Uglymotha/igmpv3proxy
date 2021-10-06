@@ -171,7 +171,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     igmp->igmp_cksum = 0;
     if (! IfDp)
         LOG(LOG_NOTICE, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s",
-                            inetFmt(src, 1), inetFmt(dst, 2), ifindex ? ifName : "unk");
+                            inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_NOTICE, 0, "acceptIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
@@ -306,11 +306,11 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
 */
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start == 0 || start == 2) {
-        // Remove all timers and reset all IGMP status.
+        // Remove all queries, timers and reset all IGMP status for interface.
         LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
+        delQuery(IfDp, NULL, NULL, 0);
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
-            delQry(IfDp, NULL);
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
             k_leaveMcGroup(IfDp, allrouters_group);
             k_leaveMcGroup(IfDp, alligmp3_group);

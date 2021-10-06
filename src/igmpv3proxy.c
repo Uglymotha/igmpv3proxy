@@ -270,14 +270,15 @@ static void igmpProxyRun(void) {
         struct timespec timeout = timer_ageQueue();
 
         // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
-        int Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
+        int i = 0, Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
 
         // log and ignore failures
         if (Rt < 0 && errno != EINTR)
             myLog(LOG_WARNING, errno, "select() failure");
-        else if (Rt > 0) {
+        else if (Rt > 0) do {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
+                LOG(LOG_DEBUG, 0, "RECV packet %d.", i);
                 union {
                     struct cmsghdr cmsgHdr;
 #ifdef IP_PKTINFO
@@ -299,9 +300,11 @@ static void igmpProxyRun(void) {
             }
 
             // Check if any cli connection needs to be handled.
-            if (pollFD[1].revents & POLLIN)
+            if (pollFD[1].revents & POLLIN) {
+                LOG(LOG_DEBUG, 0, "RECV cli %d.", i);
                 processCliCon(pollFD[1].fd);
-        }
+            }
+        } while (++i < 100 && ppoll(pollFD, 2, &(struct timespec){ 0, 0 }, NULL) > 0);
     }
 }
 
