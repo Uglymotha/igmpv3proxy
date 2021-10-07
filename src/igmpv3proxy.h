@@ -83,6 +83,8 @@
 
 // In / output buffering (Jumbo MTU).
 #define BUF_SIZE 9216
+#define REQQSZ   16
+#define TMQSZ    4
 
 // Limit of configuration token.
 #define READ_BUFFER_SIZE    2048
@@ -95,6 +97,8 @@ struct Config {
     bool                notAsDaemon;
     char               *configFilePath;
     char               *runPath;
+    uint16_t            reqQsz;
+    uint16_t            tmQsz;
     // Default interface igmp parameters.
     uint32_t            querierIp;
     uint8_t             querierVer;
@@ -169,9 +173,9 @@ struct queryParam {
 struct vifConfig {
     char                name[IF_NAMESIZE];
     uint8_t             state;                   // Configured interface state
-    uint8_t             threshold;
-    uint64_t            ratelimit;
-    struct queryParam   qry;
+    uint8_t             threshold;               // Interface MC TTL
+    uint64_t            ratelimit;               // Interface ratelimit
+    struct queryParam   qry;                     // Configured query parameters
     bool                compat;                  // Compatibility with old altnet/whitelist
     bool                nodefaultfilter;         // Create default aliases -> any allow filter
     struct filters     *filters;
@@ -188,8 +192,9 @@ struct querier {                                        // igmp querier status f
     uint8_t        mrc;                                 // Queriers max response code
     uint64_t       Timer;                               // Self / Other Querier timer
     uint64_t       ageTimer;                            // Route aging timer
+    uint64_t       gcTimer;                             // Garbage collection timer
 };
-#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
+#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0, 0 }
 #define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 struct ifRoutes {
@@ -211,8 +216,8 @@ struct IfDesc {
     uint64_t                      bytes, rate;              // Counters for bandwith control
     unsigned int                  sysidx;                   // Interface system index
     uint8_t                       index;                    // MCast vif index
-    struct ifRoutes              *dRoutes;                  // Pointers to active routes for vif
-    struct ifRoutes              *uRoutes;                  // Pointers to active routes for vif
+    struct ifRoutes              *dRoutes;                  // Pointers to active downstream groups for vif
+    struct ifRoutes              *uRoutes;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
@@ -385,7 +390,7 @@ void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
-void     delQuery(struct IfDesc *IfDP, void *qry, void *route, uint8_t type);
+void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *src, uint8_t type);
 void     ageRoutes(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -404,4 +409,3 @@ struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
-

@@ -62,7 +62,7 @@ struct timespec timer_ageQueue() {
     uint64_t i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (i = 1, node = queue; i <= 4 && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
+    for (i = 1, node = queue; i <= CONFIG->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
                           timeDiff(node->time, curtime).tv_nsec / 1000);
         queue = node->next;

@@ -51,7 +51,7 @@ static void              allocFilter(struct filters fil);
 static struct Config commonConfig, oldcommonConfig;
 
 // All valid configuration options.
-static const char *options = "phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist";
+static const char *options = "phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize";
 static const char *phyintopt = "updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Configuration file reading.
@@ -220,16 +220,21 @@ static void allocFilter(struct filters fil) {
 *   Initializes default configuration.
 */
 static void initCommonConfig(void) {
+    // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
     commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
     commonConfig.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
     commonConfig.bwControlInterval = 0;
 
+    // Request queue size. This many request buffered requests will be handled before other work is done.
+    commonConfig.reqQsz = REQQSZ;
+    commonConfig.tmQsz  = TMQSZ;
+
     // Default values for leave intervals...
     commonConfig.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
     commonConfig.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
 
-    // If 1, a leave message is sent upstream on leave messages from downstream.
+    // Sent leave message upstream on leave messages from downstream.
     commonConfig.fastUpstreamLeave = false;
 
     // Defaul maximum nr of sources for route. Always a minimum of 64 sources is allowed
@@ -334,6 +339,16 @@ bool loadConfig(void) {
                 continue;
             } else if (!STARTUP)
                 return false;
+
+        } else if (strcasecmp("reqqueuesize", token) == 0 && INTTOKEN) {
+            // Got a reqqueuesize token....
+            commonConfig.reqQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
+            LOG(LOG_NOTICE, 0, "Config: Setting request queue size to %d.", intToken);
+
+        } else if (strcasecmp("timerqueuesize", token) == 0 && INTTOKEN) {
+            // Got a reqqueuesize token....
+            commonConfig.tmQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
+            LOG(LOG_NOTICE, 0, "Config: Setting timer queue size to %d.", intToken);
 
         } else if (strcasecmp("quickleave", token) == 0) {
             // Got a quickleave token....

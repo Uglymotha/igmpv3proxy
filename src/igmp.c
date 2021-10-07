@@ -308,7 +308,7 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start == 0 || start == 2) {
         // Remove all queries, timers and reset all IGMP status for interface.
         LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
-        delQuery(IfDp, NULL, NULL, 0);
+        delQuery(IfDp, NULL, NULL, NULL, 0);
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
@@ -317,6 +317,7 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         }
         timer_clearTimer(IfDp->querier.Timer);
         timer_clearTimer(IfDp->querier.ageTimer);
+        timer_clearTimer(IfDp->querier.gcTimer);
         memset(&IfDp->querier, 0, sizeof(struct querier));
         IfDp->querier.ip = (uint32_t)-1;
         if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
