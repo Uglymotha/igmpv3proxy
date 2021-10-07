@@ -309,14 +309,14 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
             LOG(LOG_ERR, 0, "BW_UPCALL: Src %s, Dst %s, but no route found.", inetFmt(bwUpc->bu_dst.s_addr, 1), inetFmt(bwUpc->bu_dst.s_addr, 2));
 
         // Find the source for the upcall and add to counter.
-        for (usrc = croute->usources; usr && usrc->src->ip != bwUpc->bu_src.s_addr; usrc = usrc->next);
+        for (usrc = croute->usources; usrc && usrc->src->ip != bwUpc->bu_src.s_addr; usrc = usrc->next);
         if (usrc) {
             usrc->bytes += bwUpc->bu_measured.b_bytes;
             usrc->rate = bwUpc->bu_measured.b_bytes / CONFIG->bwControlInterval;
             LOG(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to Src %s Dst %s, total %lldB (%lld B/s)", bwUpc->bu_measured.b_bytes, inetFmt(usrc->src->ip, 1), inetFmt(croute->group, 2), usrc->bytes, usrc->rate);
             for (GETIFL(IfDp)) {
                 // Find the incoming and outgoing interfaces and add to counter.
-                if (IfDp->index == usrc->vif || IS_SET(croute, IfDp)) {
+                if (IfDp == usrc->IfDp || IS_SET(croute, IfDp)) {
                     IfDp->bytes += bwUpc->bu_measured.b_bytes;
                     LOG(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to interface %s (%lld B/s), total %lld.", bwUpc->bu_measured.b_bytes, IfDp->Name, IfDp->rate, IfDp->bytes);
                 }
@@ -356,7 +356,7 @@ void bwControl(uint64_t *tid) {
 #else
             // On BSD systems go over all interfaces.
             for (GETIFL(IfDp)) {
-                if (IfDp->index == usrc->vif || IS_SET(croute, IfDp)) {
+                if (IfDp == usrc->IfDp || IS_SET(croute, IfDp)) {
                     IfDp->rate += usrc->rate;
                     LOG(LOG_DEBUG, 0, "BW_CONTROL: Added %lld B/s to interface %s (%lld B/s), total %lld.", usrc->rate, IfDp->Name, IfDp->rate, IfDp->bytes);
                 }

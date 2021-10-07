@@ -278,7 +278,7 @@ static void igmpProxyRun(void) {
         else if (Rt > 0) do {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "RECV packet %d.", i+1);
+                LOG(LOG_DEBUG, 0, "RECV Queued Packet %d.", i+1);
                 union {
                     struct cmsghdr cmsgHdr;
 #ifdef IP_PKTINFO
@@ -301,7 +301,7 @@ static void igmpProxyRun(void) {
 
             // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "RECV cli %d.", i);
+                LOG(LOG_DEBUG, 0, "RECV Cli Connection %d.", i);
                 processCliCon(pollFD[1].fd);
             }
         } while (++i < CONFIG->reqQsz && ppoll(pollFD, 2, &(struct timespec){ 0, 0 }, NULL) > 0);

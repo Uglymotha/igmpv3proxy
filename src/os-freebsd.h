@@ -1,5 +1,6 @@
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <libgen.h>
 #include <netinet/in.h>
 #include <net/route.h>
 #include <net/if_dl.h>
