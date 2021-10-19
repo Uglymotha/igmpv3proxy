@@ -700,7 +700,7 @@ static struct vifConfig *parsePhyintToken(void) {
             for (strcpy(list, token), token = nextConfigToken(); token && (strstr(filteropt, token) || ! strstr(options, token)); token = nextConfigToken()) {
                 if (strcasecmp("filter", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
                     if (fil.dir == (uint8_t)-1) {
-                        if (strcasecmp("UP", token) == 0 || strcasecmp("up", token) == 0)
+                        if (strcasecmp("up", token) == 0)
                             fil.dir = 1;
                         else if (strcasecmp("down", token) == 0)
                             fil.dir = 2;
@@ -946,7 +946,7 @@ void configureVifs(void) {
                 for (filter = ofilters; filter; alias = filter->next, free(filter), filter = alias);   // Alloced by allocFilter()
             }
 
-        } else  {
+        } else {
             // Interface has no matching config, create default config.
             LOG(LOG_DEBUG, 0, "configureVifs: Creating default config for %s interface %s.", IS_DISABLED(commonConfig.defaultInterfaceState) ? "disabled" : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream" : IS_UPSTREAM(commonConfig.defaultInterfaceState) ? "upstream" : "downstream", IfDp->Name);
             if (! (confPtr = malloc(sizeof(struct vifConfig))))
@@ -1027,6 +1027,6 @@ void configureVifs(void) {
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
-    if (vifcount < 2 || upsvifcount == 0 || downvifcount == 0)
+    if (!SHUTDOWN && (vifcount < 2 || upsvifcount == 0 || downvifcount == 0))
         LOG((STARTUP ? LOG_ERR : LOG_WARNING), 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }

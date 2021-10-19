@@ -48,7 +48,7 @@ static void igmpProxyRun(void);
 
 // Global Variables Signal Handling / Timekeeping.
 uint8_t               sighandled, sigstatus;
-struct timespec       curtime, utcoff;
+struct timespec       curtime, utcoff, starttime;
 const char           *fileName;
 
 // Polling and buffering local statics.
@@ -175,6 +175,9 @@ int main(int ArgCn, char *ArgVc[]) {
 */
 static void igmpProxyInit(void) {
     struct sigaction sa;
+
+    LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy.");
+    clock_gettime(CLOCK_REALTIME, &starttime);
     sigstatus = 1;  // STARTUP
 
     sa.sa_handler = signalHandler;
@@ -192,12 +195,12 @@ static void igmpProxyInit(void) {
     if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0
         || open("/dev/null", 0) != 0 || dup2(0, 1) < 0 || dup2(0, 2) < 0
         || setpgid(0, 0) < 0)) {
-        myLog(LOG_ERR, errno, "Failed to detach daemon.\n");
+        LOG(LOG_ERR, errno, "Failed to detach daemon.\n");
     }
 
     // Load the config file.
     if (! loadConfig())
-        myLog(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
+        LOG(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Fork daemon.
@@ -221,17 +224,15 @@ static void igmpProxyInit(void) {
 *   Clean up all on exit...
 */
 static void igmpProxyCleanUp(void) {
-    myLog(LOG_DEBUG, 0, "clean handler called");
+    struct timespec endtime;
 
-    struct IfDesc *IfDp;
-    for (GETIFL(IfDp))
-        ctrlQuerier(0, IfDp);
-    timer_freeQueue();      // Free all timeouts.
-    clearRoutes(NULL);      // Remove all routes.
+    configureVifs();        // Shutdown all interfaces, queriers and remove all routes.
     freeIfDescL();          // Free IfDesc table.
     freeConfig(0);          // Free config.
+    timer_freeQueue();      // Free all timeouts.
     k_disableMRouter();     // Disable the MRouter API.
     if (strstr(CONFIG->runPath, fileName)) {
+        // Remove socket and PID file.
         char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
         sprintf(rFile, "%s/%s.pid", CONFIG->runPath, fileName);
         remove(rFile);
@@ -241,44 +242,51 @@ static void igmpProxyCleanUp(void) {
     }
     free(CONFIG->logFilePath);
     free(CONFIG->runPath);
+
+    clock_gettime(CLOCK_REALTIME, &endtime);
+    LOG(LOG_WARNING, 0, "Shutting down after %d seconds.", timeDiff(starttime, endtime).tv_sec);
 }
 
 /**
 *   Main daemon event loop.
 */
 static void igmpProxyRun(void) {
+    struct timespec timeout;
+    int    i = 0, Rt = 0;
     while (!(sighandled & GOT_SIGURG)) {
         // Process signaling...
         if (sighandled & GOT_SIGHUP) {
             sigstatus = GOT_SIGHUP;
-            myLog(LOG_DEBUG, 0, "SIGHUP: Rebuilding interfaces and reloading config.");
+            LOG(LOG_DEBUG, 0, "SIGHUP: Rebuilding interfaces and reloading config.");
             reloadConfig(NULL);
             sighandled &= ~GOT_SIGHUP;
         } else if (sighandled & GOT_SIGUSR1) {
             sigstatus = GOT_SIGUSR1;
-            myLog(LOG_DEBUG, 0, "SIGUSR1: Reloading config.");
+            LOG(LOG_DEBUG, 0, "SIGUSR1: Reloading config.");
             reloadConfig(NULL);
             sighandled &= ~GOT_SIGUSR1;
         } else if (sighandled & GOT_SIGUSR2) {
             sigstatus = GOT_SIGUSR2;
-            myLog(LOG_DEBUG, 0, "SIGUSR2: Rebuilding interfaces.");
+            LOG(LOG_DEBUG, 0, "SIGUSR2: Rebuilding interfaces.");
             rebuildIfVc(NULL);
             sighandled &= ~GOT_SIGUSR2;
         }
 
-        // Run queue aging, it wil return the time until next timer is scheduled.
-        struct timespec timeout = timer_ageQueue();
-
-        // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
-        int i = 0, Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
+        if (Rt == 0 || i >= CONFIG->reqQsz) {
+            // Run queue aging, it wil return the time until next timer is scheduled.
+            timeout = timer_ageQueue();
+            // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
+            Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
+            i = 0;
+        }
 
         // log and ignore failures
         if (Rt < 0 && errno != EINTR)
-            myLog(LOG_WARNING, errno, "select() failure");
+            LOG(LOG_WARNING, errno, "ppoll() error");
         else if (Rt > 0) do {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "RECV Queued Packet %d.", i+1);
+                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Queued Packet %d.", i+1);
                 union {
                     struct cmsghdr cmsgHdr;
 #ifdef IP_PKTINFO
@@ -292,19 +300,19 @@ static void igmpProxyRun(void) {
 
                 int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
                 if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC))
-                    myLog(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
+                    LOG(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
                 else if ((msgHdr.msg_flags & MSG_CTRUNC))
-                    myLog(LOG_WARNING, errno, "recvmsg() truncated control message received");
+                    LOG(LOG_WARNING, errno, "recvmsg() truncated control message received");
                 else
                     acceptIgmp(recvlen, msgHdr);
             }
 
             // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "RECV Cli Connection %d.", i);
+                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Cli Connection %d.", i+1);
                 processCliCon(pollFD[1].fd);
             }
-        } while (++i < CONFIG->reqQsz && ppoll(pollFD, 2, &(struct timespec){ 0, 0 }, NULL) > 0);
+        } while (i++ < CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &(struct timespec){ 0, 0 }, NULL)) > 0 && !sighandled);
     }
 }
 
@@ -317,16 +325,16 @@ static void signalHandler(int sig) {
         if (!CONFIG->notAsDaemon) return;  // Daemon ignores SIGINT
         /* FALLTHRU */
     case SIGTERM:
-        myLog(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
+        LOG(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
         sigstatus = (uint8_t)-1;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
     case SIGURG:
-        myLog(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
+        LOG(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
         sighandled |= GOT_SIGURG;
         return;
     case SIGPIPE:
-        myLog(LOG_NOTICE, 0, "SIGPIPE: Ceci n'est pas un SIGPIPE.");
+        LOG(LOG_NOTICE, 0, "SIGPIPE: Ceci n'est pas un SIGPIPE.");
         /* FALLTHRU */
     case SIGHUP:
     case SIGUSR1:
@@ -334,5 +342,5 @@ static void signalHandler(int sig) {
         sighandled |= sig == SIGHUP ? GOT_SIGHUP : sig == SIGUSR1 ? GOT_SIGUSR1 : sig == SIGUSR2 ? GOT_SIGUSR2 : 0;
         return;
     }
-    myLog(LOG_INFO, 0, "Caught unhandled signal %d", sig);
+    LOG(LOG_NOTICE, 0, "Caught unhandled signal %d", sig);
 }

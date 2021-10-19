@@ -169,7 +169,9 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
             sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
         }
     }
-    if (h) {
+    if(! cliSockAddr)
+        LOG(LOG_DEBUG, 0, "------------------------------------------------------");
+    else if (h) {
         sprintf(buf, "------------------------------------------------------------\n");
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }

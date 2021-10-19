@@ -180,15 +180,17 @@ inline bool noHash(register uint64_t *table) {
 }
 
 /**
-*   Sort array in numerical asceding order. (Insertion Sort)
+*   Sort array in numerical asceding order, endianess is irrelevant.
+*   Reversed Insertion Sort with duplicates moved to end of list as 0xFFFF and removed (no valid IP).
 */
-inline void sortArr(register uint32_t *arr, register uint32_t nr) {
-    if (nr > 1) {
-        register uint32_t i, j, o, t;
-        for(i = o = 0, j = 1; j < nr; arr[j] = t, j = ++i + 1, o++)
-            for (t = arr[j]; j > 0 && arr[j - 1] > t; arr[j] = arr[j - 1], j--, o++);
-        LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
-    }
+inline uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
+    register uint32_t i, j, t, o = 0;
+    if (nr-- > 1)
+        for(o = 0, i = nr, j = nr - 1; j != (uint32_t )-1; arr[j] = t, j = --i - 1, o++)
+            for (t = arr[j]; j < nr && arr[j + 1] <= t; t = arr[j + 1] == t ? (uint32_t)-1 : t, arr[j] = arr[j + 1], j++, o++);
+    for (i = nr++; nr >= 1 && arr[i] == (uint32_t)-1; i--, nr--, o++);
+    LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
+    return nr;
 }
 
 /**

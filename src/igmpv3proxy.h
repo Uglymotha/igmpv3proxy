@@ -35,7 +35,6 @@
 /**
 *   igmpv3proxy.h - Header file for common includes.
 */
-
 #include "config.h"
 #include "os.h"
 
@@ -218,9 +217,10 @@ struct IfDesc {
     uint8_t                       index;                    // MCast vif index
     struct ifRoutes              *dRoutes;                  // Pointers to active downstream groups for vif
     struct ifRoutes              *uRoutes;                  // Pointers to active upstream groups for vif
+    struct ifRoutes              *gRoutes;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -231,8 +231,8 @@ struct IfDesc {
 #define IS_DOWNSTREAM(x)       (x & 0x2)
 #define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
-#define IF_OLDSTATE(x)         (x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
-#define IF_NEWSTATE(x)         (x ?               x->state          & ~0x80 : IF_STATE_DISABLED)
+#define IF_OLDSTATE(x)         (SHUTDOWN       ? x->state         : x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
+#define IF_NEWSTATE(x)         (x && !SHUTDOWN ? x->state & ~0x80 : IF_STATE_DISABLED)
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -346,7 +346,7 @@ uint32_t        murmurhash3(register uint32_t x);
 void            setHash(register uint64_t *table, register uint32_t hash);
 void            clearHash(register uint64_t *table, register uint32_t hash);
 bool            noHash(register uint64_t *table);
-void            sortArr(register uint32_t *arr, register uint32_t nr);
+uint16_t        sortArr(register uint32_t *arr, register uint16_t nr);
 const char     *igmpPacketKind(unsigned int type, unsigned int code);
 const char     *grecKind(unsigned int type);
 uint16_t        grecType(struct igmpv3_grec *grec);
