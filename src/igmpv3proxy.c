@@ -272,7 +272,7 @@ static void igmpProxyRun(void) {
             sighandled &= ~GOT_SIGUSR2;
         }
 
-        if (Rt == 0 || i >= CONFIG->reqQsz) {
+        if (Rt <= 0 || i >= CONFIG->reqQsz) {
             // Run queue aging, it wil return the time until next timer is scheduled.
             timeout = timer_ageQueue();
             // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
