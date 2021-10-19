@@ -655,18 +655,11 @@ void clearRoutes(void *Dp) {
                                    inetFmt(croute->group, 1), IfDp->Name);
             }
         }
-        // Check if routing tables are empty.
-        for (iz = 0; mrt && iz < CONFIG->routeTables && ! mrt[iz]; iz++);
-        if (iz == CONFIG->routeTables) {
-            free(mrt);  // Alloced by findRoute()
-            mrt = NULL;
-            LOG(LOG_INFO, 0, "clearRoutes: Routing table is empty.");
-        }
         return;
     }
 
     // Upstream interface transition.
-    if (IS_UPSTREAM(newstate) || IS_UPSTREAM(oldstate)) for (ifr = IfDp->uRoutes; ifr; ifr = ifr->next) {
+    if (IS_UPSTREAM(newstate) || IS_UPSTREAM(oldstate)) for (ifr = IfDp->uRoutes; ifr; ifr = ifr ? ifr->next : IfDp->uRoutes) {
         croute = ifr->croute;
         if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
             // Clear uptsream perm bits for all sources, they will be reevaluated next source filter update.
@@ -692,7 +685,7 @@ void clearRoutes(void *Dp) {
             if (k_leaveMcGroup(IfDp, croute->group))
                 BIT_CLR(croute->upstrState, IfDp->index);
             ifr = delRoute(croute, IfDp, ifr, 0);
-            LOG(LOG_WARNING, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.",
+            LOG(LOG_INFO, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.",
                                  inetFmt(croute->group, 1), IfDp->Name);
         }
     }
@@ -717,6 +710,15 @@ void clearRoutes(void *Dp) {
 
         // Clear query bits and remove route.
         ifr = delRoute(croute, IfDp, ifr, 1);
+    }
+
+    // Check if routing tables are empty.
+    uint16_t iz;
+    for (iz = 0; mrt && iz < CONFIG->routeTables && ! mrt[iz]; iz++);
+    if (iz == CONFIG->routeTables) {
+        free(mrt);  // Alloced by findRoute()
+        mrt = NULL;
+        LOG(LOG_INFO, 0, "clearRoutes: Routing table is empty.");
     }
 
     logRouteTable("Clear Routes", 1, NULL, 0);
