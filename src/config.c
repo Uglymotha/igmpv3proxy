@@ -33,9 +33,9 @@
 */
 
 /**
-*   Generic config file reader. Used to open a config file, and read the tokens from it. The parser is really simple nd does no backlogging.
-*   This means that no form of text escaping and qouting is currently supported. '#' chars are read as comments, and the comment lasts until a newline or EOF.
-*   text escaping and qouting is currently supported.
+*   Generic config file reader. Used to open a config file, and read the tokens from it.
+*   The parser is really simple nd does no backlogging. This means that no form of text escaping
+*   and qouting is currently supported. '#' chars are read as comments, which lasts until a newline.
 */
 
 #include "igmpv3proxy.h"
@@ -45,7 +45,7 @@ static bool              configFile(char *filename, int open);
 static char             *nextConfigToken(void);
 static void              initCommonConfig();
 static struct vifConfig *parsePhyintToken(void);
-static void              allocFilter(struct filters fil);
+static void              parseFilters(struct filters ***filP);
 
 // Daemon Configuration.
 static struct Config commonConfig, oldcommonConfig;
@@ -61,7 +61,6 @@ static unsigned int    bufPtr, readSize;                                        
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf, *oldvifConf;
-static struct filters    **filPtr;
 
 // Keeps timer ids for configurable timed functions.
 static struct timers {
@@ -83,14 +82,16 @@ inline struct Config *getConfig(void) {
 *   Frees the old vifconf list and associated filters.
 */
 void freeConfig(int old) {
-    struct vifConfig *tmpConfPtr, *clrConfPtr;
+    struct vifConfig *tConf, *cConf;
+    struct filters   *tFil,  *dFil = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters;
 
-    for (clrConfPtr = old ? oldvifConf : vifConf; clrConfPtr; clrConfPtr = tmpConfPtr) {
-        tmpConfPtr = clrConfPtr->next;
-        struct filters *tmpFilPtr;
-        for (; clrConfPtr->filters; tmpFilPtr = clrConfPtr->filters->next, free(clrConfPtr->filters), clrConfPtr->filters = tmpFilPtr);  // Alloced by allocFilter()
-        free(clrConfPtr);   // Alloced by parsePhyintToken()
+    // Free vifconf and (default) filters, Alloced by parsePhyintToken() and parseFilters()
+    for (cConf = old ? oldvifConf : vifConf; cConf; cConf = tConf) {
+        tConf = cConf->next;
+        for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
+        free(cConf);
     }
+    for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
 
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
 }
@@ -203,20 +204,6 @@ static char *nextConfigToken(void) {
 }
 
 /**
-   Allocate and set the subnetlist for the requested list.
-*/
-static void allocFilter(struct filters fil) {
-    struct filters ***tmpFil = &filPtr;
-
-    // Allocate memory for filter and copy from argument.
-    if (! (**tmpFil = malloc(sizeof(struct filters))))
-        LOG(LOG_ERR, errno, "allocSubnet: Out of Memory.");  // Freed by freeConfig() or parsePhyIntToken()
-    ***tmpFil = fil;
-
-    *tmpFil = &(***tmpFil).next;
-}
-
-/**
 *   Initializes default configuration.
 */
 static void initCommonConfig(void) {
@@ -253,7 +240,7 @@ static void initCommonConfig(void) {
     commonConfig.defaultThreshold = DEFAULT_THRESHOLD;
     commonConfig.defaultRatelimit = DEFAULT_RATELIMIT;
     commonConfig.defaultFilterAny = false;
-    commonConfig.nodefaultFilter  = false;
+    commonConfig.defaultFilters   = NULL;
 
     // Log to file disabled by default.
     commonConfig.log2File = false;
@@ -320,6 +307,9 @@ bool loadConfig(void) {
     if (! configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken()))
         return false;
     LOG(LOG_DEBUG, 0, "Loading config from '%s'", commonConfig.configFilePath);
+
+    // Set pointer to pointer to filters list.
+    struct filters **filP = &commonConfig.defaultFilters;
 
     // Loop until all configuration is read.
     while (token) {
@@ -406,22 +396,23 @@ bool loadConfig(void) {
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
             }
 
-        } else if (strcasecmp("nodefaultfilter", token) == 0) {
-            // Got a defaultfilterany token...
-            if (commonConfig.defaultFilterAny == true)
-                LOG(LOG_WARNING, 0, "Config: Nodefaultfilter or defaultfilterany can only be specified once. Ignoring %s.", token);
-            else {
-                commonConfig.nodefaultFilter = true;
-                LOG(LOG_NOTICE, 0, "Config: Interfaces no default filter.");
-            }
-
         } else if (strcasecmp("defaultfilterany", token) == 0) {
             // Got a defaultfilterany token...
-            if (commonConfig.nodefaultFilter == true)
-                LOG(LOG_WARNING, 0, "Config: Nodefaultfilter or defaultfilterany can only be specified once. Ignoring %s.", token);
+            if (commonConfig.defaultFilters)
+                LOG(LOG_WARNING, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
                 commonConfig.defaultFilterAny = true;
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
+            }
+
+        } else if (strcasecmp("defaultfilter", token) == 0) {
+            // Got a defaultfilterany token...
+            if (commonConfig.defaultFilterAny)
+                LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
+            else {
+                LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
+                strcpy(token, "filter");
+                parseFilters(&filP);
             }
 
         } else if (strcasecmp("defaultratelimit", token) == 0 && INTTOKEN) {
@@ -461,7 +452,8 @@ bool loadConfig(void) {
                 LOG(LOG_WARNING, 0, "Config IF: Robustness value must be between 1 and 7.");
             else {
                 commonConfig.robustnessValue = intToken;
-                commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS ? commonConfig.lastMemberQueryCount : commonConfig.robustnessValue;
+                commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS
+                                                  ? commonConfig.lastMemberQueryCount : commonConfig.robustnessValue;
                 LOG(LOG_NOTICE, 0, "Config: Setting default robustness value to %d.", intToken);
             }
 
@@ -522,7 +514,8 @@ bool loadConfig(void) {
         } else if (strcasecmp("logfile", token) == 0 && (token = nextConfigToken())) {
             // Got a logfile token. Only use log file if not logging to stderr.
             if (!commonConfig.log2Stderr) {
-                commonConfig.logFilePath = ! commonConfig.logFilePath ? malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;   // Freed by igmpProxyCleanUp()
+                // Freed by igmpProxyCleanUp()
+                commonConfig.logFilePath = ! commonConfig.logFilePath ? malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;
                 if (strstr(options, token)) {
                     LOG(LOG_WARNING, 0, "Config: No logfile path specified. Ignoring.");
                     continue;
@@ -580,19 +573,30 @@ bool loadConfig(void) {
     // Close the configfile.
     configFile(NULL, 0);
 
+    // Create default filter any.
+    if (commonConfig.defaultFilterAny) {
+        if (! (commonConfig.defaultFilters = malloc(sizeof(struct filters))))
+            LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+        *commonConfig.defaultFilters = FILTERANY;
+    }
+
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10 > commonConfig.queryInterval) {
+    if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
+                                      : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10 > commonConfig.queryInterval) {
         if (commonConfig.querierVer != 3)
             commonConfig.queryResponseInterval = commonConfig.queryInterval * 10;
         else
             commonConfig.queryResponseInterval = getIgmpExp(commonConfig.queryInterval * 10, 1);
-        float f = (commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", commonConfig.queryInterval, f);
+        float f = (commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
+                                                : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10;
+        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs",
+                            commonConfig.queryInterval, f);
     }
 
     // Check rescanvif status and start or clear timers if necessary.
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces", (timer_f)rebuildIfVc, &timers.rescanVif);
+        timers.rescanVif = timer_setTimer(TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces",
+                                          (timer_f)rebuildIfVc, &timers.rescanVif);
     } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
@@ -601,7 +605,8 @@ bool loadConfig(void) {
 
     // Check rescanconf status and start or clear timers if necessary.
     if (commonConfig.rescanConf && timers.rescanConf == 0)
-        timers.rescanConf = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, &timers.rescanConf);
+        timers.rescanConf = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration",
+                                           (timer_f)reloadConfig, &timers.rescanConf);
     else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
@@ -613,14 +618,16 @@ bool loadConfig(void) {
         timers.bwControl = 0;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         int Va, len = sizeof(Va);
-        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0 || ! (Va & MRT_MFC_BW_UPCALL))) {
+        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0
+                         || ! (Va & MRT_MFC_BW_UPCALL))) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             commonConfig.bwControlInterval = 0;
         } else if (!STARTUP)
             clearRoutes(getConfig);
 #endif
         if (commonConfig.bwControlInterval)
-            timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control", (timer_f)bwControl, &timers.bwControl);
+            timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control",
+                                              (timer_f)bwControl, &timers.bwControl);
     }
 
     // Set hashtable size to 0 when quickleave is disabled.
@@ -629,17 +636,116 @@ bool loadConfig(void) {
 
     // Check if quickleave was enabled or disabled due to config change.
     if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
-        LOG(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.", commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
+        LOG(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.",
+                            commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
         clearRoutes(CONFIG);
     }
 
     // Check if hashtable size was changed due to config change.
-    if (!STARTUP && commonConfig.fastUpstreamLeave && oldcommonConfig.downstreamHostsHashTableSize != commonConfig.downstreamHostsHashTableSize) {
-        LOG(LOG_NOTICE, 0, "Config: Downstream host hashtable size changed from %i to %i, reinitializing routes.",oldcommonConfig.downstreamHostsHashTableSize, commonConfig.downstreamHostsHashTableSize);
+    if (!STARTUP && commonConfig.fastUpstreamLeave
+                 && oldcommonConfig.downstreamHostsHashTableSize != commonConfig.downstreamHostsHashTableSize) {
+        LOG(LOG_NOTICE, 0, "Config: Downstream host hashtable size changed from %i to %i, reinitializing routes.",
+                            oldcommonConfig.downstreamHostsHashTableSize, commonConfig.downstreamHostsHashTableSize);
         clearRoutes(CONFIG);
     }
 
     return true;
+}
+
+
+/*
+*   Parsing of filters. If an error is made in a list, the whole list will be ignored.
+*/
+static void parseFilters(struct filters ***filP) {
+    char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
+    uint32_t addr, mask;
+    struct filters fil    = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL },
+                   filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
+
+    for (strcpy(list, token), token = nextConfigToken(); token && (strstr(filteropt, token) || ! strstr(options, token));
+                              token = nextConfigToken()) {
+        if (strcasecmp("filter", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
+            if (fil.dir == (uint8_t)-1) {
+                if (strcasecmp("up", token) == 0)
+                    fil.dir = 1;
+                else if (strcasecmp("down", token) == 0)
+                    fil.dir = 2;
+                else if (strcasecmp("updown", token) == 0 || strcasecmp("both", token) == 0)
+                    fil.dir = 3;
+            }
+            if (strcasecmp("ratelimit", token) == 0 || strcasecmp("r", token) == 0 || strcasecmp("2", token) == 0) {
+                token = nextConfigToken();
+                uint64_t rl = atol(token);
+                if (! commonConfig.bwControlInterval)
+                    LOG(LOG_INFO, 0, "Config: IF: BW Control disabled, ignoring ratelimit rule %s - %s %lld.",
+                                      inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
+                else if (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)
+                    LOG(LOG_WARNING, 0, "Config: IF: Ratelimit rules must have INADDR_ANY as source. Ignoring %s - %s %lld.",
+                                         inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
+                else
+                    fil.action = rl >= 2 ? rl : 2;
+            } else if (strcasecmp("allow", token) == 0 || strcasecmp("a", token) == 0 || strcasecmp("1", token) == 0)
+                fil.action = ALLOW;
+            else if (strcasecmp("block", token) == 0 || strcasecmp("b", token) == 0 || strcasecmp("0", token) == 0)
+                fil.action = BLOCK;
+            else if (!strstr(filteropt, token)) {
+                LOG(LOG_WARNING, 0, "Config: IF: %s is not a valid filter action or direction. Ignoring %s.", token, list);
+                fil = (struct filters){ {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
+            }
+        } else if (!parseSubnetAddress(token, &addr, &mask)) {
+            // Unknown token. Ignore...
+            LOG(LOG_WARNING, 0, "Config: IF: Uparsable subnet '%s'. Ignoring %s.", token, list);
+            fil = filErr;
+        } else if ((strcasecmp("whitelist", list) == 0 || (strcasecmp("filter", list) == 0 && fil.src.ip != 0xFFFFFFFF))
+                   && !IN_MULTICAST(ntohl(addr))) {
+            // Check if valid MC group for whitelist are filter dst.
+            LOG(LOG_WARNING, 0, "Config: IF: %s is not a valid multicast address. Ignoring %s.", inetFmt(addr, 1), list);
+            fil = filErr;
+        } else if ((addr | mask) != mask) {
+            // Check if valid sn/mask pair.
+            LOG(LOG_WARNING, 0, "Config: IF: %s is not valid subnet/mask pair. Ignoring %s.", inetFmts(addr, mask, 1), list);
+            fil = filErr;
+        } else if (strcasecmp("altnet", list) == 0) {
+            // altnet is not usefull or compatible with igmpv3, ignore.
+            fil = filErr;
+        } else if (strcasecmp("whitelist", list) == 0) {
+            fil = (struct filters){ {INADDR_ANY, 0}, {addr, mask}, ALLOW, (uint8_t)-1, NULL };
+        } else if (fil.src.ip == 0xFFFFFFFF) {
+            if (! IN_MULTICAST(ntohl(addr))) {
+                fil.src.ip   = addr;
+                fil.src.mask = mask;
+            } else {
+                fil.dst.ip   = addr;
+                fil.dst.mask = mask;
+            }
+        } else if (fil.dst.ip == 0xFFFFFFFF) {
+            fil.dst.ip   = addr;
+            fil.dst.mask = mask;
+        }
+
+        if (fil.src.ip == 0xFFFFFFFF && fil.src.mask == 0) {
+            // Error in list detected, go to next.
+            for (token = nextConfigToken(); token && ! strstr(options, token); token = nextConfigToken());
+            break;
+        } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
+                   &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
+            // Correct filter, add and reset fil to process next entry.
+            if (fil.dir == (uint8_t)-1)
+                fil.dir = 3;
+            if (fil.src.ip == 0xFFFFFFFF)
+                fil.src.ip = fil.src.mask = 0;
+            LOG(LOG_NOTICE, 0, "Config: IF: Adding filter Src: %s Dst: %s Dir: %s Action: %lld.",
+                                inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
+                                fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown", fil.action);
+            // Allocate memory for filter and copy from argument.
+            if (! (**filP = malloc(sizeof(struct filters))))
+                LOG(LOG_ERR, errno, "allocSubnet: Out of Memory.");  // Freed by freeConfig()
+            ***filP = fil;
+
+            *filP = &(***filP).next;
+            fil = (struct filters){ {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL };
+        }
+    }
 }
 
 /**
@@ -660,112 +766,23 @@ static struct vifConfig *parsePhyintToken(void) {
     if (! (tmpPtr = malloc(sizeof(struct vifConfig))))
         LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
     *tmpPtr = DEFAULT_VIFCONF;
-    tmpPtr->compat = true;
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
     memcpy(tmpPtr->name, token, IF_NAMESIZE);
     tmpPtr->name[IF_NAMESIZE - 1] = '\0';
     if (strlen(token) >= IF_NAMESIZE)
-        LOG(LOG_WARNING, 0, "Config: IF: Interface name %s larger than system IF_NAMESIZE(%d), truncated to %s.", token, IF_NAMESIZE, tmpPtr->name);
+        LOG(LOG_WARNING, 0, "Config: IF: Interface name %s larger than system IF_NAMESIZE(%d), truncated to %s."
+                             ,token, IF_NAMESIZE, tmpPtr->name);
 
     // Set pointer to pointer to filters list.
-    filPtr = &tmpPtr->filters;
+    struct filters **filP = &tmpPtr->filters;
 
     // Parse the rest of the config..
     token = nextConfigToken();
     while (token) {
-        // Check compatibily options for old version filtering. Is any filter option is encountered any altnet/whitelists will be ignored.
-        // If there are already altnet/whitelists before a filter is encountered, they need to be freed.
-        if ((strcasecmp("altnet", token) == 0 || strcasecmp("whitelist", token) == 0) && ! tmpPtr->compat) {
-            LOG(LOG_WARNING, 0, "Config IF: %s cannot be combined with filters. Ignoring altnet/whitelist.", token);
-            for (token = nextConfigToken(); token && ! strstr(options, token); token = nextConfigToken());
-            continue;
-        } else if (strcasecmp("filter", token) == 0 && tmpPtr->compat) {
-            tmpPtr->compat = false;
-            while (tmpPtr->filters) {
-                struct filters *fFil = tmpPtr->filters;
-                LOG(LOG_WARNING, 0, "Config IF: Altnet/whitelist cannot be combined with filters. Ignoring %s - %s.", token, inetFmts(fFil->src.ip, fFil->src.mask, 1), inetFmts(fFil->dst.ip, fFil->dst.mask, 2));
-                tmpPtr->filters = tmpPtr->filters->next;
-                free (fFil);
-            }
-        }
-
         if (strcasecmp("filter", token) == 0 || strcasecmp("altnet", token) == 0 || strcasecmp("whitelist", token) == 0) {
-            // Black / Whitelist Parsing. If an error is made in a list, the whole list will be ignored.
             LOG(LOG_NOTICE, 0, "Config: IF: Parsing %s.", token);
-            char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
-            uint32_t addr, mask;
-            struct filters fil = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL };
-
-            for (strcpy(list, token), token = nextConfigToken(); token && (strstr(filteropt, token) || ! strstr(options, token)); token = nextConfigToken()) {
-                if (strcasecmp("filter", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
-                    if (fil.dir == (uint8_t)-1) {
-                        if (strcasecmp("up", token) == 0)
-                            fil.dir = 1;
-                        else if (strcasecmp("down", token) == 0)
-                            fil.dir = 2;
-                        else if (strcasecmp("updown", token) == 0 || strcasecmp("both", token) == 0)
-                            fil.dir = 3;
-                    }
-                    if (strcasecmp("ratelimit", token) == 0 || strcasecmp("r", token) == 0 || strcasecmp("2", token) == 0) {
-                        token = nextConfigToken();
-                        uint64_t rl = atol(token);
-                        if (! commonConfig.bwControlInterval)
-                            LOG(LOG_INFO, 0, "Config: IF: BW Control disabled, ignoring ratelimit rule %s - %s %lld.", inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
-                        else if (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)
-                            LOG(LOG_WARNING, 0, "Config: IF: Ratelimit rules must have INADDR_ANY as source. Ignoring %s - %s %lld.", inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
-                        else
-                            fil.action = rl >= 2 ? rl : 2;
-                    } else if (strcasecmp("allow", token) == 0 || strcasecmp("a", token) == 0 || strcasecmp("1", token) == 0)
-                        fil.action = ALLOW;
-                    else if (strcasecmp("block", token) == 0 || strcasecmp("b", token) == 0 || strcasecmp("0", token) == 0)
-                        fil.action = BLOCK;
-                    else if (!strstr(filteropt, token)) {
-                        LOG(LOG_WARNING, 0, "Config: IF: %s is not a valid filter action or direction. Ignoring %s.", token, list);
-                        fil = (struct filters){ {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
-                    }
-                } else if (! parseSubnetAddress(token, &addr, &mask)) {
-                    // Unknown token. Ignore...
-                    LOG(LOG_WARNING, 0, "Config: IF: Uparsable subnet '%s'. Ignoring %s.", token, list);
-                    fil = (struct filters){ {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
-                } else if ((strcasecmp("whitelist", list) == 0 || (strcasecmp("filter", list) == 0 && fil.src.ip != 0xFFFFFFFF)) && ! IN_MULTICAST(ntohl(addr))) {
-                    // Check if valid MC group for whitelist are filter dst.
-                    LOG(LOG_WARNING, 0, "Config: IF: %s is not a valid multicast address. Ignoring %s.", inetFmt(addr, 1), list);
-                    fil = (struct filters){ {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
-                } else if ((addr | mask) != mask) {
-                    // Check if valid sn/mask pair.
-                    LOG(LOG_WARNING, 0, "Config: IF: %s is not valid subnet/mask pair. Ignoring %s.", inetFmts(addr, mask, 1), list);
-                    fil = (struct filters){ {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL };
-                } else if (strcasecmp("altnet", list) == 0 || strcasecmp("whitelist", list) == 0) {
-                    fil = strcasecmp("altnet", list) == 0 ? (struct filters){ {addr, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL } : (struct filters){ {INADDR_ANY, 0}, {addr, mask}, ALLOW, (uint8_t)-1, NULL };
-                } else if (fil.src.ip == 0xFFFFFFFF) {
-                    if (! IN_MULTICAST(ntohl(addr))) {
-                        fil.src.ip   = addr;
-                        fil.src.mask = mask;
-                    } else {
-                        fil.dst.ip   = addr;
-                        fil.dst.mask = mask;
-                    }
-                } else if (fil.dst.ip == 0xFFFFFFFF) {
-                    fil.dst.ip   = addr;
-                    fil.dst.mask = mask;
-                }
-
-                if (fil.src.ip == 0xFFFFFFFF && fil.src.mask == 0) {
-                    // Error in list detected, go to next.
-                    for (token = nextConfigToken(); token && ! strstr(options, token); token = nextConfigToken());
-                    break;
-                } else if ((fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW)) && fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
-                    // Correct filter, add and reset fil to process next entry.
-                    if (fil.dir == (uint8_t)-1)
-                        fil.dir = 3;
-                    if (fil.src.ip == 0xFFFFFFFF)
-                        fil.src.ip = fil.src.mask = 0;
-                    LOG(LOG_NOTICE, 0, "Config: IF: Adding filter Src: %s Dst: %s Dir: %s Action: %lld.", inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown", fil.action);
-                    allocFilter(fil);
-                    fil = (struct filters){ {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL };
-                }
-            }
+            parseFilters(&filP);
             continue;
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
@@ -869,13 +886,15 @@ static struct vifConfig *parsePhyintToken(void) {
     }
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10 > tmpPtr->qry.interval) {
+    if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10
+                          > tmpPtr->qry.interval) {
         if (tmpPtr->qry.ver != 3)
             tmpPtr->qry.responseInterval = tmpPtr->qry.interval * 10;
         else
             tmpPtr->qry.responseInterval = getIgmpExp(tmpPtr->qry.interval * 10, 1);
         float f = (tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", tmpPtr->qry.interval, f);
+        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs",
+                            tmpPtr->qry.interval, f);
     }
 
     return tmpPtr;
@@ -902,53 +921,13 @@ void configureVifs(void) {
             IfDp->oldconf = IfDp->conf;
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name) != 0; confPtr = confPtr->next);
         if (confPtr) {
-            LOG(LOG_DEBUG, 0, "Found config for %s", IfDp->Name);
-
-            // For interfaces with compatibily lists altnet whitelist, build a new filter table.
-            if ((! confPtr->filters || !IFREBUILD) && confPtr->compat) {
-                // Parse all aliases / altnet / whitelist entries to correct filters for bw compatibility.
-                struct filters *ofilters = confPtr->filters, *filter = confPtr->filters, *alias;
-                int i = 0;
-                filPtr = &confPtr->filters;
-
-                // First go through aliases and build alias -> whitelist allow filters.
-                for (alias = IfDp->aliases; alias; alias = alias->next, filter = confPtr->filters) {
-                    do {
-                        if (! filter && !confPtr->nodefaultfilter && !CONFIG->nodefaultFilter) {
-                            // If no altnet / whitelist for interface, add filter for alias -> any allow.
-                            allocFilter((struct filters){ {alias->src.ip, alias->src.mask}, {INADDR_ANY, 0}, ALLOW, 3, NULL });
-                            LOG(LOG_DEBUG, 0, "configureVifs: Added compat filter %d %s - default updown %d.", ++i, inetFmts(alias->src.ip, alias->src.mask, 1), ALLOW);
-                        } else if (filter && filter->dst.ip != INADDR_ANY) {
-                            // Add Filter for alias -> group allow.
-                            allocFilter((struct filters){ {alias->src.ip, alias->src.mask}, {filter->dst.ip, filter->dst.mask}, ALLOW, 3, NULL });
-                            LOG(LOG_DEBUG, 0, "configureVifs: Added compat filter %d %s - %s updown %d.", ++i, inetFmts(alias->src.ip, alias->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), ALLOW);
-                        }
-                        if (filter)
-                            filter = filter->next;
-                    } while (filter);
-                    if (i == 0 && !confPtr->nodefaultfilter && !CONFIG->nodefaultFilter) {
-                        allocFilter((struct filters){ {alias->src.ip, alias->src.mask}, {INADDR_ANY, 0}, ALLOW, 3, NULL });
-                        LOG(LOG_DEBUG, 0, "configureVifs: Added compat filter %d %s - default updown %d.", ++i, inetFmts(alias->src.ip, alias->src.mask, 1), ALLOW);
-                    }
-                }
-
-                // Next go through all altnets and build altnet -> whitelist allow filters.
-                for (filter = ofilters; filter; filter = filter->next) {
-                    for (alias = ofilters; alias; alias = alias->next) {
-                        if (filter->src.ip != INADDR_ANY && alias->dst.ip != INADDR_ANY) {
-                            allocFilter((struct filters){ {filter->src.ip, filter->src.mask}, {alias->dst.ip, alias->dst.mask}, ALLOW, 3, NULL });
-                            LOG(LOG_DEBUG, 0, "configureVifs: Added compat filter %d %s - %s updown %d.", ++i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(alias->dst.ip, alias->dst.mask, 2), ALLOW);
-                        }
-                    }
-                }
-
-                // Free the previous list made by parsePhyIntToken().
-                for (filter = ofilters; filter; alias = filter->next, free(filter), filter = alias);   // Alloced by allocFilter()
-            }
-
+            LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
         } else {
             // Interface has no matching config, create default config.
-            LOG(LOG_DEBUG, 0, "configureVifs: Creating default config for %s interface %s.", IS_DISABLED(commonConfig.defaultInterfaceState) ? "disabled" : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream" : IS_UPSTREAM(commonConfig.defaultInterfaceState) ? "upstream" : "downstream", IfDp->Name);
+            LOG(LOG_INFO, 0, "configureVifs: Creating default config for %s interface %s.",
+                               IS_DISABLED(commonConfig.defaultInterfaceState)     ? "disabled"
+                             : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream"
+                             : IS_UPSTREAM(commonConfig.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
             if (! (confPtr = malloc(sizeof(struct vifConfig))))
                 LOG(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
             *confPtr = DEFAULT_VIFCONF;
@@ -958,27 +937,28 @@ void configureVifs(void) {
         }
 
         // Link the configuration to the interface. And update the states.
-        IfDp->conf      = confPtr;
+        IfDp->conf = confPtr;
         if (! IfDp->oldconf) {
-            // If no old config at this point it is because buildIfVc detecetd new or removed interface.
+            // If no old config at this point it is because buildIfVc detected new or removed interface.
             IfDp->oldconf = confPtr;
             if (!(IfDp->state & 0x80)) {
                 // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
                 IfDp->oldconf->state = IfDp->state;
                 IfDp->state          = IF_STATE_DISABLED | 0x80;
             } else {
-                // New interface, oldstate is disabled, newstate is configured state without default filter flag.
-                IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
+                // New interface, oldstate is disabled, newstate is configured state.
+                IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
                 IfDp->oldconf->state = IF_STATE_DISABLED;
             }
         } else {
-            // Existing interface, oldstate is current state with default filter flag, newstate is configured state without default filter flag.
-            IfDp->oldconf->state = IfDp->state | (IfDp->conf->state & 0x80);
-            IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state & ~0x80 : IF_STATE_DISABLED;
+            // Existing interface, oldstate is current state, newstate is configured state.
+            IfDp->oldconf->state = IfDp->state;
+            IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
         }
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
-        // Set configured querier ip to interface address if not configured and set version to 3 for disabled/upstream only interface.
+        // Set configured querier ip to interface address if not configured
+        // and set version to 3 for disabled/upstream only interface.
         if (confPtr->qry.ip == (uint32_t)-1)
             confPtr->qry.ip = IfDp->InAdr.s_addr;
         if (!IS_DOWNSTREAM(IfDp->state))
@@ -986,16 +966,21 @@ void configureVifs(void) {
         if (confPtr->qry.ver == 1)
             confPtr->qry.interval = 10, confPtr->qry.responseInterval = 10;
 
-        // Create default filters for aliases -> any allow, when reloading config or when new interface is detected and no configuration reload has yet occured.
-        if (!(IfDp->conf->state & 0x80) && !confPtr->compat && !confPtr->nodefaultfilter && !CONFIG->nodefaultFilter) {
-            filPtr = &confPtr->filters;
-            for (struct filters *filter = confPtr->filters; filter; filPtr = &filter->next, filter = filter->next); // Go to last filter
-            for (struct filters *filter = IfDp->aliases; filter; allocFilter(CONFIG->defaultFilterAny ? (struct filters){ {0, 0}, {0,0}, ALLOW, 3, NULL } : *filter), filter = filter->next);
-            IfDp->conf->state |= 0x80;   // Flag configuration
+        // Link default filters for interface when reloading config,
+        // or when new interface is detected and no configuration reload has yet occured.
+        if (!IfDp->conf->defaultfilter && !confPtr->nodefaultfilter) {
+            struct filters *fil;
+            for (fil = IfDp->conf->filters; fil && fil->next; fil = fil->next);
+            if (! fil)
+                IfDp->conf->filters = commonConfig.defaultFilters;
+            else
+                fil->next = commonConfig.defaultFilters;
+            IfDp->conf->defaultfilter = true;
         }
 
-        // Set the querier parameters and check if timers need to be stopped and querier process restarted.
-        if (! IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate) && IfDp->querier.ip != IfDp->conf->qry.ip)
+        // Check if querier process needs to be restarted, because election was turned of and other querier present.
+        if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
+                                      && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
 
         // Increase counters and call addVif if necessary.

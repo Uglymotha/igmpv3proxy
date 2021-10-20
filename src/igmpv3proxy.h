@@ -121,7 +121,7 @@ struct Config {
     uint8_t             defaultThreshold;
     uint64_t            defaultRatelimit;
     bool                defaultFilterAny;
-    bool                nodefaultFilter;
+    struct filters     *defaultFilters;
     // Logging Parameters.
     uint8_t             logLevel;
     bool                log2File;
@@ -147,6 +147,7 @@ struct subnet {
     uint32_t  mask;
 };
 
+#define FILTERANY (struct filters){ {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, ALLOW, 3, NULL }
 struct filters {
     struct subnet         src, dst;
     uint64_t              action;
@@ -175,8 +176,8 @@ struct vifConfig {
     uint8_t             threshold;               // Interface MC TTL
     uint64_t            ratelimit;               // Interface ratelimit
     struct queryParam   qry;                     // Configured query parameters
-    bool                compat;                  // Compatibility with old altnet/whitelist
-    bool                nodefaultfilter;         // Create default aliases -> any allow filter
+    bool                nodefaultfilter;         // Do not add default filters to interface
+    bool                defaultfilter;           // Flag when default filters are applied
     struct filters     *filters;
     struct vifConfig   *next;
 };
@@ -231,8 +232,8 @@ struct IfDesc {
 #define IS_DOWNSTREAM(x)       (x & 0x2)
 #define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
-#define IF_OLDSTATE(x)         (SHUTDOWN       ? x->state         : x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
-#define IF_NEWSTATE(x)         (x && !SHUTDOWN ? x->state & ~0x80 : IF_STATE_DISABLED)
+#define IF_OLDSTATE(x)         (x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
+#define IF_NEWSTATE(x)         (x               ? x->state          & ~0x80 : IF_STATE_DISABLED)
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -253,7 +254,7 @@ struct IfDesc {
 #define DEFAULT_HASHTABLE_SIZE  32  // Default host tracking hashtable size.
 #define DEFAULT_ROUTE_TABLES    32  // Default hash table size for route table.
 
-// Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild
+// Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
 #define GOT_SIGHUP  0x02
 #define GOT_SIGUSR1 0x04
 #define GOT_CONFREL 0x05
@@ -265,7 +266,7 @@ struct IfDesc {
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
 #define NOSIG      (sigstatus == 0)
 #define STARTUP    (sigstatus == 1)
-#define SHUTDOWN   (sigstatus == (uint8_t)-1)
+#define SHUTDOWN   (sigstatus == 32)
 
 // CLI Defines.
 #define CLI_CMD_BUF    256

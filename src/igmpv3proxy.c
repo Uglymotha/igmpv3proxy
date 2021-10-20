@@ -226,10 +226,9 @@ static void igmpProxyInit(void) {
 static void igmpProxyCleanUp(void) {
     struct timespec endtime;
 
-    configureVifs();        // Shutdown all interfaces, queriers and remove all routes.
-    freeIfDescL();          // Free IfDesc table.
+    rebuildIfVc(NULL);      // Shutdown all interfaces, queriers and remove all routes.
     freeConfig(0);          // Free config.
-    timer_freeQueue();      // Free all timeouts.
+    timer_freeQueue();      // Remove remaining timers.
     k_disableMRouter();     // Disable the MRouter API.
     if (strstr(CONFIG->runPath, fileName)) {
         // Remove socket and PID file.
@@ -326,7 +325,7 @@ static void signalHandler(int sig) {
         /* FALLTHRU */
     case SIGTERM:
         LOG(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
-        sigstatus = (uint8_t)-1;  // Shutdown
+        sigstatus = 0x20;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
     case SIGURG:

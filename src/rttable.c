@@ -229,9 +229,9 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
             internUpdateKernelRoute(croute, 1);
             for (struct sources *dsrc = croute->sources; dsrc; dsrc = delSrc(dsrc, IfDp, (uint32_t)-1));
         }
-    } else
-        BIT_CLR(croute->upstrState, IfDp->index);
+    }
 
+    // Update the interface group list.
     if (! ifr)
         for (ifr = dir ? IfDp->dRoutes : croute->gcBits ? IfDp->gRoutes : IfDp->uRoutes;
              ifr && ifr->croute != croute; ifr = ifr->next);
@@ -242,12 +242,17 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
         ifr->prev->next = ifr->next;
     else if (dir)
         IfDp->dRoutes = ifr->next;
+    else if (croute->gcBits)
+        IfDp->gRoutes = ifr->next;
     else
         IfDp->uRoutes = ifr->next;
     free(ifr);  // Alloced by addRoute()
 
+    if (!dir && croute->gcBits)
+        BIT_CLR(croute->gcBits, IfDp->index);
+
     // Check if route should be removed from table.
-    if (dir && !croute->vifBits) {
+    if (!croute->vifBits && !croute->gcBits && !(!dir && croute->upstrState)) {
         uint32_t mrtHash = murmurhash3(croute->group) % CONFIG->routeTables;
 
         LOG(LOG_DEBUG, 0, "delRoute: Deleting route %s from table %d.",inetFmt(croute->group, 1), mrtHash);
@@ -263,11 +268,14 @@ static struct ifRoutes *delRoute(struct routeTable* croute, struct IfDesc *IfDp,
         if (croute->next)
             croute->next->prev = croute->prev;
 
-        // Free the memory, and return. Alloced by addSrc() and findRoute().
-        for (struct sources *src; croute->sources; src = croute->sources->next, free(croute->sources), croute->sources = src);
-        for (struct uSources *src; croute->usources; src = croute->usources->next, free(croute->usources), croute->usources = src);
+        // Remove all sources from group.
+        for (struct sources *src = croute->sources; src; src = delSrc(src, NULL, (uint32_t)-1));
         free(croute);  // Alloced by findRoute()
     }
+
+    // Clear upstream flag if group removed from upstream interface.
+    if (!dir)
+        BIT_CLR(croute->upstrState, IfDp->index);
 
     logRouteTable("Remove route", 1, NULL, 0);
     return pifr;
@@ -336,17 +344,21 @@ static inline struct sources *addSrc(struct IfDesc *IfDp, struct routeTable *cro
 static inline struct sources *delSrc(struct sources *dsrc, struct IfDesc *IfDp, uint32_t srcHash) {
     struct sources *nsrc = dsrc->next;
 
-    LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s on %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2), IfDp->Name);
+    LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s on %s.", inetFmt(dsrc->ip, 1), inetFmt(dsrc->croute->group, 2),
+                       IfDp ? IfDp->Name : "all interfaces");
     // Remove source from hosts hash table, and clear vifbits.
     if (srcHash != (uint32_t)-1)
         clearHash(dsrc->downstreamHostsHashTable, srcHash);
-    BIT_CLR(dsrc->vifBits, IfDp->index);
+    if (IfDp)
+        BIT_CLR(dsrc->vifBits, IfDp->index);
 
-    if (!BIT_TST(dsrc->qryBits, IfDp->index)) {
+    if (!IfDp || !BIT_TST(dsrc->qryBits, IfDp->index)) {
         // Remove the source if it is not actively being queried and not active on other vifs.
-        BIT_CLR(dsrc->lmBits, IfDp->index);
-        dsrc->age[IfDp->index] = 0;
-        if (!dsrc->vifBits) {
+        if (IfDp) {
+            BIT_CLR(dsrc->lmBits, IfDp->index);
+            dsrc->age[IfDp->index] = 0;
+        }
+        if (!IfDp || !dsrc->vifBits) {
             dsrc->croute->nsrcs &= ~0x80000000;
             dsrc->croute->nsrcs--;
             if (! dsrc->usrc) {
@@ -540,6 +552,8 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, int join) {
     }
 
     for (GETIFL(IfDp)) {
+        uint32_t        i, nsrcs = 0, *slist = NULL;
+        struct sources *dsrc;
         // Check if this Request is legit to be forwarded to upstream
         if ((join && !IS_UPSTREAM(IfDp->state)) || (!join && !BIT_TST(croute->upstrState, IfDp->index))) {
             continue;
@@ -550,50 +564,53 @@ static void sendJoinLeaveUpstream(struct routeTable* croute, int join) {
         } else if (CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit) {
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
                               IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(croute->group, 1));
-        } else if (!checkFilters(IfDp->conf->filters, IfDp->index, 1, NULL, croute)) {
-            LOG(LOG_NOTICE, 0, "The group address %s may not be forwarded to upstream interface %s.",
-                              inetFmt(croute->group, 1), IfDp->Name);
-        //} else if (bw > ALLOW) {
-        //    LOG(LOG_NOTICE, 0, "Group %s bandwidth over limit (%lld) on %s. Not joining.",
-        //                      inetFmt(croute->group, 1), bw, IfDp->Name);
         } else if (join) {
-            // Build source list for upstream interface.
-            // For IN: All active downstream and allowed sources are to be included in the list.
-            // For EX: All sources, with timer = 0 on all active interfaces are to be included.
-            uint32_t i, nsrcs, *slist;
-            struct sources *dsrc;
-            if (! (slist = malloc((croute->nsrcs & ~0x80000000) * sizeof(uint32_t))))  // Freed by self
-                LOG(LOG_ERR, errno, "sendJoinLeaveUpstream: Out of Memory.");
-            for (nsrcs = 0, dsrc = croute->sources; dsrc; dsrc = dsrc->next) {
-                if (!croute->mode) {
-                    if (!dsrc->vifBits || noHash(dsrc->downstreamHostsHashTable)) {
-                        LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: No downstream hosts %s:%s on %s, not adding to source list.",
-                                         inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
-                        continue;
-                    }
-                    if (!checkFilters(IfDp->conf->filters, IfDp->index, 0, dsrc, croute)) {
-                        // Check if source is allowed for group on upstream interface.
-                        LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: Source %s not allowed for group %s on interface %s.",
-                                         inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
-                        continue;
-                    }
-                } else {
-                    if (dsrc->vifBits != croute->vifBits)
-                        continue;
-                    else for (i = 0; i < MAXVIFS && ( !((croute->vifBits >> i) & 0x1) || !croute->age[i] ); i++ );
-                    if (i >= MAXVIFS)
-                        continue;
+            if (!checkFilters(IfDp->conf->filters, IfDp->index, 1, NULL, croute)) {
+                if (!BIT_TST(croute->upstrState, IfDp->index)) {
+                    LOG(LOG_NOTICE, 0, "The group address %s may not be forwarded to upstream interface %s.",
+                                        inetFmt(croute->group, 1), IfDp->Name);
+                    addRoute(croute, IfDp, 0);
                 }
+            } else {
+                // Build source list for upstream interface.
+                // For IN: All active downstream and allowed sources are to be included in the list.
+                // For EX: All sources, with timer = 0 on all active interfaces are to be included.
+                if (! (slist = malloc((croute->nsrcs & ~0x80000000) * sizeof(uint32_t))))  // Freed by self
+                    LOG(LOG_ERR, errno, "sendJoinLeaveUpstream: Out of Memory.");
+                for (nsrcs = 0, dsrc = croute->sources; dsrc; dsrc = dsrc->next) {
+                    if (!croute->mode) {
+                        if (!dsrc->vifBits || noHash(dsrc->downstreamHostsHashTable)) {
+                                LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: No downstream hosts %s:%s on %s, not adding to source list.",
+                                                  inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                            continue;
+                        }
+                        if (!checkFilters(IfDp->conf->filters, IfDp->index, 0, dsrc, croute)) {
+                            // Check if source is allowed for group on upstream interface.
+                            LOG(LOG_INFO, 0, "sendJoinLeaveUpstream: Source %s not allowed for group %s on interface %s.",
+                                             inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                            continue;
+                        }
+                    } else {
+                        if (dsrc->vifBits != croute->vifBits)
+                            continue;
+                        else for (i = 0; i < MAXVIFS && ( !((croute->vifBits >> i) & 0x1) || !croute->age[i] ); i++ );
+                        if (i >= MAXVIFS)
+                            continue;
+                    }
 
-                LOG(LOG_DEBUG, 0, "sendJoinLeaveUpstream: Adding %s to source list for %s on %s.",
-                                   inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
-                slist[nsrcs++] = dsrc->ip;
+                    LOG(LOG_DEBUG, 0, "sendJoinLeaveUpstream: Adding %s to source list for %s on %s.",
+                                       inetFmt(dsrc->ip, 1), inetFmt(croute->group, 2), IfDp->Name);
+                    slist[nsrcs++] = dsrc->ip;
+                }
             }
+
             // Join the group on interface if necessary.
-            if (!BIT_TST(croute->upstrState, IfDp->index) && !(!croute->mode && !nsrcs) && k_joinMcGroup(IfDp, croute->group)) {
+            if (!BIT_TST(croute->upstrState, IfDp->index) && !(!croute->mode && !nsrcs)) {
                 LOG(LOG_INFO, 0, "Joining group %s upstream on interface %s.", inetFmt(croute->group, 1), IfDp->Name);
-                addRoute(croute, IfDp, 0);
+                if (k_joinMcGroup(IfDp, croute->group))
+                    addRoute(croute, IfDp, 0);
             }
+
             // If the group is joined on interface update the source filter. If IN no sources, group is unjoined effectively.
             if (BIT_TST(croute->upstrState, IfDp->index)) {
                 k_setSourceFilter(IfDp, croute->group, croute->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist);
@@ -648,46 +665,53 @@ void clearRoutes(void *Dp) {
                     internUpdateKernelRoute(croute, 1);
                 }
 #endif
-            } else {
+            } else if (checkFilters(IfDp->conf->filters, IfDp->index, 0, NULL, croute)) {
                 // New upstream interface added, join all relevant groups.
-                sendJoinLeaveUpstream(croute, 1);
                 LOG(LOG_DEBUG, 0, "clearRoutes: Joining group %s on new upstream interface %s.",
                                    inetFmt(croute->group, 1), IfDp->Name);
-            }
+                if (k_joinMcGroup(IfDp, croute->group))
+                    addRoute(croute, IfDp, 0);
+            } else
+                addRoute(croute, IfDp, 0);
         }
         return;
     }
 
     // Upstream interface transition.
-    if (IS_UPSTREAM(newstate) || IS_UPSTREAM(oldstate)) for (ifr = IfDp->uRoutes; ifr; ifr = ifr ? ifr->next : IfDp->uRoutes) {
-        croute = ifr->croute;
-        if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
-            // Clear uptsream perm bits for all sources, they will be reevaluated next source filter update.
-            for (struct sources *dsrc = croute->sources; dsrc; BIT_CLR(dsrc->uPBits.e, IfDp->index), dsrc = dsrc->next);
-            if (   !checkFilters(IfDp->conf->filters   , IfDp->index, 0, NULL, croute)
-                &&  checkFilters(IfDp->oldconf->filters, IfDp->index, 1, NULL, croute)) {
-                // Group is no longer allowed. Leave.
-                LOG(LOG_WARNING, 0, "clearRoutes: Leaving group %s on %s, no longer allowed.",
-                                     inetFmt(croute->group, 1), IfDp->Name);
-                if (k_leaveMcGroup(IfDp, croute->group))
-                    BIT_CLR(croute->upstrState, IfDp->index);
+    if (IS_UPSTREAM(newstate) || IS_UPSTREAM(oldstate)) {
+        for (ifr = IfDp->uRoutes; ifr; ifr = ifr ? ifr->next : IfDp->uRoutes) {
+            croute = ifr->croute;
+            if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
+                // Clear uptsream perm bits for all sources, they will be reevaluated next source filter update.
+                for (struct sources *dsrc = croute->sources; dsrc; BIT_CLR(dsrc->uPBits.e, IfDp->index), dsrc = dsrc->next);
+                if (   !checkFilters(IfDp->conf->filters   , IfDp->index, 0, NULL, croute)
+                    &&  checkFilters(IfDp->oldconf->filters, IfDp->index, 1, NULL, croute)) {
+                    // Group is no longer allowed. Leave.
+                    LOG(LOG_WARNING, 0, "clearRoutes: Leaving group %s on %s, no longer allowed.",
+                                         inetFmt(croute->group, 1), IfDp->Name);
+                    k_leaveMcGroup(IfDp, croute->group);
+                    ifr = delRoute(croute, IfDp, ifr, 0);
+                } else if (    checkFilters(IfDp->conf->filters,    IfDp->index, 0, NULL, croute)
+                           && !checkFilters(IfDp->oldconf->filters, IfDp->index, 0, NULL, croute)) {
+                    // Group is now allowed on upstream interface, join.
+                    if (croute->vifBits) {
+                        LOG(LOG_INFO, 0, "clearRoutes: Joining group %s on %s, it is now allowed.",
+                                          inetFmt(croute->group, 1), IfDp->Name);
+                        if (!k_joinMcGroup(IfDp, croute->group))
+                            ifr = delRoute(croute, IfDp, ifr, 0);
+                    }
+                }
+            } else if (!IS_UPSTREAM(newstate) && BIT_TST(croute->upstrState, IfDp->index)) {
+                // Transition from upstream to downstream or disabled. Leave group.
+                k_leaveMcGroup(IfDp, croute->group);
                 ifr = delRoute(croute, IfDp, ifr, 0);
-            } else if (    checkFilters(IfDp->conf->filters,    IfDp->index, 0, NULL, croute)
-                       && !checkFilters(IfDp->oldconf->filters, IfDp->index, 0, NULL, croute)) {
-                // Group is now allowed on upstream interface, join.
-                if (croute->vifBits && k_joinMcGroup(IfDp, croute->group))
-                    BIT_SET(croute->upstrState, IfDp->index);
-                LOG(LOG_INFO, 0, "clearRoutes: Joining group %s on %s, it is now allowed.",
+                LOG(LOG_INFO, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.",
                                   inetFmt(croute->group, 1), IfDp->Name);
             }
-        } else if (!IS_UPSTREAM(newstate) && BIT_TST(croute->upstrState, IfDp->index)) {
-            // Transition from upstream to downstream or disabled. Leave group.
-            if (k_leaveMcGroup(IfDp, croute->group))
-                BIT_CLR(croute->upstrState, IfDp->index);
-            ifr = delRoute(croute, IfDp, ifr, 0);
-            LOG(LOG_INFO, 0, "clearRoutes: Leaving group %s on %s, no longer upstream.",
-                                 inetFmt(croute->group, 1), IfDp->Name);
         }
+        for (ifr = IfDp->gRoutes; ifr; ifr = ifr ? ifr->next : IfDp->gRoutes)
+            if (!IS_UPSTREAM(newstate) && BIT_TST(((struct routeTable*)ifr->croute)->gcBits, IfDp->index))
+                ifr = delRoute((struct routeTable *)ifr->croute, IfDp, ifr, 0);
     }
 
     // Downstream interface transition.
@@ -719,9 +743,8 @@ void clearRoutes(void *Dp) {
         free(mrt);  // Alloced by findRoute()
         mrt = NULL;
         LOG(LOG_INFO, 0, "clearRoutes: Routing table is empty.");
-    }
-
-    logRouteTable("Clear Routes", 1, NULL, 0);
+    } else
+        logRouteTable("Clear Routes", 1, NULL, 0);
 }
 
 /**
