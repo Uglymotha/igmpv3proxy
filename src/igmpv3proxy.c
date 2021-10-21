@@ -176,8 +176,11 @@ int main(int ArgCn, char *ArgVc[]) {
 static void igmpProxyInit(void) {
     struct sigaction sa;
 
-    LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy.");
     clock_gettime(CLOCK_REALTIME, &starttime);
+    char tS[32] = "", *t = asctime(localtime(&starttime.tv_sec));
+    memcpy(tS, t, strlen(t) - 1);
+    tS[strlen(t) - 1] = '\0';
+    LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy on %s.", tS);
     sigstatus = 1;  // STARTUP
 
     sa.sa_handler = signalHandler;
@@ -243,7 +246,12 @@ static void igmpProxyCleanUp(void) {
     free(CONFIG->runPath);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
-    LOG(LOG_WARNING, 0, "Shutting down after %d seconds.", timeDiff(starttime, endtime).tv_sec);
+    char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
+    memcpy(tS, t, strlen(t) - 1);
+    t = asctime(localtime(&endtime.tv_sec));
+    memcpy(tE, t, strlen(t) - 1);
+    tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
+    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%d s).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 }
 
 /**

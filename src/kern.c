@@ -110,9 +110,9 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
     GrpReq.imr_interface.s_addr = IfDp ? IfDp->InAdr.s_addr : (struct in_addr){ 0 };
 #endif
 
-    if (setsockopt(mrouterFD, IPPROTO_IP, Cmd == 'j' ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
-        int mcastGroupExceeded = (Cmd == 'j' && errno == ENOBUFS);
-        LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd == 'j' ? "JOIN" : "LEAVE",
+    if (setsockopt(mrouterFD, IPPROTO_IP, Cmd ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
+        int mcastGroupExceeded = (Cmd && errno == ENOBUFS);
+        LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd ? "JOIN" : "LEAVE",
                                  inetFmt(group, 1), IfDp->Name)
 ;
         if (mcastGroupExceeded) {
@@ -133,7 +133,7 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
 *   closed the membership is dropped.
 */
 inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
-    bool r = k_joinleave('j', IfDp, group);
+    bool r = k_joinleave(1, IfDp, group);
     return r;
 }
 
@@ -141,7 +141,7 @@ inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
 *   Leaves the MC group with the address 'McAdr' on the interface 'IfName'.
 */
 inline bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t group) {
-    bool r = k_joinleave('l', IfDp, group);
+    bool r = k_joinleave(0, IfDp, group);
     return r;
 }
 
