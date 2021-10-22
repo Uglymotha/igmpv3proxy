@@ -130,7 +130,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
             if (checkIgmp(IfDp, dst, IF_STATE_UPSTREAM))
-                activateRoute(IfDp, NULL, src, dst);
+                activateRoute(IfDp, NULL, src, dst, true);
             return;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         case IGMPMSG_BW_UPCALL:

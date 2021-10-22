@@ -81,9 +81,6 @@ int main(int ArgCn, char *ArgVc[]) {
         case 'n':
             CONFIG->notAsDaemon = true;
             break;
-        case 'h':
-            fprintf(stdout, Usage, fileName);
-            exit(0);
         case 'c':
             c = getopt(ArgCn, ArgVc, "cbr::ifth");
             while (c != -1) {
@@ -137,6 +134,7 @@ int main(int ArgCn, char *ArgVc[]) {
             fprintf(stdout, "Igmpproxy %s\n", PACKAGE_VERSION);
             exit(0);
         default:
+            fprintf(stdout, Usage, fileName);
             exit(-1);
         }
     }
@@ -146,7 +144,7 @@ int main(int ArgCn, char *ArgVc[]) {
         fprintf(stderr, "%s: must be root.\n", fileName);
         exit(-1);
     } else if (optind != ArgCn - 1) {
-        fprintf(stdout, "You must specify the configuration file.\n");
+        fprintf(stderr, "You must specify the configuration file.\n");
         exit(-1);
     } else {
         // Write debug notice with file path.
@@ -201,14 +199,14 @@ static void igmpProxyInit(void) {
         LOG(LOG_ERR, errno, "Failed to detach daemon.\n");
     }
 
+    // Fork daemon.
+    if (!CONFIG->notAsDaemon && fork())
+        exit(0);
+
     // Load the config file.
     if (! loadConfig())
         LOG(LOG_ERR, 0, "Unable to load configuration file %s.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
-
-    // Fork daemon.
-    if (!CONFIG->notAsDaemon && fork())
-        exit(0);
 
     // Enable mroute api open cli socket and set pollFD.
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };
@@ -229,10 +227,11 @@ static void igmpProxyInit(void) {
 static void igmpProxyCleanUp(void) {
     struct timespec endtime;
 
-    rebuildIfVc(NULL);      // Shutdown all interfaces, queriers and remove all routes.
-    freeConfig(0);          // Free config.
-    timer_freeQueue();      // Remove remaining timers.
-    k_disableMRouter();     // Disable the MRouter API.
+    rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
+    timer_freeQueue();        // Remove remaining timers.
+    k_disableMRouter();       // Disable the MRouter API.
+    if (pollFD[1].fd > 0)
+        close(pollFD[1].fd);  // Close CLI socket.
     if (strstr(CONFIG->runPath, fileName)) {
         // Remove socket and PID file.
         char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
@@ -242,8 +241,7 @@ static void igmpProxyCleanUp(void) {
         remove(rFile);
         rmdir(CONFIG->runPath);
     }
-    free(CONFIG->logFilePath);
-    free(CONFIG->runPath);
+    freeConfig(0);          // Free config.
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -251,7 +249,7 @@ static void igmpProxyCleanUp(void) {
     t = asctime(localtime(&endtime.tv_sec));
     memcpy(tE, t, strlen(t) - 1);
     tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
-    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%d s).", tE, tS, timeDiff(starttime, endtime).tv_sec);
+    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 }
 
 /**
@@ -328,17 +326,19 @@ static void igmpProxyRun(void) {
 */
 static void signalHandler(int sig) {
     switch (sig) {
-    case SIGINT:
-        if (!CONFIG->notAsDaemon) return;  // Daemon ignores SIGINT
+//    case SIGINT:
+//        if (!CONFIG->notAsDaemon) return;  // Daemon ignores SIGINT
         /* FALLTHRU */
     case SIGTERM:
         LOG(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
         sigstatus = 0x20;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
+    case SIGINT:
     case SIGURG:
         LOG(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
         sighandled |= GOT_SIGURG;
+        sigstatus = 0x20;  // Shutdown
         return;
     case SIGPIPE:
         LOG(LOG_NOTICE, 0, "SIGPIPE: Ceci n'est pas un SIGPIPE.");

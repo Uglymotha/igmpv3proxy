@@ -63,6 +63,9 @@ void freeIfDescL() {
         } else
             IfDp->oldconf = NULL;
     }
+
+    if (SHUTDOWN)
+        IfDescL = NULL;
     LOG(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
 }
 

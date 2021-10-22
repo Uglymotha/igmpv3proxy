@@ -389,7 +389,7 @@ uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearRoutes(void *Dp);
 void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
-void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group);
+void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group, bool activate);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
 void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *src, uint8_t type);
 void     ageRoutes(struct IfDesc *IfDp);

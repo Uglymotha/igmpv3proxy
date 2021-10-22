@@ -95,6 +95,11 @@ void freeConfig(int old) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
 
+    if (SHUTDOWN) {
+        free(CONFIG->logFilePath);
+        free(CONFIG->runPath);
+        timers = (struct timers){ 0, 0, 0 };
+    }
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
