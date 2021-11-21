@@ -268,10 +268,10 @@ static void initCommonConfig(void) {
 
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
-    commonConfig.downstreamHostsHashTableSize = DEFAULT_HASHTABLE_SIZE;
+    commonConfig.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
 
     // Number of (hashed) route tables.
-    commonConfig.routeTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldcommonConfig.routeTables;
+    commonConfig.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldcommonConfig.mcTables;
 
     // Default interface state and parameters.
     commonConfig.defaultInterfaceState = IF_STATE_DISABLED;
@@ -445,7 +445,8 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("maxorigins", token) == 0 && INTTOKEN) {
             // Got a maxorigins token...
-            commonConfig.maxOrigins = intToken < DEFAULT_MAX_ORIGINS || intToken > 65535 ? DEFAULT_MAX_ORIGINS : intToken;
+            if (intToken >= DEFAULT_MAX_ORIGINS || intToken <= 65535 || intToken == 0)
+                commonConfig.maxOrigins = intToken;
             LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
 
         } else if (strcasecmp("hashtablesize", token) == 0 && INTTOKEN) {
@@ -454,17 +455,17 @@ bool loadConfig(void) {
                 LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
             else if (intToken < 8 || intToken > 131072)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8), using default %d.",
-                                     commonConfig.downstreamHostsHashTableSize);
+                                     commonConfig.dHostsHTSize);
             else {
-                commonConfig.downstreamHostsHashTableSize = (intToken - intToken % 8) * 8;
-                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.downstreamHostsHashTableSize / 8);
+                commonConfig.dHostsHTSize = (intToken - intToken % 8) * 8;
+                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.dHostsHTSize / 8);
             }
 
-        } else if (strcasecmp("routetables", token) == 0 && INTTOKEN) {
+        } else if (strcasecmp("mctables", token) == 0 && INTTOKEN) {
             // Got a routetables token...
             if (STARTUP) {
-                commonConfig.routeTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
-                LOG(LOG_NOTICE, 0, "Config: %d route table hash entries.", commonConfig.routeTables);
+                commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
+                LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
             }
 
         } else if (strcasecmp("defaultupdown", token) == 0) {
@@ -721,7 +722,7 @@ bool loadConfig(void) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             commonConfig.bwControlInterval = 0;
         } else if (!STARTUP)
-            clearRoutes(getConfig);
+            clearGroups(getConfig);
 #endif
         if (commonConfig.bwControlInterval)
             timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control",
@@ -730,21 +731,21 @@ bool loadConfig(void) {
 
     // Set hashtable size to 0 when quickleave is disabled.
     if (!commonConfig.fastUpstreamLeave)
-        commonConfig.downstreamHostsHashTableSize = 0;
+        commonConfig.dHostsHTSize = 0;
 
     // Check if quickleave was enabled or disabled due to config change.
     if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
         LOG(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.",
                             commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
-        clearRoutes(CONFIG);
+        clearGroups(CONFIG);
     }
 
     // Check if hashtable size was changed due to config change.
     if (!STARTUP && commonConfig.fastUpstreamLeave
-                 && oldcommonConfig.downstreamHostsHashTableSize != commonConfig.downstreamHostsHashTableSize) {
+                 && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
         LOG(LOG_NOTICE, 0, "Config: Downstream host hashtable size changed from %i to %i, reinitializing routes.",
-                            oldcommonConfig.downstreamHostsHashTableSize, commonConfig.downstreamHostsHashTableSize);
-        clearRoutes(CONFIG);
+                            oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
+        clearGroups(CONFIG);
     }
 
     return true;
@@ -981,6 +982,22 @@ void configureVifs(void) {
             IfDp->conf->defaultfilter = true;
         }
 
+        // Check if filters have change due to configuration reload.
+        struct filters *filo = IfDp->oldconf->filters, *fil = IfDp->conf->filters;
+        if (CONFRELOAD || SSIGHUP) do {
+            if (   (fil && filo && (   fil->dir != filo->dir || fil->action != filo->action
+                                    || fil->src.ip != filo->src.ip || fil->src.mask != filo->src.mask
+                                    || fil->dst.ip != filo->dst.ip || fil->dst.mask != filo->dst.mask))
+                || (! fil && filo) || (fil && ! filo)) {
+                    LOG(LOG_INFO, 0, "configureVifs: Filters for %s changed.", IfDp->Name);
+                    IfDp->filCh = true;
+                }
+            if (fil)
+                fil = fil->next;
+            if (filo)
+                filo = filo->next;
+        } while (!IfDp->filCh && fil && filo);
+
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
@@ -996,11 +1013,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearRoutes(IfDp); }
+        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
         else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
-        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearRoutes(IfDp); }
-        else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearRoutes(IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    {                       clearRoutes(IfDp); }
+        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
+        else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
+        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    {                       clearGroups(IfDp); }
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {

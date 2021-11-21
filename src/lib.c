@@ -174,7 +174,7 @@ inline bool noHash(register uint64_t *table) {
     if (!CONFIG->fastUpstreamLeave)
         return false;
 
-    register uint64_t i, n = CONFIG->downstreamHostsHashTableSize / 8;
+    register uint64_t i, n = CONFIG->dHostsHTSize / 8;
     for (i = 0; i < n && table[i] == 0; i++);
     return i < n ? false : true;
 }

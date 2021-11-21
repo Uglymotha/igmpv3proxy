@@ -111,9 +111,9 @@ struct Config {
     // Set if upstream leave messages should be sent instantly..
     bool                fastUpstreamLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
-    uint32_t            downstreamHostsHashTableSize;
+    uint32_t            dHostsHTSize;
     uint32_t            hashSeed;
-    uint16_t            routeTables;
+    uint16_t            mcTables;
     // Max origins for route when bw control is disabled.
     uint16_t            maxOrigins;
     // Set default interface status and parameters.
@@ -197,31 +197,26 @@ struct querier {                                        // igmp querier status f
 #define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0, 0 }
 #define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
 
-struct ifRoutes {
-    struct ifRoutes *prev;
-    void            *croute;        // Pointer to route in routing table
-    struct ifRoutes *next;
-};
-
 // Interfaces configuration.
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
-    struct in_addr                InAdr;                    // Primary IP
-    struct filters               *aliases;                  // Secondary IPs
-    uint32_t                      Flags;                    // Operational flags
-    uint32_t                      mtu;                      // Interface MTU
-    uint8_t                       state;                    // Operational state
-    struct vifConfig             *conf, *oldconf;           // Pointer to interface configuraion
-    struct querier                querier;                  // igmp querier for interface
-    uint64_t                      bytes, rate;              // Counters for bandwith control
-    unsigned int                  sysidx;                   // Interface system index
-    uint8_t                       index;                    // MCast vif index
-    struct ifRoutes              *dRoutes;                  // Pointers to active downstream groups for vif
-    struct ifRoutes              *uRoutes;                  // Pointers to active upstream groups for vif
-    struct ifRoutes              *gRoutes;                  // Pointers to active upstream groups for vif
+    struct in_addr                InAdr;                 // Primary IP
+    struct filters               *aliases;               // Secondary IPs
+    uint32_t                      Flags;                 // Operational flags
+    uint32_t                      mtu;                   // Interface MTU
+    uint8_t                       state;                 // Operational state
+    struct vifConfig             *conf, *oldconf;        // Pointer to interface configuraion
+    bool                          filCh;                 // Flag to indicat filter change during config reload
+    struct querier                querier;               // igmp querier for interface
+    uint64_t                      bytes, rate;           // Counters for bandwith control
+    unsigned int                  sysidx;                // Interface system index
+    uint8_t                       index;                 // MCast vif index
+    void                         *dMct;                  // Pointers to active downstream groups for vif
+    void                         *uMct;                  // Pointers to active upstream groups for vif
+    void                         *gMct;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -379,20 +374,20 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 *   rttable.c
 */
 #define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
-#define GETMRT(x) uint16_t iz; if (mrt) for (iz = 0; iz < CONFIG->routeTables; iz++) \
-                                        for (x = mrt[iz]; x; x = ! x ? mrt[iz] : x->next)
+#define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
+                                        for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
 #define IS_EX(x,y)    BIT_TST(x->mode, y->index)
 #define IS_IN(x,y)   !BIT_TST(x->mode, y->index)
 #define IS_SET(x,y)   BIT_TST(x->vifBits, y->index)
 #define NOT_SET(x,y) !BIT_TST(x->vifBits, y->index)
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
-void     clearRoutes(void *Dp);
-void     updateRoute(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
+void     clearGroups(void *Dp);
+void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group, bool activate);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
 void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *src, uint8_t type);
-void     ageRoutes(struct IfDesc *IfDp);
+void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);

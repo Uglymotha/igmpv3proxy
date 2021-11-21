@@ -42,30 +42,23 @@ static struct IfDesc *IfDescL = NULL;
 */
 void freeIfDescL() {
     struct IfDesc *IfDp = NULL, *pIfDp = NULL, *nIfDp = NULL;
-    for (IfDp = IfDescL; IfDp; pIfDp = !(SHUTDOWN || (IfDp->state & 0x80)) ? IfDp : pIfDp, IfDp = nIfDp) {
+    for (IfDp = IfDescL; IfDp; pIfDp = !(IfDp->state & 0x80) ? IfDp : pIfDp, IfDp = nIfDp) {
         nIfDp = IfDp->next;
-        if (SHUTDOWN || (IfDp->state & 0x80)) {
+        if (IfDp->state & 0x80) {
             // Free filters, dSources and uSources.
             for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);
-            for (struct ifRoutes *ifr = IfDp->dRoutes, *nifr = NULL; ifr; nifr = ifr->next, free(ifr), ifr = nifr);
-            IfDp->dRoutes = NULL;
-            for (struct ifRoutes *ifr = IfDp->uRoutes, *nifr = NULL; ifr; nifr = ifr->next, free(ifr), ifr = nifr);
-            IfDp->uRoutes = NULL;
             // On shutdown, or when interface is marked for deletion, remove it and its aliases.
-            if (!SHUTDOWN) {
-                LOG(LOG_DEBUG, 0, "freeIfDescL: Interface %s disappeared, removing from list.", IfDp->Name);
-                if (pIfDp)
-                    pIfDp->next = IfDp->next;
-                else
-                    IfDescL = IfDp->next;
-            }
+            if (!SHUTDOWN)
+                LOG(LOG_WARNING, 0, "Interface %s was removed.", IfDp->Name);
+            if (pIfDp)
+                pIfDp->next = IfDp->next;
+            else
+                IfDescL = IfDp->next;
             free(IfDp);  // Alloced by buildIfvc()
         } else
             IfDp->oldconf = NULL;
     }
 
-    if (SHUTDOWN)
-        IfDescL = NULL;
     LOG(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
 }
 
@@ -81,7 +74,7 @@ void rebuildIfVc(uint64_t *tid) {
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
-    LOG(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs, New ptr: %x", IfDescL);
+    LOG(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs. Ptr: %p", IfDescL);
     configureVifs();
 
     // Free removed interfaces.
@@ -102,17 +95,17 @@ void buildIfVc(void) {
     struct ifreq ifr;
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
     struct filters *nfil, *fil;
-    if ((getifaddrs (&IfAddrsP)) == -1)
-        LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "buildIfVc: getifaddr() failed, cannot enumerate interfaces");
+    if ((getifaddrs(&IfAddrsP)) == -1)
+        LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "Cannot enumerate interfaces.");
 
     // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
             || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
-            || (! (tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
+            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || (! ((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))) {
+            || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))) {
             continue;
         }
 
@@ -148,7 +141,7 @@ void buildIfVc(void) {
         } else {
             // Rebuild Interface. Free current aliases and update oldstate.
             for (fil = IfDp->aliases; fil; nfil = fil->next, free(fil), fil = nfil);   // Alloced by self
-            // If an interface has disappeared state is not reset here and createVifs() can mark it for deletion.
+            // If an interface has disappeared state is not reset here and configureVifs() can mark it for deletion.
             IfDp->oldconf = IfDp->conf;
             IfDp->conf    = NULL;
         }
@@ -161,19 +154,20 @@ void buildIfVc(void) {
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
-        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0)
-            LOG(LOG_WARNING, errno, "buildIfVc: Failed to get MTU for %s, disabling.", IfDp->Name);
-        else
+        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
+            LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
+            IfDp->mtu = 0;
+        } else
             IfDp->mtu = ifr.ifr_mtu;
 
         // Enable multicast if necessary.
         if (! (IfDp->Flags & IFF_MULTICAST)) {
             ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
             if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
-                LOG(LOG_WARNING, errno, "buildIfVc: Failed to enable multicast on %s, disabling.", IfDp->Name);
+                LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
             else {
                 IfDp->Flags = ifr.ifr_flags;
-                LOG(LOG_NOTICE, 0, "buildIfVc: Multicast Enabled on %s.", IfDp->Name);
+                LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
             }
         }
 
@@ -182,8 +176,8 @@ void buildIfVc(void) {
             LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
         *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
 
-        // Debug log the result...
-        LOG(LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
+        // Log the result...
+        LOG(LOG_INFO, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
                             IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->Flags, IfDp->mtu,
                             inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
     }

@@ -199,7 +199,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         case IGMP_V2_LEAVE_GROUP:
         case IGMP_V2_MEMBERSHIP_REPORT:
             if (checkIgmp(IfDp, igmp->igmp_group.s_addr, IF_STATE_DOWNSTREAM))
-                updateRoute(IfDp, src, (void *)igmp);
+                updateGroup(IfDp, src, (void *)igmp);
             return;
 
         case IGMP_V3_MEMBERSHIP_REPORT: {
@@ -211,7 +211,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
                     LOG(LOG_NOTICE, 0, "Ignoring unknown IGMPv3 group record type %x from %s to %s for %s",
                                         grec->grec_type, inetFmt(src, 1), inetFmt(dst, 2), inetFmt(grec->grec_mca.s_addr, 3));
                 else if (checkIgmp(IfDp, grec->grec_mca.s_addr, IF_STATE_DOWNSTREAM))
-                    updateRoute(IfDp, src, grec);
+                    updateGroup(IfDp, src, grec);
                 grec = (struct igmpv3_grec *)(&grec->grec_src[nsrcs] + grec->grec_auxwords * 4);
             } while (--ngrec && (char *)igmpv3gr + ipdatalen >= (char *)grec + sizeof(*grec));
             return;
@@ -363,7 +363,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                 timeout = ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10;
                 IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
                                                         strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
-                                                        (timer_f)ageRoutes, IfDp);
+                                                        (timer_f)ageGroups, IfDp);
             }
             // Determine timeout for other querier, in case of gsq, use configured values.
             if (ver == 3)
@@ -423,7 +423,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
         IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
                                                 strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
-                                                (timer_f)ageRoutes, IfDp);
+                                                (timer_f)ageGroups, IfDp);
         LOG(LOG_DEBUG, 0, "Sent membership query from %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
                            inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
     }
