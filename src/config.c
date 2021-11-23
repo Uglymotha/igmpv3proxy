@@ -94,9 +94,11 @@ void freeConfig(int old) {
         for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
         free(cConf);
     }
-    if (old || SHUTDOWN)
+    if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
+        for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
+    }
 
     if (SHUTDOWN) {
         free(CONFIG->logFilePath);
