@@ -41,22 +41,20 @@ static struct IfDesc *IfDescL = NULL;
 *   Frees the IfDesc table. Paramter specifies cleanup after an interface rebuild.
 */
 void freeIfDescL() {
-    struct IfDesc *IfDp = NULL, *pIfDp = NULL, *nIfDp = NULL;
-    for (IfDp = IfDescL; IfDp; pIfDp = !(IfDp->state & 0x80) ? IfDp : pIfDp, IfDp = nIfDp) {
-        nIfDp = IfDp->next;
-        if (IfDp->state & 0x80) {
-            // Free filters, dSources and uSources.
-            for (struct filters *fil = IfDp->aliases, *nfil = NULL; fil; nfil = fil->next, free(fil), fil = nfil);
-            // On shutdown, or when interface is marked for deletion, remove it and its aliases.
+    struct IfDesc *IfDp = IfDescL, *fIfDp;
+    while (IfDp) {
+        if ((IfDp == IfDescL && (IfDp->state & 0x80)) || (IfDp->next && (IfDp->next->state & 0x80))) {
+            // Remove interface marked for deletion.
             if (!SHUTDOWN)
-                LOG(LOG_WARNING, 0, "Interface %s was removed.", IfDp->Name);
-            if (pIfDp)
-                pIfDp->next = IfDp->next;
+                LOG(LOG_WARNING, 0, "Interface %s was removed.", IfDp == IfDescL ? IfDp->Name : IfDp->next->Name);
+            fIfDp = IfDp == IfDescL ? IfDescL : IfDp->next;
+            if (IfDp == IfDescL)
+                IfDescL = IfDp = IfDp->next;
             else
-                IfDescL = IfDp->next;
-            free(IfDp);  // Alloced by buildIfvc()
+                IfDp->next = IfDp->next->next;
+            free(fIfDp);
         } else
-            IfDp->oldconf = NULL;
+            IfDp = IfDp->next;
     }
 
     LOG(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
@@ -94,13 +92,12 @@ void buildIfVc(void) {
     // Get the system interface list.
     struct ifreq ifr;
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
-    struct filters *nfil, *fil;
     if ((getifaddrs(&IfAddrsP)) == -1)
         LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "Cannot enumerate interfaces.");
 
-    // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
     for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
+            // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
             || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
             || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
@@ -110,22 +107,10 @@ void buildIfVc(void) {
         }
 
         struct IfDesc *IfDp;
-        uint32_t addr   = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask),
-                 subnet = (tmpIfAddrsP->ifa_flags & IFF_POINTOPOINT ? s_addr_from_sockaddr(tmpIfAddrsP->ifa_dstaddr) : addr) & mask;
-        unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
+        uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
+        unsigned int   ix   = if_nametoindex(tmpIfAddrsP->ifa_name);
         if ((IfDp = getIf(ix, 1)) && (! IfDp->conf)) {
             // Check if the interface is an alias for an already created or rebuild IfDesc.
-            // If the alias lies within any of the existing subnets or is /32 it does not need to be added to the list of aliases.
-            for (fil = IfDp->aliases; fil && ! ((addr & fil->src.mask) == fil->src.ip); fil = fil->next);
-            if (! fil && mask != 0xFFFFFFFF) {
-                // Create new alias and prepend to list of existing aliases.
-                fil = IfDp->aliases;
-                if (! (IfDp->aliases = malloc(sizeof(struct filters))))
-                    LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by Self or freeIfDescL()
-                *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, fil };
-            }
-            LOG(LOG_INFO, 0, "builfIfVc: Interface %s Addr: %s, Network: %s, Ptr: %p", IfDp->Name,
-                              inetFmt(addr, 1), inetFmts(subnet, mask, 2), IfDp->aliases);
             continue;
 
         } else if (! IfDp) {
@@ -139,11 +124,9 @@ void buildIfVc(void) {
             IfDp->Name[IF_NAMESIZE - 1] = '\0';
 
         } else {
-            // Rebuild Interface. Free current aliases and update oldstate.
-            for (fil = IfDp->aliases; fil; nfil = fil->next, free(fil), fil = nfil);   // Alloced by self
-            // If an interface has disappeared state is not reset here and configureVifs() can mark it for deletion.
-            IfDp->oldconf = IfDp->conf;
-            IfDp->conf    = NULL;
+            // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
+            IfDp->conf   = NULL;
+            IfDp->state |= 0x40;
         }
 
         // Set the interface flags, index and IP.
@@ -171,15 +154,9 @@ void buildIfVc(void) {
             }
         }
 
-        // Insert the verified subnet as first alias.
-        if (! (IfDp->aliases = malloc(sizeof(struct filters))))
-            LOG(LOG_ERR, errno, "buildIfVc: Out of memory !");   // Freed by freeIfDescP()
-        *IfDp->aliases = (struct filters){ {subnet, mask}, {INADDR_ANY, 0}, ALLOW, (uint8_t)-1, NULL };
-
         // Log the result...
-        LOG(LOG_INFO, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, MTU: %d, Network: %s, Ptr: %p",
-                            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->Flags, IfDp->mtu,
-                            inetFmts(IfDp->aliases->src.ip, IfDp->aliases->src.mask, 2), IfDp->aliases);
+        LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d, Ptr: %p",
+                          IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu, IfDp);
     }
     
     // Free the getifadds struct.

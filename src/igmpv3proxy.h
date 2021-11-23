@@ -121,7 +121,7 @@ struct Config {
     uint8_t             defaultThreshold;
     uint64_t            defaultRatelimit;
     bool                defaultFilterAny;
-    struct filters     *defaultFilters;
+    struct filters     *defaultFilters, *defaultRates;
     // Logging Parameters.
     uint8_t             logLevel;
     bool                log2File;
@@ -178,7 +178,7 @@ struct vifConfig {
     struct queryParam   qry;                     // Configured query parameters
     bool                nodefaultfilter;         // Do not add default filters to interface
     bool                defaultfilter;           // Flag when default filters are applied
-    struct filters     *filters;
+    struct filters     *filters, *rates;         // ACL and ratelimiters for interface
     struct vifConfig   *next;
 };
 #define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, false, NULL, NULL }
@@ -201,12 +201,10 @@ struct querier {                                        // igmp querier status f
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
     struct in_addr                InAdr;                 // Primary IP
-    struct filters               *aliases;               // Secondary IPs
     uint32_t                      Flags;                 // Operational flags
     uint32_t                      mtu;                   // Interface MTU
     uint8_t                       state;                 // Operational state
-    struct vifConfig             *conf, *oldconf;        // Pointer to interface configuraion
-    bool                          filCh;                 // Flag to indicat filter change during config reload
+    struct vifConfig             *conf;                  // Pointer to interface configuraion
     struct querier                querier;               // igmp querier for interface
     uint64_t                      bytes, rate;           // Counters for bandwith control
     unsigned int                  sysidx;                // Interface system index
@@ -216,7 +214,7 @@ struct IfDesc {
     void                         *gMct;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, NULL, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -227,8 +225,8 @@ struct IfDesc {
 #define IS_DOWNSTREAM(x)       (x & 0x2)
 #define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
-#define IF_OLDSTATE(x)         (x && x->oldconf ? x->oldconf->state & ~0x80 : IF_STATE_DISABLED)
-#define IF_NEWSTATE(x)         (x               ? x->state          & ~0x80 : IF_STATE_DISABLED)
+#define IF_OLDSTATE(x)         ((x->state >> 2) & 0x3)
+#define IF_NEWSTATE(x)         (x->state & 0x3)
 
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
@@ -278,6 +276,9 @@ extern struct   timespec curtime, utcoff;
 
 // Process Signaling.
 extern uint8_t  sighandled, sigstatus;
+
+// Upstream vif mask.
+extern uint32_t uVifs;
 
 // Global IGMP groups.
 extern uint32_t allhosts_group;            /* All hosts addr in net order */
@@ -359,7 +360,6 @@ int  k_set_ttl(uint8_t t);
 void k_set_loop(int l);
 void k_set_if(struct IfDesc *IfDp);
 bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group);
-bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t group);
 void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int  k_getMrouterFD(void);
 int  k_enableMRouter(void);
@@ -378,15 +378,15 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
                                         for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
 #define IS_EX(x,y)    BIT_TST(x->mode, y->index)
 #define IS_IN(x,y)   !BIT_TST(x->mode, y->index)
-#define IS_SET(x,y)   BIT_TST(x->vifBits, y->index)
-#define NOT_SET(x,y) !BIT_TST(x->vifBits, y->index)
+#define IS_SET(x,y)   BIT_TST(x->vifB.d, y->index)
+#define NOT_SET(x,y) !BIT_TST(x->vifB.d, y->index)
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
-void     activateRoute(struct IfDesc *IfDp, void *src, register uint32_t ip, register uint32_t group, bool activate);
+void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
-void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *src, uint8_t type);
+void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC

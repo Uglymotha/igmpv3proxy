@@ -35,7 +35,6 @@
 #include "igmpv3proxy.h"
 
 static int curttl = 0, mrouterFD = -1;
-static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group);
 
 /**
 *   Set the socket buffer. If we can't set it as large as we want, search around to try to find the highest acceptable
@@ -92,9 +91,11 @@ inline void k_set_if(struct IfDesc *IfDp) {
 }
 
 /**
-*   Common function for joining or leaving a MCast group.
+*   Joins the MC group with the address 'McAdr' on the interface 'IfName'.
+*   The join is bound to the UDP socket 'udpSock', so if this socket is
+*   closed the membership is dropped.
 */
-static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
+inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
 #if defined HAVE_STRUCT_GROUP_REQ_GR_INTERFACE
     struct group_req GrpReq;
  #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
@@ -110,12 +111,10 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
     GrpReq.imr_interface.s_addr = IfDp ? IfDp->InAdr.s_addr : (struct in_addr){ 0 };
 #endif
 
-    if (setsockopt(mrouterFD, IPPROTO_IP, Cmd ? MCAST_JOIN_GROUP : MCAST_LEAVE_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
-        int mcastGroupExceeded = (Cmd && errno == ENOBUFS);
-        LOG(LOG_WARNING, errno, "MCAST_%s_GROUP %s on %s failed", Cmd ? "JOIN" : "LEAVE",
-                                 inetFmt(group, 1), IfDp->Name)
+    if (setsockopt(mrouterFD, IPPROTO_IP, MCAST_JOIN_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
+        LOG(LOG_WARNING, errno, "MCAST_JOIN_GROUP %s on %s failed", inetFmt(group, 1), IfDp->Name)
 ;
-        if (mcastGroupExceeded) {
+        if (errno == ENOBUFS) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
 #ifdef __linux__
             LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships'");
@@ -125,24 +124,6 @@ static bool k_joinleave(int Cmd, struct IfDesc *IfDp, uint32_t group) {
     }
 
     return true;
-}
-
-/**
-*   Joins the MC group with the address 'McAdr' on the interface 'IfName'.
-*   The join is bound to the UDP socket 'udpSock', so if this socket is
-*   closed the membership is dropped.
-*/
-inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
-    bool r = k_joinleave(1, IfDp, group);
-    return r;
-}
-
-/**
-*   Leaves the MC group with the address 'McAdr' on the interface 'IfName'.
-*/
-inline bool k_leaveMcGroup(struct IfDesc *IfDp, uint32_t group) {
-    bool r = k_joinleave(0, IfDp, group);
-    return r;
 }
 
 /**
@@ -162,7 +143,7 @@ inline void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmod
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
 #endif
-    LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter for %s (%s) with %d sources.", inetFmt(group, 1),
+    LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
                      fmode ? "IN" : "EX", nsrcs);
     if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in), fmode, nsrcs, ss) < 0)
         LOG(LOG_WARNING, errno, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
@@ -221,8 +202,8 @@ void k_delVIF(struct IfDesc *IfDp) {
     if (IfDp->index == (uint8_t)-1) return;
     vifCtl.vifc_vifi = IfDp->index;
 
-    LOG(LOG_NOTICE, 0, "removing VIF, Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d", IfDp->index,
-                        IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->conf->threshold, IfDp->conf->ratelimit);
+    LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
+                        IfDp->Flags, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->conf->threshold, IfDp->conf->ratelimit);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)
         LOG(LOG_WARNING, errno, "delVIF: Error removing VIF %d:%s", IfDp->index, IfDp->Name);
 
@@ -257,10 +238,8 @@ bool k_addVIF(struct IfDesc *IfDp) {
     IfDp->bytes = IfDp->rate = 0;
 
     // Log the VIF information.
-    LOG(LOG_NOTICE, 0, "adding VIF %s, Ix %d, Fl 0x%x, IP %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
+    LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
                  vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
-    for (struct filters *filter = IfDp->aliases; filter; filter = filter->next)
-        LOG(LOG_DEBUG, 0, "        Network for [%s] : %s", IfDp->Name, inetFmts(filter->src.ip, filter->src.mask, 1));
 
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {

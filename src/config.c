@@ -44,7 +44,7 @@
 static bool              configFile(char *filename, int open);
 static char             *nextConfigToken(void);
 static void              initCommonConfig();
-static void              parseFilters(struct filters ***filP);
+static void              parseFilters(struct filters ***filP, struct filters ***rateP);
 static struct vifConfig *parsePhyintToken(void);
 
 // Daemon Configuration.
@@ -61,6 +61,7 @@ static unsigned int    bufPtr, readSize;               // Buffer position pointe
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf, *oldvifConf;
+uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
 static struct timers {
@@ -83,12 +84,14 @@ inline struct Config *getConfig(void) {
 */
 void freeConfig(int old) {
     struct vifConfig *tConf, *cConf;
-    struct filters   *tFil,  *dFil = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters;
+    struct filters   *tFil,  *dFil  = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters,
+                     *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
     for (cConf = old ? oldvifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
         for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
+        for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
         free(cConf);
     }
     if (old || SHUTDOWN)
@@ -279,6 +282,7 @@ static void initCommonConfig(void) {
     commonConfig.defaultRatelimit = DEFAULT_RATELIMIT;
     commonConfig.defaultFilterAny = false;
     commonConfig.defaultFilters   = NULL;
+    commonConfig.defaultRates     = NULL;
 
     // Log to file disabled by default.
     commonConfig.log2File = false;
@@ -303,7 +307,7 @@ static void initCommonConfig(void) {
 /*
 *   Parsing of filters. If an error is made in a list, the whole list will be ignored.
 */
-static void parseFilters(struct filters ***filP) {
+static void parseFilters(struct filters ***filP, struct filters ***rateP) {
     char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
     uint32_t addr, mask;
     struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL },
@@ -385,11 +389,12 @@ static void parseFilters(struct filters ***filP) {
                                 fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
-            if (! (**filP = malloc(sizeof(struct filters))))
+            struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
+            if (! (***n = malloc(sizeof(struct filters))))
                 LOG(LOG_ERR, errno, "parseFilters: Out of Memory.");  // Freed by freeConfig()
-            ***filP = fil;
+            ****n = fil;
 
-            *filP = &(***filP).next;
+            **n = &(****n).next;
             fil = filNew;
         }
     }
@@ -411,7 +416,7 @@ bool loadConfig(void) {
     LOG(LOG_DEBUG, 0, "Loading config from '%s'", commonConfig.configFilePath);
 
     // Set pointer to pointer to filters list.
-    struct filters **filP = &commonConfig.defaultFilters;
+    struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
 
     // Loop until all configuration is read.
     while (token) {
@@ -511,7 +516,7 @@ bool loadConfig(void) {
             else {
                 LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                 strcpy(token, "filter");
-                parseFilters(&filP);
+                parseFilters(&filP, &rateP);
             }
 
         } else if (strcasecmp("defaultratelimit", token) == 0 && INTTOKEN) {
@@ -778,14 +783,14 @@ static struct vifConfig *parsePhyintToken(void) {
                              ,token, IF_NAMESIZE, tmpPtr->name);
 
     // Set pointer to pointer to filters list.
-    struct filters **filP = &tmpPtr->filters;
+    struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
 
     // Parse the rest of the config..
     token = nextConfigToken();
     while (token) {
         if (strcasecmp("filter", token) == 0 || strcasecmp("altnet", token) == 0 || strcasecmp("whitelist", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config: IF: Parsing %s.", token);
-            parseFilters(&filP);
+            parseFilters(&filP, &rateP);
             continue;
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
@@ -921,8 +926,6 @@ void configureVifs(void) {
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
     // Loop through all interfaces and find matching config.
     for (GETIFL(IfDp)) {
-        if (CONFRELOAD)
-            IfDp->oldconf = IfDp->conf;
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name) != 0; confPtr = confPtr->next);
         if (confPtr) {
             LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
@@ -942,23 +945,17 @@ void configureVifs(void) {
 
         // Link the configuration to the interface. And update the states.
         IfDp->conf = confPtr;
-        if (! IfDp->oldconf) {
-            // If no old config at this point it is because buildIfVc detected new or removed interface.
-            IfDp->oldconf = confPtr;
-            if (!(IfDp->state & 0x80)) {
+        if (!(IfDp->state & 0x40)) {
+            // If no state flag at this point it is because buildIfVc detected new or removed interface.
+            if (!(IfDp->state & 0x80))
                 // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
-                IfDp->oldconf->state = IfDp->state;
-                IfDp->state          = IF_STATE_DISABLED | 0x80;
-            } else {
+                IfDp->state = ((IfDp->state & 0x03) << 2) | 0x80;
+            else
                 // New interface, oldstate is disabled, newstate is configured state.
-                IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
-                IfDp->oldconf->state = IF_STATE_DISABLED;
-            }
-        } else {
+                IfDp->state = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
+        } else
             // Existing interface, oldstate is current state, newstate is configured state.
-            IfDp->oldconf->state = IfDp->state;
-            IfDp->state          = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
-        }
+            IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : 0);
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
         // Set configured querier ip to interface address if not configured
@@ -981,22 +978,6 @@ void configureVifs(void) {
                 fil->next = commonConfig.defaultFilters;
             IfDp->conf->defaultfilter = true;
         }
-
-        // Check if filters have change due to configuration reload.
-        struct filters *filo = IfDp->oldconf->filters, *fil = IfDp->conf->filters;
-        if (CONFRELOAD || SSIGHUP) do {
-            if (   (fil && filo && (   fil->dir != filo->dir || fil->action != filo->action
-                                    || fil->src.ip != filo->src.ip || fil->src.mask != filo->src.mask
-                                    || fil->dst.ip != filo->dst.ip || fil->dst.mask != filo->dst.mask))
-                || (! fil && filo) || (fil && ! filo)) {
-                    LOG(LOG_INFO, 0, "configureVifs: Filters for %s changed.", IfDp->Name);
-                    IfDp->filCh = true;
-                }
-            if (fil)
-                fil = fil->next;
-            if (filo)
-                filo = filo->next;
-        } while (!IfDp->filCh && fil && filo);
 
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
@@ -1032,6 +1013,8 @@ void configureVifs(void) {
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
+    for (uVifs = 0, GETIFL(IfDp))
+        if (IS_UPSTREAM(IfDp->state)) BIT_SET(uVifs, IfDp->index);
     if (!SHUTDOWN && (vifcount < 2 || upsvifcount == 0 || downvifcount == 0))
         LOG((STARTUP ? LOG_ERR : LOG_WARNING), 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }

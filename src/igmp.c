@@ -312,8 +312,8 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
-            k_leaveMcGroup(IfDp, allrouters_group);
-            k_leaveMcGroup(IfDp, alligmp3_group);
+            k_setSourceFilter(IfDp, allrouters_group, MCAST_INCLUDE, 0, NULL);
+            k_setSourceFilter(IfDp, alligmp3_group,   MCAST_INCLUDE, 0, NULL);
         }
         timer_clearTimer(IfDp->querier.Timer);
         timer_clearTimer(IfDp->querier.ageTimer);

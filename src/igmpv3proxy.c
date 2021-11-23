@@ -326,15 +326,14 @@ static void igmpProxyRun(void) {
 */
 static void signalHandler(int sig) {
     switch (sig) {
-//    case SIGINT:
-//        if (!CONFIG->notAsDaemon) return;  // Daemon ignores SIGINT
+    case SIGINT:
+        if (!CONFIG->notAsDaemon) return;  // Daemon ignores SIGINT
         /* FALLTHRU */
     case SIGTERM:
         LOG(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
         sigstatus = 0x20;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
-    case SIGINT:
     case SIGURG:
         LOG(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
         sighandled |= GOT_SIGURG;
