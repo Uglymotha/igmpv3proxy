@@ -40,7 +40,7 @@
 
 struct vifFlags {
     // Generic per vif flags, applies to both groups and sources
-    bool                rd;
+    uint32_t            rd;
     uint32_t            d;                        // Active downstream vifs
     uint32_t            dd;                       // Denied dowstream vifs
     uint32_t            u;                        // Active upstream vifs

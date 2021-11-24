@@ -15,5 +15,5 @@ igmpv3proxy_SOURCES = \
 	os-netbsd.h \
 	os-openbsd.h \
 	os-qnxnto.h \
-	rttable.c \
+	mctable.c \
 	timers.c
