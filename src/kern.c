@@ -95,29 +95,38 @@ inline void k_set_if(struct IfDesc *IfDp) {
 *   The join is bound to the UDP socket 'udpSock', so if this socket is
 *   closed the membership is dropped.
 */
-inline bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group) {
+inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source) {
 #if defined HAVE_STRUCT_GROUP_REQ_GR_INTERFACE
-    struct group_req GrpReq;
+    struct group_req grpReq;
+    struct group_source_req grpSReq;
  #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
-    struct sockaddr_in Grp = { sizeof(struct sockaddr_in), AF_INET, 0, group };
+    struct sockaddr_in grp = { sizeof(struct sockaddr_in), AF_INET, 0, group };
+    struct sockaddr_in src = { sizeof(struct sockaddr_in), AF_INET, 0, source };
  #else
-    struct sockaddr_in Grp = { AF_INET, 0, {group}, {0} };
+    struct sockaddr_in grp = { AF_INET, 0, {group}, {0} };
+    struct sockaddr_in src = { AF_INET, 0, {source}, {0} };
  #endif
-    GrpReq.gr_interface = IfDp ? if_nametoindex(IfDp->Name) : 0;
-    memcpy(&GrpReq.gr_group, &Grp, sizeof(Grp));
+    source == (uint32_t)-1 ? (grpReq.gr_interface = IfDp->sysidx) : (grpSReq.gsr_interface = IfDp->sysidx);
+    memcpy(source == (uint32_t)-1 ? &grpReq.gr_group : &grpSReq.gsr_group, &grp, sizeof(grp));
+    memcpy(&grpSReq.gsr_source, &src, sizeof(src));
 #else
-    struct ip_mreq GrpReq;
-    GrpReq.imr_multiaddr.s_addr = group;
-    GrpReq.imr_interface.s_addr = IfDp ? IfDp->InAdr.s_addr : (struct in_addr){ 0 };
+    struct ip_mreq grpReq;
+    grpReq.imr_multiaddr.s_addr = group;
+    grpReq.imr_interface.s_addr = IfDp->InAdr.s_addr;
 #endif
 
-    if (setsockopt(mrouterFD, IPPROTO_IP, MCAST_JOIN_GROUP, &GrpReq, sizeof(GrpReq)) < 0) {
-        LOG(LOG_WARNING, errno, "MCAST_JOIN_GROUP %s on %s failed", inetFmt(group, 1), IfDp->Name)
-;
+    if (setsockopt(mrouterFD, IPPROTO_IP,
+                   source == (uint32_t)-1 ? MCAST_JOIN_GROUP : join ? (mode ? MCAST_BLOCK_SOURCE   : MCAST_JOIN_SOURCE_GROUP)
+                                                                    : (mode ? MCAST_UNBLOCK_SOURCE : MCAST_LEAVE_SOURCE_GROUP),
+                   source == (uint32_t)-1 ? (void *)&grpReq : (void *)&grpSReq,
+                   source == (uint32_t)-1 ? sizeof(grpReq) : sizeof(grpSReq)) < 0) {
+        LOG(LOG_WARNING, errno, "%s %s%s%s on %s failed", source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" : "MCAST_JOIN_SOURCE_GROUP",
+                                                          inetFmt(group, 1), source == (uint32_t)-1 ? "" : ":",
+                                                          source == (uint32_t)-1 ? "" : inetFmt(source, 2), IfDp->Name);
         if (errno == ENOBUFS) {
-            LOG(LOG_WARNING, 0, "Maximum number of multicast groups were exceeded");
+            LOG(LOG_WARNING, 0, "Maximum number of multicast groups or sources was exceeded");
 #ifdef __linux__
-            LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships'");
+            LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships / net.ipv4.igmp_max_msf '");
 #endif
         }
         return false;

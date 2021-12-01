@@ -947,7 +947,7 @@ void configureVifs(void) {
 
         // Link the configuration to the interface. And update the states.
         IfDp->conf = confPtr;
-        if (!(IfDp->state & 0x40)) {
+        if (IFREBUILD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
             if (!(IfDp->state & 0x80))
                 // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
@@ -957,7 +957,7 @@ void configureVifs(void) {
                 IfDp->state = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
         } else
             // Existing interface, oldstate is current state, newstate is configured state.
-            IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : 0);
+            IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
         // Set configured querier ip to interface address if not configured

@@ -33,7 +33,7 @@
 */
 
 /**
-*   igmp.c - Implements RFC3376 IGMPv3.
+*   igmp.c - Functions for sending and receiving IGMP packets.
 */
 
 #include "igmpv3proxy.h"
@@ -326,8 +326,8 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
         // Join all routers groups and start querier process on new downstream interfaces.
         LOG(LOG_INFO, 0, "ctrlQuerier: Starting querier and joining all routers and all igmp groups on %s", IfDp->Name);
-        k_joinMcGroup(IfDp, allrouters_group);
-        k_joinMcGroup(IfDp, alligmp3_group);
+        k_updateGroup(IfDp, true, allrouters_group, 1, (uint32_t)-1);
+        k_updateGroup(IfDp, true, alligmp3_group, 1, (uint32_t)-1);
         uint16_t interval = IfDp->conf->qry.ver == 3 ? getIgmpExp(IfDp->conf->qry.interval, 0)
                                                      : IfDp->conf->qry.ver == 2 ? IfDp->conf->qry.interval
                                                      : 10;

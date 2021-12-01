@@ -359,7 +359,7 @@ void k_set_rcvbuf(int bufsize, int minsize);
 int  k_set_ttl(uint8_t t);
 void k_set_loop(int l);
 void k_set_if(struct IfDesc *IfDp);
-bool k_joinMcGroup(struct IfDesc *IfDp, uint32_t group);
+bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t src);
 void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int  k_getMrouterFD(void);
 int  k_enableMRouter(void);
