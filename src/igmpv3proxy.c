@@ -250,6 +250,9 @@ static void igmpProxyCleanUp(void) {
     memcpy(tE, t, strlen(t) - 1);
     tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
+
+    free(CONFIG->logFilePath);
+    free(CONFIG->runPath);
 }
 
 /**

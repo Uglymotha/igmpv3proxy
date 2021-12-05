@@ -98,13 +98,10 @@ void freeConfig(int old) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
         for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
+        if (SHUTDOWN)
+            timers = (struct timers){ 0, 0, 0 };
     }
 
-    if (SHUTDOWN) {
-        free(CONFIG->logFilePath);
-        free(CONFIG->runPath);
-        timers = (struct timers){ 0, 0, 0 };
-    }
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
@@ -947,7 +944,7 @@ void configureVifs(void) {
 
         // Link the configuration to the interface. And update the states.
         IfDp->conf = confPtr;
-        if (IFREBUILD && !(IfDp->state & 0x40)) {
+        if (!CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
             if (!(IfDp->state & 0x80))
                 // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.

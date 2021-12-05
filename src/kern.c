@@ -120,7 +120,9 @@ inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mo
                                                                     : (mode ? MCAST_UNBLOCK_SOURCE : MCAST_LEAVE_SOURCE_GROUP),
                    source == (uint32_t)-1 ? (void *)&grpReq : (void *)&grpSReq,
                    source == (uint32_t)-1 ? sizeof(grpReq) : sizeof(grpSReq)) < 0) {
-        LOG(LOG_WARNING, errno, "%s %s%s%s on %s failed", source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" : "MCAST_JOIN_SOURCE_GROUP",
+        LOG(LOG_WARNING, errno, "%s %s%s%s on %s failed",   join ? (source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" :
+                                                                    mode ? "MCAST_BLOCK_SOURCE"   : "MCAST_JOIN_SOURCE_GROUP")
+                                                                 : (mode ? "MCAST_UNBLOCK_SOURCE" : "MCAST_LEAVE_SOURCE_GROUP"),
                                                           inetFmt(group, 1), source == (uint32_t)-1 ? "" : ":",
                                                           source == (uint32_t)-1 ? "" : inetFmt(source, 2), IfDp->Name);
         if (errno == ENOBUFS) {
