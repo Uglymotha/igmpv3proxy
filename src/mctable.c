@@ -189,7 +189,10 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
     if (mode < 2 && !checkFilters(IfDp, dir, NULL, mct)) {
         LOG(LOG_NOTICE, 0, "The group %s may not be requested %s on %s.", inetFmt(mct->group , 1),
                             dir ? "downstream" : "upstream", IfDp->Name);
-        return false;
+        if (!mct->vifB.d)
+            list = (struct ifMct **)&IfDp->gMct;
+        else
+            return false;
     }
 
     if (!BIT_TST(dir ? mct->vifB.d : mct->vifB.u, IfDp->index)) {
@@ -199,6 +202,10 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
         if (*list)
             (*list)->prev = imc;
         *list = imc;
+        if (list == (struct ifMct **)&IfDp->gMct) {
+            BIT_SET(mct->gcBits, IfDp->index);
+            return false;
+        }
     }
 
     if (dir) {
@@ -367,7 +374,7 @@ static struct sources *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t
         }
         src = nsrc;
     } else if (!src->vifB.d)
-        // Unrequested sending source in garbage route was requested, increase nrsrcs.
+        // Unrequested sending source was requested, increase nrsrcs.
         mct->nsrcs++;
 
     // Check if the source is allowed on interface.
@@ -740,40 +747,40 @@ void clearGroups(void *Dp) {
     }
 
     // Upstream interface transition.
-    if (IS_UPSTREAM(newstate) || IS_UPSTREAM(oldstate)) {
+    if (((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) || !IS_UPSTREAM(newstate)) {
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct) {
-            if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
-                if (!checkFilters(IfDp, 0, NULL, imc->mct)) {
-                    // Group is no longer allowed. Leave.
-                    LOG(LOG_NOTICE, 0, "clearGroups: Group %s on upstream interface %s, no longer allowed.",
-                                        inetFmt(imc->mct->group, 1), IfDp->Name);
+            if (!IS_UPSTREAM(newstate)) {
+                if (BIT_TST(imc->mct->vifB.u, IfDp->index))
+                    // Transition from upstream to downstream or disabled. Leave group.
                     imc = delGroup(imc->mct, IfDp, imc, 0);
-                }
-            } else if (!IS_UPSTREAM(newstate) && BIT_TST(imc->mct->vifB.u, IfDp->index)) {
-                // Transition from upstream to downstream or disabled. Leave group.
+            } else if (!checkFilters(IfDp, 0, NULL, imc->mct)) {
+                // Group is no longer allowed. Leave.
+                LOG(LOG_NOTICE, 0, "clearGroups: Group %s on upstream interface %s, no longer allowed.",
+                                    inetFmt(imc->mct->group, 1), IfDp->Name);
                 imc = delGroup(imc->mct, IfDp, imc, 0);
             }
         }
-        // Remove all garbage routes.
-        for (imc = IfDp->gMct; imc; imc = (imc = delGroup(imc->mct, IfDp, imc, 0)) ? imc->next : IfDp->gMct);
     }
 
+    // Remove all garbage routes.
+    if (!IFREBUILD)
+        for (imc = IfDp->gMct; imc; imc = (imc = delGroup(imc->mct, IfDp, imc, 0)) ? imc->next : IfDp->gMct);
+
     // Downstream interface transition.
-    for (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct) {
-        if (!IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)) {
-            // Transition to disabled / upstream, remove from group.
-            LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer downstream, removing group %s.",
-                              IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
-            imc = delGroup(imc->mct, IfDp, imc, 1);
-        } else if ((CONFRELOAD || SSIGHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)) {
-            if (!checkFilters(IfDp, 1, NULL, imc->mct)) {
+    if (((CONFRELOAD || SSIGHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)) || !IS_DOWNSTREAM(newstate))
+        for (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct) {
+            if (!IS_DOWNSTREAM(newstate)) {
+                // Transition to disabled / upstream, remove from group.
+                LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer downstream, removing group %s.",
+                                  IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
+                imc = delGroup(imc->mct, IfDp, imc, 1);
+            } else if (!checkFilters(IfDp, 1, NULL, imc->mct)) {
                 // Check against bl / wl changes on config reload / sighup.
                 LOG(LOG_NOTICE, 0, "clearGroups: Group %s no longer allowed on Vif %d - %s.",
                                     inetFmt(imc->mct->group, 1), IfDp->index, IfDp->Name);
                 imc = delGroup(imc->mct, IfDp, imc, 1);
             }
         }
-    }
 
     if (! MCT)
         LOG(LOG_INFO, 0, "clearGroups: Multicast table is empty.");
@@ -840,7 +847,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         } /* FALLTHRU */
     case IGMPV3_MODE_IS_EXCLUDE:
         is_ex = IS_EX(mct, IfDp);
-        is_in = !mct->vifB.d;
+        is_in = !mct->mode && mct->vifB.d;
         if (NOT_SET(mct, IfDp) && !addGroup(mct, IfDp, 1, 1, srcHash))
             break;
 
@@ -850,8 +857,11 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                 // IN: Delete (A - B) / EX: Delete (X - A), Delete (Y - A)
                 if (IS_SET(src, IfDp) || BIT_TST(src->vifB.dd, IfDp->index))
                     src = delSrc(src, IfDp, srcHash);
-                else
+                else {
+                    if (src->mfc && !BIT_TST(src->vifB.d, IfDp->index) && !is_ex)
+                        activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
                     src = src->next;
+                }
                 } while (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr));
             if (i < nsrcs && (! (tsrc = src) || tsrc->ip >= grec->grec_src[i].s_addr)) {
                 // IN: (B - A) = 0 / EX: (A - X - Y) = Group Timer?
@@ -948,7 +958,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     }
 
     startQuery(IfDp, qlst);
-    if (!mct->mode && !mct->nsrcs)
+    if (!mct->mode && !mct->nsrcs && !BIT_TST(mct->gcBits, IfDp->index))
         // Delete group if it is INCLUDE no sources.
         delGroup(mct, IfDp, NULL, 1);
 
@@ -1262,10 +1272,8 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
 
     if (activate) {
         // Garbage route. Sender for group which was never requested downstream.
-        if (!mct->vifB.d && !BIT_TST(mct->gcBits, IfDp->index)) {
+        if (!mct->vifB.d && !BIT_TST(mct->gcBits, IfDp->index))
             addGroup(mct, IfDp, 0, 2, (uint32_t)-1);
-            BIT_SET(mct->gcBits, IfDp->index);
-        }
 
         // Find source or create source in group when new should be created.
         if (! src) {
@@ -1311,11 +1319,9 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
         uint8_t ttlVc[MAXVIFS] = {0};
         for (GETIFL(IfDp)) {
-            if (IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, IfDp) &&
-               (  (IS_IN(mct, IfDp) && !noHash(src->dHostsHT) && IS_SET(src, IfDp)
-                                       && src->vifB.age[IfDp->index] > 0)
-               || (IS_EX(mct, IfDp) && !noHash(mct->dHostsHT)
-                                       && (!IS_SET(src, IfDp) || src->vifB.age[IfDp->index] > 0)))) {
+            if (IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, IfDp) && checkFilters(IfDp, 1, src, mct) &&
+                (   (IS_IN(mct, IfDp) && !noHash(src->dHostsHT) && IS_SET(src, IfDp) && src->vifB.age[IfDp->index] > 0)
+                 || (IS_EX(mct, IfDp) && !noHash(mct->dHostsHT) && (!IS_SET(src, IfDp) || src->vifB.age[IfDp->index] > 0)))) {
                 LOG(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", IfDp->index, IfDp->conf->threshold);
                 ttlVc[IfDp->index] = IfDp->conf->threshold;
             }
