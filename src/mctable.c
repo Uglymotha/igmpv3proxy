@@ -52,10 +52,10 @@ struct vifFlags {
     uint8_t             age[MAXVIFS];             // Age value
 };
 
-struct sources {
+struct src {
     // Keeps information on sources
-    struct sources     *prev;
-    struct sources     *next;
+    struct src         *prev;
+    struct src         *next;
     struct mcTable     *mct;                      // Pointer to group
     struct mfc         *mfc;                      // Pointer to active MFC
     uint32_t            ip;                       // Source IP adress
@@ -68,7 +68,7 @@ struct mfc {
     struct mfc         *prev;
     struct mfc         *next;
     struct timespec     stamp;                    // Time Route was installed or last traffic seen
-    struct sources     *src;                      // Pointer to source struct
+    struct src         *src;                      // Pointer to source struct
     struct IfDesc      *IfDp;                     // Incoming interface
     uint64_t            bytes, rate;              // Bwcontrol counters
 };
@@ -79,14 +79,13 @@ struct mcTable {
     struct mcTable     *next;                     // Pointer to the next group in table.
     uint32_t            group;                    // The group to route
     uint32_t            nsrcs;                    // Number of sources for group
-    struct sources     *sources;                  // Downstream source list for group
+    struct src         *sources;                  // Downstream source list for group
     struct mfc         *mfc;                      // Active upstream sources for group
 
     // Keeps the group states. Per vif flags.
     struct timespec     stamp;                    // Time group was installed
     uint32_t            mode;                     // Mode (include/exclude) for group
     struct vifFlags     vifB;
-    uint32_t            gcBits;                   // Garbage Collection flags
     uint32_t            v1Bits;                   // v1 compatibility flags
     uint8_t             v1Age[MAXVIFS];           // v1 compatibility timer
     uint32_t            v2Bits;                   // v2 compatibility flags
@@ -113,7 +112,7 @@ struct qlst {
     uint8_t            misc;                      // Query misc (RA/QRV)
     uint8_t            cnt;                       // Nr of queries sent
     uint16_t           nsrcs;                     // Nr of sources in query
-    struct sources    *src[];                     // Array of pointers to sources
+    struct src        *src[];                     // Array of pointers to sources
 };
 
 // Routing table static vars.
@@ -126,12 +125,12 @@ static char              msg[TMNAMESZ] = "";     // Timer name buffer
 static struct mcTable     *findGroup(register uint32_t group, bool create);
 static bool                addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode, uint32_t srcHash);
 static struct ifMct       *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
-static bool                checkFilters(struct IfDesc *IfDp, int dir, struct sources *src, struct mcTable *mct);
+static bool                checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
 static void               *updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp);
-static struct sources     *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
-                                  struct sources *src, uint32_t srcHash);
-static struct sources     *delSrc(struct sources *src, struct IfDesc *IfDp, uint32_t srcHash);
-static inline struct qlst *addSrcToQlst(struct sources *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
+static struct src         *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
+                                  struct src *src, uint32_t srcHash);
+static struct src         *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash);
+static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
 static inline void         toInclude(struct mcTable *mct, struct IfDesc *IfDp);
 static inline void         startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 static void                groupSpecificQuery(struct qlst *qlst);
@@ -144,10 +143,12 @@ static struct mcTable *findGroup(register uint32_t group, bool create) {
     uint32_t        mctHash = murmurhash3(group) % CONFIG->mcTables;
 
     // Initialize the routing tables if necessary.
+    if (! MCT && !create)
+        return NULL;
     if (! MCT && ! (MCT = calloc(CONFIG->mcTables, sizeof(void *))))   // Freed by delGroup())
         LOG(LOG_ERR, errno, "findGroup: Out of memory.");
-    // Find the group (or place for new) in the table.
-    for (mct = MCT[mctHash];; mct = mct->next) {
+    else for (mct = MCT[mctHash];; mct = mct->next) {
+        // Find the group (or place for new) in the table.
         if (mct && mct->group == group)
             return mct;
         if (! mct || ! mct->next || mct->next->group > group) {
@@ -185,16 +186,7 @@ static struct mcTable *findGroup(register uint32_t group, bool create) {
 *  Adds a group to an interface.
 */
 static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode, uint32_t srcHash) {
-    struct ifMct *imc, **list = (struct ifMct **)(dir ? &IfDp->dMct : mode == 1 ? &IfDp->uMct : &IfDp->gMct);
-    if (mode < 2 && !checkFilters(IfDp, dir, NULL, mct)) {
-        LOG(LOG_NOTICE, 0, "The group %s may not be requested %s on %s.", inetFmt(mct->group , 1),
-                            dir ? "downstream" : "upstream", IfDp->Name);
-        if (!mct->vifB.d)
-            list = (struct ifMct **)&IfDp->gMct;
-        else
-            return false;
-    }
-
+    struct ifMct *imc, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     if (!BIT_TST(dir ? mct->vifB.d : mct->vifB.u, IfDp->index)) {
         if (! (imc = malloc(sizeof(struct ifMct))))   // Freed by delGroup or freeIfDescL()
             LOG(LOG_ERR, errno, "addGroup: Out of Memory.");
@@ -202,40 +194,50 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
         if (*list)
             (*list)->prev = imc;
         *list = imc;
-        if (list == (struct ifMct **)&IfDp->gMct) {
-            BIT_SET(mct->gcBits, IfDp->index);
-            return false;
+    }
+
+    if (!checkFilters(IfDp, dir, NULL, mct)) {
+        LOG(LOG_NOTICE, 0, "The group %s may not be requested %s on %s.", inetFmt(mct->group , 1),
+                            dir ? "downstream" : "upstream", IfDp->Name);
+        dir ? BIT_SET(mct->vifB.d, IfDp->index) : BIT_SET(mct->vifB.u, IfDp->index);
+        if (dir && mode) {
+            BIT_SET(mct->mode, IfDp->index);
+            mct->vifB.age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
         }
+        return false;
     }
 
     if (dir) {
-        if (!mct->vifB.d && mct->gcBits)
-            for (int i = 0; i < MAXVIFS; ((mct->gcBits >> i) & 0x1) ? delGroup(mct, getIf(i, 0), NULL, 0) : (void)0, i++);
-        if (!BIT_TST(mct->vifB.d, IfDp->index)) {
+        if (srcHash != (uint32_t)-1)
+            setHash(mct->dHostsHT, srcHash);
+        if (!BIT_TST(mct->vifB.d, IfDp->index) || BIT_TST(mct->vifB.dd, IfDp->index)) {
+            BIT_CLR(mct->vifB.dd, IfDp->index);
             BIT_SET(mct->vifB.d, IfDp->index);
             if (IS_EX(mct, IfDp))
                 for (struct mfc *mfc = mct->mfc; mfc; activateRoute(NULL, mfc->src, 0, 0, true), mfc = mfc->next);
         }
         if (mode) {
             BIT_SET(mct->mode, IfDp->index);
-            setHash(mct->dHostsHT, srcHash);
             mct->vifB.age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
             BIT_CLR(mct->vifB.lm, IfDp->index);
         }
         if ((mct->vifB.us | mct->vifB.ud) != uVifs) for (GETIFL(IfDp))
             if (IS_UPSTREAM(IfDp->state) && !BIT_TST(mct->vifB.us, IfDp->index))
                 addGroup(mct, IfDp, 0, 1, (uint32_t)-1);
-    } else if (mct->vifB.d) {
-        BIT_SET(mct->vifB.u, IfDp->index);
-        if (!BIT_TST(mct->vifB.us, IfDp->index) && mct->mode) {
-            if (CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
-                LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
-                                    IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
-            else {
-                LOG(LOG_INFO, 0, "addGroup: Joining group %s upstream on interface %s.",
-                                  inetFmt(mct->group, 1), IfDp->Name);
-                if (k_updateGroup(IfDp, true, mct->group, mct->mode, (uint32_t)-1))
-                    BIT_SET(mct->vifB.us, IfDp->index);
+    } else {
+        BIT_CLR(mct->vifB.ud, IfDp->index);
+        if (mct->vifB.d) {
+            BIT_SET(mct->vifB.u, IfDp->index);
+            if (!BIT_TST(mct->vifB.us, IfDp->index) && mct->mode) {
+                if (CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
+                  LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
+                                        IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
+                else {
+                    LOG(LOG_INFO, 0, "addGroup: Joining group %s upstream on interface %s.",
+                                      inetFmt(mct->group, 1), IfDp->Name);
+                    if (k_updateGroup(IfDp, true, mct->group, mct->mode, (uint32_t)-1))
+                        BIT_SET(mct->vifB.us, IfDp->index);
+                }
             }
         }
     }
@@ -247,7 +249,7 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
 *   Remove a specified MCT from interface.
 */
 static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *imc, int dir) {
-    struct ifMct *pimc = NULL;
+    struct ifMct *pimc = NULL, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     LOG(LOG_DEBUG, 0, "delGroup: Removing group entry for %s from %s.", inetFmt(mct->group, 1), IfDp->Name);
 
     // Clear group membership from interface (or all on shutdown) and ckeck if it can be removed completely.
@@ -263,26 +265,21 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
             BIT_CLR(mct->v2Bits, IfDp->index);
             mct->vifB.age[IfDp->index] = mct->v1Age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
             for (struct mfc *mfc = mct->mfc; mfc; activateRoute(NULL, mfc->src, 0, 0, true), mfc = mfc->next);
-            for (struct sources *src = mct->sources; src; src = delSrc(src, IfDp, (uint32_t)-1));
+            for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
         }
     }
 
     // Update the interface group list.
     if (!(dir && mct->vifB.d)) {
         if (! imc)
-            for (imc = dir ? IfDp->dMct : BIT_TST(mct->gcBits, IfDp->index) ? IfDp->gMct : IfDp->uMct;
-                 imc && imc->mct != mct; imc = imc->next);
+            for (imc = *list; imc && imc->mct != mct; imc = imc->next);
         pimc = imc->prev;
         if (imc->next)
             imc->next->prev = imc->prev;
         if (imc->prev)
             imc->prev->next = imc->next;
-        else if (dir)
-            IfDp->dMct = imc->next;
-        else if (BIT_TST(mct->gcBits, IfDp->index))
-            IfDp->gMct = imc->next;
         else
-            IfDp->uMct = imc->next;
+            *list = imc->next;
         free(imc);  // Alloced by addGroup()
     }
 
@@ -310,19 +307,15 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
         }
 
         // Remove all sources from group.
-        for (struct sources *src = mct->sources; src; src = delSrc(src, NULL, (uint32_t)-1));
+        for (struct src *src = mct->sources; src; src = delSrc(src, NULL, 0, (uint32_t)-1));
         free(mct);  // Alloced by findGroup()
     } else if (!dir) {
-        if (BIT_TST(mct->gcBits, IfDp->index)) {
-            BIT_CLR(mct->gcBits, IfDp->index);
-        } else {
-            if (BIT_TST(mct->vifB.us, IfDp->index)) {
-                LOG(LOG_INFO, 0, "delGroup: Leaving group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
-                k_setSourceFilter(IfDp, mct->group, MCAST_INCLUDE, 0, NULL);
-            }
-            BIT_CLR(mct->vifB.u, IfDp->index);
-            BIT_CLR(mct->vifB.us, IfDp->index);
+        if (BIT_TST(mct->vifB.us, IfDp->index)) {
+            LOG(LOG_INFO, 0, "delGroup: Leaving group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
+            k_setSourceFilter(IfDp, mct->group, MCAST_INCLUDE, 0, NULL);
         }
+        BIT_CLR(mct->vifB.u, IfDp->index);
+        BIT_CLR(mct->vifB.us, IfDp->index);
     }
 
     if (MCT)
@@ -338,8 +331,8 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
 *   which as it evaluates the list in linear order knows exactly where source should be
 *   created in list, no src if it should go to end of list.
 */
-static struct sources *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
-                              struct sources *src, uint32_t srcHash) {
+static struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
+                              struct src *src, uint32_t srcHash) {
     // Check if maxorigins is exceeded. Remove source if so.
     if ((check || set) && CONFIG->maxOrigins && mct->nsrcs > CONFIG->maxOrigins) {
         if (!(mct->nsrcs & 0x80000000)) {
@@ -349,11 +342,11 @@ static struct sources *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t
         return NULL;
     } else if (! src || src->ip != ip) {
         // New source should be created.
-        struct sources *nsrc;
+        struct src *nsrc;
         if (check || set)
             mct->nsrcs++;
         LOG(LOG_DEBUG, 0, "addSrc: New source %s (%d) for group %s.", inetFmt(ip, 1), mct->nsrcs, inetFmt(mct->group, 2));
-        if (! (nsrc = calloc(1, sizeof(struct sources) + CONFIG->dHostsHTSize)))
+        if (! (nsrc = calloc(1, sizeof(struct src) + CONFIG->dHostsHTSize)))
             LOG(LOG_ERR, errno, "addSrc: Out of memory.");   // Freed by delSrc()
         nsrc->ip = ip;
         nsrc->mct = mct;
@@ -428,8 +421,8 @@ static struct sources *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t
 /**
 *   Removes a source from the list of group sources.
 */
-static struct sources *delSrc(struct sources *src, struct IfDesc *IfDp, uint32_t srcHash) {
-    struct sources *nsrc = src->next;
+static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash) {
+    struct src     *nsrc = src->next;
     struct mcTable *mct  = src->mct;
 
     LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s on %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2),
@@ -444,11 +437,13 @@ static struct sources *delSrc(struct sources *src, struct IfDesc *IfDp, uint32_t
         // Remove the source if it is not actively being queried and not active on other vifs.
         if (IfDp) {
             BIT_CLR(src->vifB.lm, IfDp->index);
-            src->vifB.age[IfDp->index] = 0;
+            if (mode == 0)
+                src->vifB.age[IfDp->index] = 0;
         }
         struct IfDesc *If;
         if (! IfDp || !src->vifB.d || (mct->mode && src->vifB.d != mct->vifB.d && !src->vifB.age[IfDp->index])) for (GETIFL(If))
-            if ((!mct->mode || BIT_TST(mct->vifB.us, If->index)) && BIT_TST(src->vifB.us, If->index)) {
+            if (mode < 3 && (   ( mct->mode && BIT_TST(mct->vifB.us, If->index) && src->vifB.d != src->vifB.d)
+                             || (!mct->mode && BIT_TST(src->vifB.us, If->index)))) {
                 LOG(LOG_INFO, 0, "delSrc: %s source %s in group %s on upstream interface %s", mct->mode ? "Unblocking" : "Leaving",
                                   inetFmt(src->ip, 1), inetFmt(mct->group, 2), If->Name);
                 k_updateGroup(If, false, mct->group, mct->mode, src->ip);
@@ -460,7 +455,7 @@ static struct sources *delSrc(struct sources *src, struct IfDesc *IfDp, uint32_t
             if (CONFIG->maxOrigins && --mct->nsrcs < CONFIG->maxOrigins)
                 // Reset maxorigins exceeded flag.
                 mct->nsrcs &= ~0x80000000;
-            if (! src->mfc) {
+            if ((mode == 0 || mode == 3) && ! src->mfc) {
                 // Remove the source if there are no senders.
                 if (src->next)
                     src->next->prev = src->prev;
@@ -604,25 +599,22 @@ void bwControl(uint64_t *tid) {
 *  dir: 0 = upstream, 1 = downstream
 *  Keep access status in permission bits .d or .u means group was allowed before, dd or us means group was denied before.
 */
-static bool checkFilters(struct IfDesc *IfDp, int dir, struct sources *src, struct mcTable *mct) {
-    if (CONFRELOAD || SSIGHUP) {
-        // ACL may change due to config reload, reset permission bits, so access is rechecked.
-        if (!mct->vifB.rd) {
-            mct->vifB.rd = 1;
-            mct->vifB.dd = 0, mct->vifB.ud = 0;
-            for (struct sources *dsrc = mct->sources; dsrc; dsrc->vifB.ru = dsrc->vifB.u, dsrc->vifB.rd = dsrc->vifB.d,
-                                                            dsrc->vifB.dd = dsrc->vifB.ud = 0, dsrc = dsrc->next);
-        }
-    } else if (!src && mct->vifB.rd) {
-        // After config reload, reset permission for group and check again.
+static bool checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct) {
+    if ((!CONFRELOAD && !SSIGHUP) || ! IfDp->filCh) {
         mct->vifB.rd = 0;
-    } else if (src && (BIT_TST(dir ? src->vifB.rd : src->vifB.ru, IfDp->index))) {
-        // After config reload, reset permission for source and check again.
-        dir ? BIT_CLR(src->vifB.rd, IfDp->index) : BIT_CLR(src->vifB.ru, IfDp->index);
-    } else if (BIT_TST(src ? (dir ? src->vifB.d  : src->vifB.u)  : (dir ? mct->vifB.d  : mct->vifB.u), IfDp->index)) {
-        return ALLOW;
-    } else if (BIT_TST(src ? (dir ? src->vifB.dd : src->vifB.ud) : (dir ? mct->vifB.dd : mct->vifB.ud), IfDp->index))
-        return BLOCK;
+        if (IfDp->filCh && src && BIT_TST(dir ? src->vifB.rd : src->vifB.ru, IfDp->index)) {
+            // After config reload, reset permission for source and check again.
+            dir ? BIT_CLR(src->vifB.rd, IfDp->index) : BIT_CLR(src->vifB.ru, IfDp->index);
+            if (!src->vifB.rd && !src->vifB.ru)
+                IfDp->filCh = false;
+        } else if ( BIT_TST(src ? (dir ? src->vifB.d  : src->vifB.u)  : (dir ? mct->vifB.d  : mct->vifB.u),  IfDp->index))
+            return !BIT_TST(src ? (dir ? src->vifB.dd : src->vifB.ud) : (dir ? mct->vifB.dd : mct->vifB.ud), IfDp->index);
+    } else if (IfDp->filCh && !mct->vifB.rd) {
+        // ACL change due to config reload, reset permission bits, so access is rechecked.
+        mct->vifB.rd = 1;
+        for (struct src *dsrc = mct->sources; dsrc; dsrc->vifB.ru = dsrc->vifB.u, dsrc->vifB.rd = dsrc->vifB.d,
+                                                    dsrc->vifB.dd = dsrc->vifB.ud = 0, dsrc = dsrc->next);
+    }
 
     LOG(LOG_DEBUG, 0, "checkFilters: Checking access for %s%s%s on %s interface %s.",
                        src ? inetFmt(src->ip, 1) : "", src ? ":" : "",
@@ -648,8 +640,8 @@ static bool checkFilters(struct IfDesc *IfDp, int dir, struct sources *src, stru
 *   Updates source filter for a group on an upstream interface.
 */
 static void *updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp) {
-    uint32_t        nsrcs = 0, *slist = NULL, i;
-    struct sources *src;
+    uint32_t    nsrcs = 0, *slist = NULL, i;
+    struct src *src;
     // Build source list for upstream interface.
     // For IN: All active downstream and allowed sources are to be included in the list.
     // For EX: All sources, with timer = 0 on all active interfaces are to be included.
@@ -682,11 +674,7 @@ static void *updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp) {
         slist[nsrcs++] = src->ip;
     }
 
-    if (mct->mode)
-        // When switching from include to exclude, set empty source filter first.
-        k_setSourceFilter(IfDp, mct->group, MCAST_INCLUDE, 0, NULL);
     k_setSourceFilter(IfDp, mct->group, mct->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist);
-
     free(slist);  // Alloced by self
 }
 
@@ -703,11 +691,11 @@ void clearGroups(void *Dp) {
     if (Dp == CONFIG || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
         GETMRT(mct) {
             if (Dp == CONFIG) {
-                struct sources **src;
+                struct src **src;
                 // Quickleave was enabled or disabled, or hastable size was changed.
                 // Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
                 for (src = &(mct->sources); *src; src = &(*src)->next) {
-                    if (! (*src = realloc(*src, sizeof(struct sources) + CONFIG->dHostsHTSize)))
+                    if (! (*src = realloc(*src, sizeof(struct src) + CONFIG->dHostsHTSize)))
                         LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
                     if (CONFIG->fastUpstreamLeave)
                         memset((*src)->dHostsHT, 0, CONFIG->dHostsHTSize);
@@ -734,7 +722,7 @@ void clearGroups(void *Dp) {
             } else {
                 // New upstream interface join all relevant groups and sources.
                 addGroup(mct, IfDp, 0, 1, (uint32_t)-1);
-                for (struct sources *src = mct->sources; src; src = src->next)
+                for (struct src *src = mct->sources; src; src = src->next)
                     if (   (mct->mode && src->vifB.d == mct->vifB.d && !src->vifB.age[IfDp->index])
                         || (!mct->mode && src->vifB.d && checkFilters(IfDp, 0, src, mct)))
                         if (k_updateGroup(IfDp, true, mct->group, mct->mode, src->ip))
@@ -753,18 +741,15 @@ void clearGroups(void *Dp) {
                 if (BIT_TST(imc->mct->vifB.u, IfDp->index))
                     // Transition from upstream to downstream or disabled. Leave group.
                     imc = delGroup(imc->mct, IfDp, imc, 0);
-            } else if (!checkFilters(IfDp, 0, NULL, imc->mct)) {
+            } else if (!BIT_TST(imc->mct->vifB.ud, IfDp->index) && !checkFilters(IfDp, 0, NULL, imc->mct)) {
                 // Group is no longer allowed. Leave.
-                LOG(LOG_NOTICE, 0, "clearGroups: Group %s on upstream interface %s, no longer allowed.",
+                LOG(LOG_NOTICE, 0, "Group %s no longer allowed upstream on interface %s.",
                                     inetFmt(imc->mct->group, 1), IfDp->Name);
                 imc = delGroup(imc->mct, IfDp, imc, 0);
-            }
+            } else if (BIT_TST(imc->mct->vifB.ud, IfDp->index) && addGroup(imc->mct, IfDp, 0, 0, (uint32_t)-1))
+                LOG(LOG_INFO, 0, "clearGroups: Group %s now allowed upstream on %s.", inetFmt(imc->mct->group, 1), IfDp->Name);
         }
     }
-
-    // Remove all garbage routes.
-    if (!IFREBUILD)
-        for (imc = IfDp->gMct; imc; imc = (imc = delGroup(imc->mct, IfDp, imc, 0)) ? imc->next : IfDp->gMct);
 
     // Downstream interface transition.
     if (((CONFRELOAD || SSIGHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)) || !IS_DOWNSTREAM(newstate))
@@ -774,12 +759,13 @@ void clearGroups(void *Dp) {
                 LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer downstream, removing group %s.",
                                   IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
                 imc = delGroup(imc->mct, IfDp, imc, 1);
-            } else if (!checkFilters(IfDp, 1, NULL, imc->mct)) {
+            } else if (!BIT_TST(imc->mct->vifB.dd, IfDp->index) && !checkFilters(IfDp, 1, NULL, imc->mct)) {
                 // Check against bl / wl changes on config reload / sighup.
-                LOG(LOG_NOTICE, 0, "clearGroups: Group %s no longer allowed on Vif %d - %s.",
+                LOG(LOG_NOTICE, 0, "Group %s no longer allowed downstream on Vif %d - %s.",
                                     inetFmt(imc->mct->group, 1), IfDp->index, IfDp->Name);
                 imc = delGroup(imc->mct, IfDp, imc, 1);
-            }
+            } else if (BIT_TST(imc->mct->vifB.dd, IfDp->index) && addGroup(imc->mct, IfDp, 1, 0, (uint32_t)-1))
+                LOG(LOG_INFO, 0, "clearGroups: Group %s now allowed downstream on %s.", inetFmt(imc->mct->group, 1), IfDp->Name);
         }
 
     if (! MCT)
@@ -808,7 +794,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint16_t  i = 0, type    = grecType(grec), nsrcs = grecNscrs(grec);
     uint32_t         group   = grec->grec_mca.s_addr,
                      srcHash = murmurhash3(ip) % (CONFIG->dHostsHTSize);
-    struct sources  *src    = NULL, *tsrc = NULL;
+    struct src      *src     = NULL, *tsrc = NULL;
     struct qlst     *qlst, *qlst1;
     struct mcTable  *mct;
 
@@ -848,7 +834,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     case IGMPV3_MODE_IS_EXCLUDE:
         is_ex = IS_EX(mct, IfDp);
         is_in = !mct->mode && mct->vifB.d;
-        if (NOT_SET(mct, IfDp) && !addGroup(mct, IfDp, 1, 1, srcHash))
+        if (!addGroup(mct, IfDp, 1, 1, srcHash))
             break;
 
         qlst->type = 4;
@@ -856,7 +842,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             if (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr)) do {
                 // IN: Delete (A - B) / EX: Delete (X - A), Delete (Y - A)
                 if (IS_SET(src, IfDp) || BIT_TST(src->vifB.dd, IfDp->index))
-                    src = delSrc(src, IfDp, srcHash);
+                    src = delSrc(src, IfDp, is_in ? 2 : 1, srcHash);
                 else {
                     if (src->mfc && !BIT_TST(src->vifB.d, IfDp->index) && !is_ex)
                         activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
@@ -904,7 +890,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         }  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
     case IGMPV3_MODE_IS_INCLUDE:
-        if (nsrcs > 0 && NOT_SET(mct, IfDp) && !addGroup(mct, IfDp, 1, 0, (uint32_t)-1))
+        if (nsrcs > 0 && !addGroup(mct, IfDp, 1, 0, (uint32_t)-1))
             break;
 
         qlst->type = 0x4;
@@ -931,7 +917,8 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         }
 
         qlst->type = 4, i = 0;
-        src = mct->sources;
+        src  = mct->sources;
+        bool nH = true;
         while (i < nsrcs && (IS_EX(mct, IfDp) || src)) {
             // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y), (A - X - Y) = Group Timer?
             if (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr) {
@@ -953,14 +940,14 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                         src = tsrc;
                 i++;
             }
-            for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; src = src->next);
+            for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; nH = !testHash(src->dHostsHT, srcHash), src = src->next);
         }
+        if (nH) for (; src && (nH = !testHash(src->dHostsHT, srcHash)); src = src->next);
+        if (nH)
+            clearHash(mct->dHostsHT, srcHash);
     }
 
     startQuery(IfDp, qlst);
-    if (!mct->mode && !mct->nsrcs && !BIT_TST(mct->gcBits, IfDp->index))
-        // Delete group if it is INCLUDE no sources.
-        delGroup(mct, IfDp, NULL, 1);
 
     LOG(LOG_DEBUG, 0, "Updated group entry for %s on VIF #%d", inetFmt(group, 1), IfDp->index);
     logRouteTable("Update Group", 1, NULL, 0);
@@ -971,7 +958,9 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 *   Returns false if group IS_IN no sources (can be deleted by caller).
 */
 static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
-    struct sources *src = mct->sources;
+    struct src *src = mct->sources;
+    uint32_t mode = mct->mode;
+    BIT_CLR(mode, IfDp->index);
 
     LOG(LOG_INFO, 0, "TO_IN: Switching mode for %s to include on %s.", inetFmt(mct->group, 1), IfDp->Name);
     while (src) {
@@ -979,13 +968,13 @@ static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
              LOG(LOG_DEBUG, 0, "TO_IN: Removed inactive source %s from group %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2));
              BIT_CLR(src->vifB.lm, IfDp->index);
              BIT_CLR(src->vifB.qry, IfDp->index);
-             src = delSrc(src, IfDp, (uint32_t)-1);
-             if (src && src->vifB.d && src->mfc)
+             src = delSrc(src, IfDp, mode ? 0 : 3 , (uint32_t)-1);
+             if (src->vifB.d && src->mfc)
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
          } else
              src = src->next;
     }
-    BIT_CLR(mct->mode, IfDp->index);
+    mct->mode = mode;
     BIT_CLR(mct->v2Bits, IfDp->index);
     mct->vifB.age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
     if (!mct->mode && mct->nsrcs) for (GETIFL(IfDp))
@@ -996,7 +985,7 @@ static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
 /**
 *   Adds a source to list of sources to query. Toggles appropriate flags and adds to qlst array.
 */
-static inline struct qlst *addSrcToQlst(struct sources *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash) {
+static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash) {
     uint16_t nsrcs = qlst->nsrcs;
 
     // Add source to query list if required, prevent duplicates.
@@ -1029,7 +1018,7 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint8_t 
     struct mcTable  *mct = findGroup(query->igmp_group.s_addr, false);
     uint16_t         nsrcs = ver == 2 ? 0 : ntohs(query->igmp_nsrcs);
     struct qlst     *qlst;
-    struct sources  *src;
+    struct src      *src;
 
     // If no group found for query, or not active on interface return.
     if (! mct || !IS_SET(mct, IfDp))
@@ -1151,7 +1140,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
                         // Aged source in include mode should be removed.
                         LOG(LOG_INFO, 0, "GSQ: Removed inactive source %s from group %s on %s.",
                                           inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
-                        delSrc(qlst->src[i], qlst->IfDp, (uint32_t)-1);
+                        delSrc(qlst->src[i], qlst->IfDp, 0, (uint32_t)-1);
                     } else
                         // In exclude mode sources should be kept.
                         LOG(LOG_INFO, 0, "GSQ: Source %s from group %s on %s expired.",
@@ -1217,7 +1206,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
 void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t type) {
     struct qlst     *ql   = qry ? qry : qL;
     struct mcTable  *mct = qry ? ql->mct : _mct;
-    struct sources  *src  = _src;
+    struct src      *src  = _src;
     LOG(LOG_INFO, 0, "delQry: Removing quer%s%s%s%s on %s.", qry || src ? "y" : "ies",
                       mct || src ? " for " : "", src ? inetFmt(src->ip, 1) : "",
                       mct ? inetFmt(mct->group, 2) : "", IfDp->Name);
@@ -1267,14 +1256,14 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
 *   If called with pointer to source and !activate the route will be removed.
 */
 inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate) {
-    struct sources  *src  = _src;
-    struct mcTable  *mct  = src ? src->mct : findGroup(group, true);
+    struct src      *src  = _src;
+    struct mcTable  *mct  = src ? src->mct : findGroup(group, false);
+    if (! mct) {
+        LOG(LOG_DEBUG, 0, "activateRoute: Group %s not found, ignoring activation.", inetFmt(ip, 1), inetFmt(group, 2));
+        return;
+    }
 
     if (activate) {
-        // Garbage route. Sender for group which was never requested downstream.
-        if (!mct->vifB.d && !BIT_TST(mct->gcBits, IfDp->index))
-            addGroup(mct, IfDp, 0, 2, (uint32_t)-1);
-
         // Find source or create source in group when new should be created.
         if (! src) {
             for (src = mct->sources; src && src->ip < ip; src = src->next);
@@ -1285,7 +1274,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
             }
         }
 
-        if (mct->mode && !checkFilters(IfDp, 0, src, mct)) {
+        if (mct->mode && BIT_TST(mct->vifB.u, IfDp->index) && !checkFilters(IfDp, 0, src, mct)) {
             if (!BIT_TST(src->vifB.us, IfDp->index)) {
                 LOG(LOG_NOTICE, 0, "Explicitely blocking denied source %s for group %s on upstream interface %s.",
                                     inetFmt(src->ip, 1), inetFmt(mct->group, 2), IfDp->Name);
@@ -1318,13 +1307,14 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     if (activate) {
         // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
         uint8_t ttlVc[MAXVIFS] = {0};
-        for (GETIFL(IfDp)) {
-            if (IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, IfDp) && checkFilters(IfDp, 1, src, mct) &&
-                (   (IS_IN(mct, IfDp) && !noHash(src->dHostsHT) && IS_SET(src, IfDp) && src->vifB.age[IfDp->index] > 0)
-                 || (IS_EX(mct, IfDp) && !noHash(mct->dHostsHT) && (!IS_SET(src, IfDp) || src->vifB.age[IfDp->index] > 0)))) {
-                LOG(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", IfDp->index, IfDp->conf->threshold);
+        for (GETIFL(IfDp)) if (IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, IfDp)) {
+            if (!checkFilters(IfDp, 1, src, mct))
+                LOG(LOG_NOTICE, 0, "Not forwarding denied source %s to group %s on %s.", inetFmt(src->ip,1),
+                                    inetFmt(mct->group, 2), IfDp->Name);
+            else if ((   (IS_IN(mct, IfDp) && !noHash(src->dHostsHT) && IS_SET(src, IfDp) && src->vifB.age[IfDp->index] > 0)
+                      || (IS_EX(mct, IfDp) && !noHash(mct->dHostsHT) && (!IS_SET(src, IfDp) || src->vifB.age[IfDp->index] > 0))))
                 ttlVc[IfDp->index] = IfDp->conf->threshold;
-            }
+            LOG(LOG_DEBUG, 0, "activateRoute: Setting TTL for Vif %s (%d) to %d", IfDp->Name, IfDp->index, ttlVc[IfDp->index]);
         }
         k_addMRoute(src->ip, mct->group, src->mfc->IfDp->index, ttlVc);
     } else {
@@ -1365,15 +1355,15 @@ void ageGroups(struct IfDesc *IfDp) {
             imc->mct->v2Age[IfDp->index]--;
 
         // Age sources in group.
-        bool             keep = false;
-        struct sources *src = imc->mct->sources;
+        bool        keep = false;
+        struct src *src  = imc->mct->sources;
         while (src) {
             if (NOT_SET(src, IfDp) || (IS_EX(imc->mct, IfDp) && src->vifB.age[IfDp->index] == 0)) {
                 src = src->next;
             } else if (!BIT_TST(src->vifB.lm, IfDp->index) && IS_IN(imc->mct, IfDp) && src->vifB.age[IfDp->index] == 0) {
                 LOG(LOG_INFO, 0, "ageGroups: Removed source %s from %s on %s after aging.",
                                   inetFmt(src->ip, 1), inetFmt(imc->mct->group, 2), IfDp->Name);
-                src = delSrc(src, IfDp, (uint32_t)-1);
+                src = delSrc(src, IfDp, 0, (uint32_t)-1);
             } else if (BIT_TST(src->vifB.lm, IfDp->index) || src->vifB.age[IfDp->index]-- > 0) {
                 src = src->next;
                 keep = true;
@@ -1381,7 +1371,10 @@ void ageGroups(struct IfDesc *IfDp) {
         }
 
         // Next age group.
-        if (IS_EX(imc->mct, IfDp) && imc->mct->vifB.age[IfDp->index] == 0 && !BIT_TST(imc->mct->v1Bits, IfDp->index))
+        if (BIT_TST(imc->mct->vifB.dd, IfDp->index) && imc->mct->vifB.age[IfDp->index] == 0) {
+            imc = delGroup(imc->mct, IfDp, imc, 1);
+            continue;
+        } else if (IS_EX(imc->mct, IfDp) && imc->mct->vifB.age[IfDp->index] == 0 && !BIT_TST(imc->mct->v1Bits, IfDp->index))
             toInclude(imc->mct, IfDp);
         if (IS_IN(imc->mct, IfDp) && (!keep || !imc->mct->nsrcs)) {
             LOG(LOG_INFO, 0, "ageGroups: Removed group %s from %s after aging.", inetFmt(imc->mct->group, 2), IfDp->Name);

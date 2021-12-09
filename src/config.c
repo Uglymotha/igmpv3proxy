@@ -60,7 +60,7 @@ static char           *iBuffer = NULL, *token = NULL;  // Input buffer, token bu
 static unsigned int    bufPtr, readSize;               // Buffer position pointer and nr of bytes in buffer.
 
 // Structures to keep vif configuration and black/whitelists.
-static struct vifConfig   *vifConf, *oldvifConf;
+static struct vifConfig   *vifConf, *ovifConf;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
@@ -88,7 +88,7 @@ void freeConfig(int old) {
                      *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
-    for (cConf = old ? oldvifConf : vifConf; cConf; cConf = tConf) {
+    for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
         for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
         for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
@@ -219,7 +219,7 @@ void reloadConfig(uint64_t *tid) {
     // Check and set sigstatus to what we are actually doing right now.
     if (NOSIG)
         sigstatus = GOT_CONFREL;
-    oldvifConf      = vifConf;
+    ovifConf        = vifConf;
     vifConf         = NULL;
     oldcommonConfig = commonConfig;
 
@@ -229,13 +229,13 @@ void reloadConfig(uint64_t *tid) {
         commonConfig = oldcommonConfig;
         if (vifConf)
             freeConfig(0);
-        vifConf = oldvifConf;
+        vifConf = ovifConf;
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
 
-        LOG(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", oldvifConf, vifConf);
+        LOG(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", ovifConf, vifConf);
     }
     if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
         *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
@@ -389,7 +389,7 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
-            if (! (***n = malloc(sizeof(struct filters))))
+            if (! (***n = calloc(1, sizeof(struct filters))))
                 LOG(LOG_ERR, errno, "parseFilters: Out of Memory.");  // Freed by freeConfig()
             ****n = fil;
 
@@ -678,7 +678,7 @@ bool loadConfig(void) {
 
     // Create default filter any.
     if (commonConfig.defaultFilterAny) {
-        if (! (commonConfig.defaultFilters = malloc(sizeof(struct filters))))
+        if (! (commonConfig.defaultFilters = calloc(1, sizeof(struct filters))))
             LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
         *commonConfig.defaultFilters = FILTERANY;
     }
@@ -918,14 +918,15 @@ static struct vifConfig *parsePhyintToken(void) {
 */
 void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
-    struct vifConfig *confPtr = NULL;
+    struct vifConfig *confPtr = NULL, *oconfPtr = NULL;
+    struct filters   *fil, *ofil;
     register int      vifcount = 0, upsvifcount = 0, downvifcount = 0;
 
     if (! vifConf)
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
     // Loop through all interfaces and find matching config.
     for (GETIFL(IfDp)) {
-        for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name) != 0; confPtr = confPtr->next);
+        for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name); confPtr = confPtr->next);
         if (confPtr) {
             LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
         } else {
@@ -969,13 +970,21 @@ void configureVifs(void) {
         // Link default filters for interface when reloading config,
         // or when new interface is detected and no configuration reload has yet occured.
         if (!IfDp->conf->defaultfilter && !confPtr->nodefaultfilter) {
-            struct filters *fil;
             for (fil = IfDp->conf->filters; fil && fil->next; fil = fil->next);
             if (! fil)
                 IfDp->conf->filters = commonConfig.defaultFilters;
             else
                 fil->next = commonConfig.defaultFilters;
             IfDp->conf->defaultfilter = true;
+        }
+
+        // Check if filters have changed so that ACLs will be reevaluated.
+        if (CONFRELOAD || SSIGHUP) {
+            for (oconfPtr = ovifConf; oconfPtr && strcmp(IfDp->Name, oconfPtr->name); oconfPtr = oconfPtr->next);
+            for (fil = confPtr->filters, ofil = oconfPtr->filters; fil && ofil && !memcmp(fil, ofil, sizeof(struct filters));
+                 fil = fil->next, ofil = ofil->next);
+            if (fil || ofil)
+                IfDp->filCh = true;
         }
 
         // Check if querier process needs to be restarted, because election was turned of and other querier present.

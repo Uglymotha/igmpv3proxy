@@ -157,26 +157,27 @@ inline uint32_t murmurhash3(register uint32_t x) {
 
 // Sets hash in table.
 inline void setHash(register uint64_t *table, register uint32_t hash) {
-    if (CONFIG->fastUpstreamLeave) {
+    if (CONFIG->fastUpstreamLeave)
         BIT_SET(table[hash / 64], hash % 64);
-    }
 }
 
 // Clears hash in table.
 inline void clearHash(register uint64_t *table, register uint32_t hash) {
-    if (CONFIG->fastUpstreamLeave) {
+    if (CONFIG->fastUpstreamLeave)
         BIT_CLR(table[hash / 64], hash % 64);
-    }
 }
+
+// Tests if hash is set in table.
+inline bool testHash(register uint64_t *table, register uint32_t hash) {
+    return !CONFIG->fastUpstreamLeave ? false : BIT_TST(table[hash / 64], hash % 64);
+}    
 
 // Tests if hash table is empty.
 inline bool noHash(register uint64_t *table) {
-    if (!CONFIG->fastUpstreamLeave)
-        return false;
-
     register uint64_t i, n = CONFIG->dHostsHTSize / 8;
-    for (i = 0; i < n && table[i] == 0; i++);
-    return i < n ? false : true;
+    if (CONFIG->fastUpstreamLeave)
+        for (i = 0; i < n && table[i] == 0; i++);
+    return !CONFIG->fastUpstreamLeave || i < n ? false : true;
 }
 
 /**

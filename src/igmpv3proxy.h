@@ -205,16 +205,16 @@ struct IfDesc {
     uint32_t                      mtu;                   // Interface MTU
     uint8_t                       state;                 // Operational state
     struct vifConfig             *conf;                  // Pointer to interface configuraion
+    bool                          filCh;                 // Flag for filter change during config reload
     struct querier                querier;               // igmp querier for interface
     uint64_t                      bytes, rate;           // Counters for bandwith control
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
-    void                         *gMct;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
@@ -342,6 +342,7 @@ bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint3
 uint32_t        murmurhash3(register uint32_t x);
 void            setHash(register uint64_t *table, register uint32_t hash);
 void            clearHash(register uint64_t *table, register uint32_t hash);
+bool            testHash(register uint64_t *table, register uint32_t hash);
 bool            noHash(register uint64_t *table);
 uint16_t        sortArr(register uint32_t *arr, register uint16_t nr);
 const char     *igmpPacketKind(unsigned int type, unsigned int code);
