@@ -842,7 +842,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             if (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr)) do {
                 // IN: Delete (A - B) / EX: Delete (X - A), Delete (Y - A)
                 if (IS_SET(src, IfDp) || BIT_TST(src->vifB.dd, IfDp->index))
-                    src = delSrc(src, IfDp, is_in ? 2 : 1, srcHash);
+                    src = delSrc(src, IfDp, !CONFIG->fastUpstreamLeave ? 0 : is_in ? 2 : 1, srcHash);
                 else {
                     if (src->mfc && !BIT_TST(src->vifB.d, IfDp->index) && !is_ex)
                         activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
@@ -940,11 +940,16 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                         src = tsrc;
                 i++;
             }
-            for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; nH = !testHash(src->dHostsHT, srcHash), src = src->next);
+            if (CONFIG->fastUpstreamLeave)
+                for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; nH = !testHash(src->dHostsHT, srcHash),
+                                                                               src = src->next);
+            else for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; src = src->next);
         }
-        if (nH) for (; src && (nH = !testHash(src->dHostsHT, srcHash)); src = src->next);
-        if (nH)
-            clearHash(mct->dHostsHT, srcHash);
+        if (CONFIG->fastUpstreamLeave && nH) {
+            for (; src && (nH = !testHash(src->dHostsHT, srcHash)); src = src->next);
+            if (nH)
+                clearHash(mct->dHostsHT, srcHash);
+        }
     }
 
     startQuery(IfDp, qlst);
@@ -966,8 +971,6 @@ static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
     while (src) {
          if (!src->vifB.d || (IS_SET(src, IfDp) && src->vifB.age[IfDp->index] == 0)) {
              LOG(LOG_DEBUG, 0, "TO_IN: Removed inactive source %s from group %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2));
-             BIT_CLR(src->vifB.lm, IfDp->index);
-             BIT_CLR(src->vifB.qry, IfDp->index);
              src = delSrc(src, IfDp, mode ? 0 : 3 , (uint32_t)-1);
              if (src->vifB.d && src->mfc)
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
@@ -1291,7 +1294,6 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
                 LOG(LOG_ERR, errno, "activateRoute: Out of Memory!");  // Freed by Self.
             *nmfc = (struct mfc){ NULL, NULL, {0, 0}, src, IfDp, 0, 0 };
             clock_gettime(CLOCK_REALTIME, &nmfc->stamp);
-            src->mfc = nmfc;
             if (mct->mfc) {
                 nmfc->next = mct->mfc;
                 mct->mfc->prev = nmfc;

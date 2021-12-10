@@ -979,7 +979,7 @@ void configureVifs(void) {
         }
 
         // Check if filters have changed so that ACLs will be reevaluated.
-        if (CONFRELOAD || SSIGHUP) {
+        if (!IfDp->filCh && (CONFRELOAD || SSIGHUP)) {
             for (oconfPtr = ovifConf; oconfPtr && strcmp(IfDp->Name, oconfPtr->name); oconfPtr = oconfPtr->next);
             for (fil = confPtr->filters, ofil = oconfPtr->filters; fil && ofil && !memcmp(fil, ofil, sizeof(struct filters));
                  fil = fil->next, ofil = ofil->next);
