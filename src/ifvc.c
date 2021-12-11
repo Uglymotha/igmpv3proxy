@@ -109,7 +109,7 @@ void buildIfVc(void) {
         struct IfDesc *IfDp;
         uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
         unsigned int   ix   = if_nametoindex(tmpIfAddrsP->ifa_name);
-        if ((IfDp = getIf(ix, 1)) && (! IfDp->conf)) {
+        if ((IfDp = getIf(ix, 1)) && ! IfDp->conf) {
             // Check if the interface is an alias for an already created or rebuild IfDesc.
             continue;
 
@@ -176,7 +176,7 @@ inline struct IfDesc *getIfL(void) {
 */
 inline struct IfDesc *getIf(unsigned int ix, int sys) {
     struct IfDesc *IfDp;
-    for (IfDp = IfDescL; IfDp && !((sys && IfDp->sysidx == ix) || (!sys && IfDp->index == ix)); IfDp = IfDp->next);
+    for (IfDp = IfDescL; IfDp && !((sys ? IfDp->sysidx : IfDp->index) == ix); IfDp = IfDp->next);
     return IfDp;
 }
 

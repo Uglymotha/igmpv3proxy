@@ -232,8 +232,10 @@ bool k_addVIF(struct IfDesc *IfDp) {
     uint32_t       vifBits = 0;
 
     // Find available vifindex.
-    for (GETIFL(Dp)) if (Dp->index != (uint8_t)-1) BIT_SET(vifBits, Dp->index);
-    while (Ix < MAXVIFS && (vifBits & (1 << Ix))) Ix++;
+    for (GETIFL(Dp))
+        if (Dp->index != (uint8_t)-1)
+            BIT_SET(vifBits, Dp->index);
+    for (;Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
     if (Ix >= MAXVIFS) {
         LOG(LOG_WARNING, ENOMEM, "addVIF: out of VIF space");
         return false;
@@ -286,8 +288,6 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
         struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ, { {CONFIG->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
         if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
             LOG(LOG_WARNING, errno, "MRT_ADD_BW_UPCALL %d - %s", vif, inetFmt(group, 1));
-        else
-            LOG(LOG_DEBUG, 0, "Added BW_UPCALL: Src %s, Dst %s", inetFmt(bwUpc.bu_src.s_addr, 1), inetFmt(bwUpc.bu_dst.s_addr, 2));
     }
 #endif
 }

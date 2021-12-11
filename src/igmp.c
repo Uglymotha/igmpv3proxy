@@ -170,7 +170,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     register uint16_t cksum = igmp->igmp_cksum;
     igmp->igmp_cksum = 0;
     if (! IfDp)
-        LOG(LOG_NOTICE, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s",
+        LOG(LOG_NOTICE, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
                             inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_NOTICE, 0, "acceptIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
@@ -179,10 +179,10 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         LOG(LOG_NOTICE, 0, "acceptIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else if (iphdrlen + ipdatalen != recvlen)
-        LOG(LOG_WARNING, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u)",
+        LOG(LOG_WARNING, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
                              inetFmt(src, 1), recvlen, iphdrlen, ipdatalen);
     else if ((ipdatalen < IGMP_MINLEN) || (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN))
-        LOG(LOG_WARNING, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s",
+        LOG(LOG_WARNING, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s.",
                              ipdatalen, inetFmt(src, 1));
     else if (cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_WARNING, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
@@ -208,7 +208,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             if (ngrec > 0) do {
                 int nsrcs = ntohs(grec->grec_nsrcs);
                 if (grec->grec_type < 1 || grec->grec_type > 6)
-                    LOG(LOG_NOTICE, 0, "Ignoring unknown IGMPv3 group record type %x from %s to %s for %s",
+                    LOG(LOG_NOTICE, 0, "Ignoring unknown IGMPv3 group record type %x from %s to %s for %s.",
                                         grec->grec_type, inetFmt(src, 1), inetFmt(dst, 2), inetFmt(grec->grec_mca.s_addr, 3));
                 else if (checkIgmp(IfDp, grec->grec_mca.s_addr, IF_STATE_DOWNSTREAM))
                     updateGroup(IfDp, src, grec);
@@ -223,7 +223,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             return;
 
         default:
-            LOG(LOG_DEBUG, 0, "ignoring unknown IGMP message type %x from %s to %s",
+            LOG(LOG_DEBUG, 0, "acceptIgmp: Ignoring unknown IGMP message type %x from %s to %s.",
                                igmp->igmp_type, inetFmt(src, 1), inetFmt(dst, 2));
             return;
         }

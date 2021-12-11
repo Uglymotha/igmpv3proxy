@@ -377,10 +377,10 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 #define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
 #define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
                                         for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
-#define IS_EX(x,y)    BIT_TST(x->mode, y->index)
-#define IS_IN(x,y)   !BIT_TST(x->mode, y->index)
-#define IS_SET(x,y)   BIT_TST(x->vifB.d, y->index)
-#define NOT_SET(x,y) !BIT_TST(x->vifB.d, y->index)
+#define IS_EX(x, y)       BIT_TST(x->mode, y->index)
+#define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
+#define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
+#define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
 uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);

@@ -169,7 +169,7 @@ inline void clearHash(register uint64_t *table, register uint32_t hash) {
 
 // Tests if hash is set in table.
 inline bool testHash(register uint64_t *table, register uint32_t hash) {
-    return !CONFIG->fastUpstreamLeave ? false : BIT_TST(table[hash / 64], hash % 64);
+    return CONFIG->fastUpstreamLeave && BIT_TST(table[hash / 64], hash % 64);
 }
 
 // Tests if hash table is empty.
