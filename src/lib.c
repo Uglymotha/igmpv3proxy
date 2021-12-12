@@ -157,13 +157,13 @@ inline uint32_t murmurhash3(register uint32_t x) {
 
 // Sets hash in table.
 inline void setHash(register uint64_t *table, register uint32_t hash) {
-    if (CONFIG->fastUpstreamLeave)
+    if (CONFIG->fastUpstreamLeave && hash != (uint32_t)-1)
         BIT_SET(table[hash / 64], hash % 64);
 }
 
 // Clears hash in table.
 inline void clearHash(register uint64_t *table, register uint32_t hash) {
-    if (CONFIG->fastUpstreamLeave)
+    if (CONFIG->fastUpstreamLeave && hash != (uint32_t)-1)
         BIT_CLR(table[hash / 64], hash % 64);
 }
 

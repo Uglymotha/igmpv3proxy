@@ -1007,6 +1007,7 @@ void configureVifs(void) {
         else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
         else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
         else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    {                       clearGroups(IfDp); }
+        IfDp->filCh = false;
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
