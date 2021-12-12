@@ -982,14 +982,12 @@ static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
     uint32_t mode = mct->mode;
     BIT_CLR(mode, IfDp->index);
 
-    LOG(LOG_INFO, 0, "TO_IN: Switching mode for %s to include on %s.", inetFmt(mct->group, 1), IfDp->Name);
+    LOG(LOG_INFO, 0, "toInclude: Switching mode for %s to include on %s.", inetFmt(mct->group, 1), IfDp->Name);
     while (src) {
         // Remove all inactive sources from group on interface, update MFC if source remains on other interfaces.
         if (!src->vifB.d || (IS_SET(src, d, IfDp) && src->vifB.age[IfDp->index] == 0)) {
-            LOG(LOG_DEBUG, 0, "TO_IN: Removed inactive source %s from group %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2));
+            LOG(LOG_DEBUG, 0, "toInclude: Removed inactive source %s from group %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2));
             src = delSrc(src, IfDp, mode ? 0 : 3 , (uint32_t)-1);
-            if (src && src->vifB.d && src->mfc)
-               activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
         } else
             src = src->next;
     }
@@ -1374,15 +1372,19 @@ void ageGroups(struct IfDesc *IfDp) {
             imc->mct->v2Age[IfDp->index]--;
 
         // Age sources in group.
-        for (struct src *src  = imc->mct->sources; src; src = src ? src->next : imc->mct->sources)
+        struct src *src  = imc->mct->sources;
+        while (src) {
             if (NOT_SET(src, lm, IfDp)) {
                 if (src->vifB.age[IfDp->index] == 0 && (IS_SET(src, dd, IfDp) || (IS_IN(imc->mct, IfDp)))) {
                     LOG(LOG_INFO, 0, "ageGroups: Removed source %s from %s on %s after aging.",
                                       inetFmt(src->ip, 1), inetFmt(imc->mct->group, 2), IfDp->Name);
                     src = delSrc(src, IfDp, 0, (uint32_t)-1);
+                    continue;
                 } else if (src->vifB.age[IfDp->index] > 0)
                     src->vifB.age[IfDp->index]--;
             }
+            src = src->next;
+        }
 
         // Next age group.
         if (IS_EX(imc->mct, IfDp) && NOT_SET(imc->mct, dd, IfDp) && imc->mct->vifB.age[IfDp->index] == 0
