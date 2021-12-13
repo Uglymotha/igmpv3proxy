@@ -300,11 +300,11 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
                     MCT = NULL;
                 }
             }
-        }
 
-        // Remove all sources from group.
-        for (struct src *src = mct->sources; src; src = delSrc(src, NULL, 0, (uint32_t)-1));
-        free(mct);  // Alloced by findGroup()
+            // Remove all sources from group.
+            for (struct src *src = mct->sources; src; src = delSrc(src, NULL, 0, (uint32_t)-1));
+            free(mct);  // Alloced by findGroup()
+        }
     } else {
         // Leave group upstream and clear upstream status.
         if (IS_SET(mct, us, IfDp)) {
@@ -452,7 +452,7 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
                 BIT_CLR(src->vifB.us, If->index);
             }
         if (! IfDp || !src->vifB.d) {
-            if (src->mfc && (! IfDp || IS_IN(mct, IfDp)))
+            if (src->mfc && (! IfDp || !mct->mode))
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, false);
             if (CONFIG->maxOrigins && (--mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins)
                 // Reset maxorigins exceeded flag.

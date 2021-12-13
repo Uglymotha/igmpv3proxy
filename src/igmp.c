@@ -39,7 +39,7 @@
 #include "igmpv3proxy.h"
 
 // Local prototypes.
-static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uint8_t ifstate);
+static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint32_t group, register uint8_t ifstate);
 static void expireQuerierTimer(struct IfDesc *IfDp);
 static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, struct igmpv3_query *igmpv3, int ipdatalen);
 
@@ -93,17 +93,19 @@ char *initIgmp(void) {
 /**
 *  Checks if request is valid.
 */
-static bool checkIgmp(struct IfDesc *IfDp, register uint32_t group, register uint8_t ifstate) {
+static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint32_t group, register uint8_t ifstate) {
     // Sanitycheck the group adress...
     if (! IN_MULTICAST(ntohl(group)))
         LOG(LOG_NOTICE, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
     /* filter local multicast 224.0.0.0/24 */
     else if (! CONFIG->proxyLocalMc && IGMP_LOCAL(group))
-        LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s and proxylocalmc is not set. Ignoring.", IfDp->Name);
+        LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s from %s and proxylocalmc is not set. Ignoring.",
+                           IfDp->Name, inetFmt(src, 1));
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
                               : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
-        LOG(LOG_INFO, 0, "checkIgmp: Message for %s was received on %s. Ignoring.", inetFmt(group, 1), strcat(msg, IfDp->Name));
+        LOG(LOG_INFO, 0, "checkIgmp: Message for %s from %s was received on %s. Ignoring.",
+                          inetFmt(group, 1), inetFmt(src, 2), strcat(msg, IfDp->Name));
     } else
         return true;
 
@@ -129,7 +131,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             return;
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
-            if (checkIgmp(IfDp, dst, IF_STATE_UPSTREAM))
+            if (checkIgmp(IfDp, src, dst, IF_STATE_UPSTREAM))
                 activateRoute(IfDp, NULL, src, dst, true);
             return;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -198,7 +200,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         case IGMP_V1_MEMBERSHIP_REPORT:
         case IGMP_V2_LEAVE_GROUP:
         case IGMP_V2_MEMBERSHIP_REPORT:
-            if (checkIgmp(IfDp, igmp->igmp_group.s_addr, IF_STATE_DOWNSTREAM))
+            if (checkIgmp(IfDp, src, igmp->igmp_group.s_addr, IF_STATE_DOWNSTREAM))
                 updateGroup(IfDp, src, (void *)igmp);
             return;
 
@@ -210,7 +212,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
                 if (grec->grec_type < 1 || grec->grec_type > 6)
                     LOG(LOG_NOTICE, 0, "Ignoring unknown IGMPv3 group record type %x from %s to %s for %s.",
                                         grec->grec_type, inetFmt(src, 1), inetFmt(dst, 2), inetFmt(grec->grec_mca.s_addr, 3));
-                else if (checkIgmp(IfDp, grec->grec_mca.s_addr, IF_STATE_DOWNSTREAM))
+                else if (checkIgmp(IfDp, src, grec->grec_mca.s_addr, IF_STATE_DOWNSTREAM))
                     updateGroup(IfDp, src, grec);
                 grec = (struct igmpv3_grec *)(&grec->grec_src[nsrcs] + grec->grec_auxwords * 4);
             } while (--ngrec && (char *)igmpv3gr + ipdatalen >= (char *)grec + sizeof(*grec));
