@@ -276,7 +276,7 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
             BIT_CLR(mct->v1Bits, IfDp->index);
             BIT_CLR(mct->v2Bits, IfDp->index);
             mct->vifB.age[IfDp->index] = mct->v1Age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
-            for (struct mfc *mfc = mct->mfc; mfc; activateRoute(NULL, mfc->src, 0, 0, true), mfc = mfc->next);
+            for (struct mfc *mfc = mct->mfc; mfc; activateRoute(mfc->IfDp, mfc->src, 0, 0, true), mfc = mfc->next);
             for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
         } else {
             // Group can be removed from table.
@@ -620,8 +620,8 @@ static bool checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct m
     // Filters are processed top down until a definitive action (BLOCK or ALLOW) is found.
     // The default action when no filter applies is block.
     struct filters *filter;
-    for (filter = IfDp->conf->filters; filter && (dir ? !IS_DOWNSTREAM(filter->dir) : !IS_UPSTREAM(filter->dir))
-            || (!(src ? ((src->ip & filter->src.mask) == filter->src.ip && (mct->group & filter->dst.mask) == filter->dst.ip)
+    for (filter = IfDp->conf->filters; filter && ((dir ? !IS_DOWNSTREAM(filter->dir) : !IS_UPSTREAM(filter->dir))
+            || !(src ? ((src->ip & filter->src.mask) == filter->src.ip && (mct->group & filter->dst.mask) == filter->dst.ip)
                      : ((mct->group & filter->dst.mask) == filter->dst.ip))); filter = filter->next);
     if (! filter || !filter->action)
         // When denied set denied bit for source or group.

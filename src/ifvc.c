@@ -119,9 +119,8 @@ void buildIfVc(void) {
                 LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
-            // Copy the interface name. Make 100% sure it is NULL terminated.
-            memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
-            IfDp->Name[IF_NAMESIZE - 1] = '\0';
+            // Copy the interface name.
+            memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
 
         } else {
             // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
@@ -136,7 +135,7 @@ void buildIfVc(void) {
 
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
-        memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, IF_NAMESIZE);
+        memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
         if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
             LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
             IfDp->mtu = 0;
