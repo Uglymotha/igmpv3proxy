@@ -310,7 +310,10 @@ void cliCmd(char *cmd);
 /**
 *   ifvc.c
 */
-#define GETIFL(x) x = getIfL(); x; x = x->next
+#define IFL(x)          x = getIfL(); x; x = x->next
+#define GETIFL(x, ...)  for (IFL(x) __VA_OPT__(,) __VA_ARGS__)
+#define IFGETIFL(y, x)  if (y) GETIFL(x)
+#define GETIFLIF(x, y)  GETIFL(x) if (y)
 void           freeIfDescL();
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);

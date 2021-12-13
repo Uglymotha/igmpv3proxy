@@ -232,9 +232,8 @@ bool k_addVIF(struct IfDesc *IfDp) {
     uint32_t       vifBits = 0;
 
     // Find available vifindex.
-    for (GETIFL(Dp))
-        if (Dp->index != (uint8_t)-1)
-            BIT_SET(vifBits, Dp->index);
+    GETIFLIF(Dp, Dp->index != (uint8_t)-1)
+        BIT_SET(vifBits, Dp->index);
     for (;Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
     if (Ix >= MAXVIFS) {
         LOG(LOG_WARNING, ENOMEM, "addVIF: out of VIF space");

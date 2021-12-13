@@ -920,12 +920,12 @@ void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
     struct vifConfig *confPtr = NULL, *oconfPtr = NULL;
     struct filters   *fil, *ofil;
-    register int      vifcount = 0, upsvifcount = 0, downvifcount = 0;
+    uint32_t          vifcount = 0, upsvifcount = 0, downvifcount = 0;
 
     if (! vifConf)
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
     // Loop through all interfaces and find matching config.
-    for (GETIFL(IfDp)) {
+    for (uVifs = 0, IFL(IfDp)) {
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name); confPtr = confPtr->next);
         if (confPtr) {
             LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
@@ -997,8 +997,10 @@ void configureVifs(void) {
             vifcount++;
             if (IS_DOWNSTREAM(newstate))
                 downvifcount++;
-            if (IS_UPSTREAM(newstate))
+            if (IS_UPSTREAM(newstate)) {
                 upsvifcount++;
+                BIT_SET(uVifs, IfDp->index);
+            }
         }
 
         // Do maintenance on vifs according to their old and new state.
@@ -1021,9 +1023,7 @@ void configureVifs(void) {
         }
     }
 
-    // All vifs created / updated, check if there is an upstream and at least one downstream on rebuild interface.
-    for (uVifs = 0, GETIFL(IfDp))
-        if (IS_UPSTREAM(IfDp->state)) BIT_SET(uVifs, IfDp->index);
+    // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && (vifcount < 2 || upsvifcount == 0 || downvifcount == 0))
         LOG((STARTUP ? LOG_ERR : LOG_WARNING), 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
 }
