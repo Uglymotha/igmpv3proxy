@@ -250,8 +250,20 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
     struct ifMct *pimc = NULL, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     LOG(LOG_DEBUG, 0, "delGroup: Removing group entry for %s from %s.", inetFmt(mct->group, 1), IfDp->Name);
 
-    // Clear group membership from interface (or all on shutdown) and ckeck if it can be removed completely.
+    // Update the interface group list.
+    if (! imc)
+        for (imc = *list; imc && imc->mct != mct; imc = imc->next);
+    pimc = imc->prev;
+    if (imc->next)
+        imc->next->prev = imc->prev;
+    if (imc->prev)
+        imc->prev->next = imc->next;
+    else
+        *list = imc->next;
+    free(imc);  // Alloced by addGroup()
+
     if (dir) {
+        // Clear group membership from downstream interface and ckeck if it can be removed completely.
         delQuery(IfDp, NULL, mct, NULL, 0);
         BIT_CLR(mct->vifB.d, IfDp->index);
         if (mct->vifB.d) {
@@ -266,56 +278,42 @@ static struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct i
             mct->vifB.age[IfDp->index] = mct->v1Age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
             for (struct mfc *mfc = mct->mfc; mfc; activateRoute(NULL, mfc->src, 0, 0, true), mfc = mfc->next);
             for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
-        }
-    }
+        } else {
+            // Group can be removed from table.
+            uint32_t mctHash = murmurhash3(mct->group) % CONFIG->mcTables;
 
-    // Update the interface group list.
-    if (!(dir && mct->vifB.d)) {
-        if (! imc)
-            for (imc = *list; imc && imc->mct != mct; imc = imc->next);
-        pimc = imc->prev;
-        if (imc->next)
-            imc->next->prev = imc->prev;
-        if (imc->prev)
-            imc->prev->next = imc->next;
-        else
-            *list = imc->next;
-        free(imc);  // Alloced by addGroup()
-    }
+            LOG(LOG_DEBUG, 0, "delGroup: Deleting group %s from table %d.",inetFmt(mct->group, 1), mctHash);
+            // Send Leave request upstream.
+            GETIFLIF(IfDp, IS_SET(mct, u, IfDp))
+                delGroup(mct, IfDp, NULL, 0);
 
-    // Check if group should be removed from table.
-    if (!mct->vifB.d && !(!dir && mct->vifB.u)) {
-        uint32_t mctHash = murmurhash3(mct->group) % CONFIG->mcTables;
-
-        LOG(LOG_DEBUG, 0, "delGroup: Deleting group %s from table %d.",inetFmt(mct->group, 1), mctHash);
-        // Send Leave request upstream.
-        GETIFLIF(IfDp, IS_SET(mct, u, IfDp))
-            delGroup(mct, IfDp, NULL, 0);
-
-        // Update MCT and check if all tables are empty.
-        if (mct->next)
-            mct->next->prev = mct->prev;
-        if (mct != MCT[mctHash])
-            mct->prev->next = mct->next;
-        else if (! (MCT[mctHash] = mct->next)) {
-            uint16_t iz;
-            for (iz = 0; MCT && iz < CONFIG->mcTables && ! MCT[iz]; iz++);
-            if (iz == CONFIG->mcTables) {
-                free(MCT);  // Alloced by findGroup()
-                MCT = NULL;
+            // Update MCT and check if all tables are empty.
+            if (mct->next)
+                mct->next->prev = mct->prev;
+            if (mct != MCT[mctHash])
+                mct->prev->next = mct->next;
+            else if (! (MCT[mctHash] = mct->next)) {
+                uint16_t iz;
+                for (iz = 0; MCT && iz < CONFIG->mcTables && ! MCT[iz]; iz++);
+                if (iz == CONFIG->mcTables) {
+                    free(MCT);  // Alloced by findGroup()
+                    MCT = NULL;
+                }
             }
         }
 
         // Remove all sources from group.
         for (struct src *src = mct->sources; src; src = delSrc(src, NULL, 0, (uint32_t)-1));
         free(mct);  // Alloced by findGroup()
-    } else if (!dir) {
+    } else {
+        // Leave group upstream and clear upstream status.
         if (IS_SET(mct, us, IfDp)) {
             LOG(LOG_INFO, 0, "delGroup: Leaving group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
             k_setSourceFilter(IfDp, mct->group, MCAST_INCLUDE, 0, NULL);
         }
         BIT_CLR(mct->vifB.u, IfDp->index);
         BIT_CLR(mct->vifB.su, IfDp->index);
+        BIT_CLR(mct->vifB.ud, IfDp->index);
         BIT_CLR(mct->vifB.us, IfDp->index);
     }
 
@@ -622,20 +620,15 @@ static bool checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct m
     // Filters are processed top down until a definitive action (BLOCK or ALLOW) is found.
     // The default action when no filter applies is block.
     struct filters *filter;
-    for (filter = IfDp->conf->filters; filter; filter = filter->next) {
-        if (dir ? !IS_DOWNSTREAM(filter->dir) : !IS_UPSTREAM(filter->dir)) {
-             continue;
-        } else if (   (! src && (mct->group & filter->dst.mask) == filter->dst.ip)
-                 || ((src->ip & filter->src.mask) == filter->src.ip && (mct->group & filter->dst.mask) == filter->dst.ip)) {
-            if (!filter->action)
-                // When denied set denied bit for source or group.
-                src ? (dir ? BIT_SET(src->vifB.dd, IfDp->index) : BIT_SET(src->vifB.ud, IfDp->index))
-                    : (dir ? BIT_SET(mct->vifB.dd, IfDp->index) : BIT_SET(mct->vifB.ud, IfDp->index));
-            return filter->action;
-        }
-    }
+    for (filter = IfDp->conf->filters; filter && (dir ? !IS_DOWNSTREAM(filter->dir) : !IS_UPSTREAM(filter->dir))
+            || (!(src ? ((src->ip & filter->src.mask) == filter->src.ip && (mct->group & filter->dst.mask) == filter->dst.ip)
+                     : ((mct->group & filter->dst.mask) == filter->dst.ip))); filter = filter->next);
+    if (! filter || !filter->action)
+        // When denied set denied bit for source or group.
+        src ? (dir ? BIT_SET(src->vifB.dd, IfDp->index) : BIT_SET(src->vifB.ud, IfDp->index))
+            : (dir ? BIT_SET(mct->vifB.dd, IfDp->index) : BIT_SET(mct->vifB.ud, IfDp->index));
 
-    return BLOCK;
+    return filter && filter->action;
 }
 
 /**
