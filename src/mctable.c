@@ -851,13 +851,13 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             } while (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr));
             if (i < nsrcs && (! (tsrc = src) || tsrc->ip >= grec->grec_src[i].s_addr)) {
                 // IN: (B - A) = 0 / EX: (A - X - Y) = Group Timer?
-                src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, false, true, tsrc, (uint32_t)-1);
-                if (type == IGMPV3_CHANGE_TO_EXCLUDE && src &&
-                         (   (   (! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && is_ex)
-                          || (   (tsrc && tsrc->ip == grec->grec_src[i].s_addr) && ((!is_ex && IS_SET(src, d, IfDp))
-                              || (is_ex && (NOT_SET(src, d, IfDp) || src->vifB.age[IfDp->index] > 0))))))
-                    // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y)
-                    qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
+                if ((src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, false, true, tsrc, (uint32_t)-1)))
+                    if (type == IGMPV3_CHANGE_TO_EXCLUDE && src &&
+                             (   ((! tsrc || tsrc->ip > grec->grec_src[i].s_addr) && is_ex)
+                              || (tsrc && tsrc->ip == grec->grec_src[i].s_addr && IS_SET(src, d, IfDp)
+                                       && (!is_ex || src->vifB.age[IfDp->index] > 0))))
+                        // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y)
+                        qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
                 src = src ? src->next : tsrc;
             }
         }
