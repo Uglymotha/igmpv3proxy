@@ -388,7 +388,7 @@ void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
-void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *queryi, uint8_t ver);
+void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t nsrcs, uint8_t ver);
 void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);

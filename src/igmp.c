@@ -388,7 +388,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                     IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
         }
         if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8))
-            processGroupQuery(IfDp, igmpv3, ver);
+            processGroupQuery(IfDp, igmpv3, ver == 3 ? ntohs(igmpv3->igmp_nsrcs) : 0, ver);
     } else
         LOG(LOG_DEBUG, 0, "Received IGMP v%d query from %s on %s, but it does not have priority over %s. Ignoring",
                            ver, inetFmt(src, 1), IfDp->Name,

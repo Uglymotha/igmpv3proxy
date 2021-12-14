@@ -1024,11 +1024,11 @@ static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, st
 /**
 *   Process a group specific query received from other querier.
 */
-void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint8_t ver) {
+void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t nsrcs, uint8_t ver) {
     struct mcTable  *mct = findGroup(query->igmp_group.s_addr, false);
-    uint16_t         nsrcs = sortArr((uint32_t *)query->igmp_src, 0);
     struct qlst     *qlst;
     struct src      *src;
+    nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
 
     // If no group found for query, or not active on interface return.
     if (! mct || NOT_SET(mct, d, IfDp)) {
