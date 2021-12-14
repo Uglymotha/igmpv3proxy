@@ -48,8 +48,8 @@ void k_set_rcvbuf(int bufsize, int minsize) {
         bufsize -= delta;
         while (1) {
             iter++;
-            if (delta > 1) delta /= 2;
-
+            if (delta > 1)
+                 delta /= 2;
             if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
                 if (bufsize < minsize)
                     LOG(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
@@ -264,9 +264,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
 }
 
 /**
-*   Adds the multicast routed '*Dp' to the kernel routes
-*   Returns: - 0 if the function succeeds
-*            - the errno value for non-fatal failure condition
+*   Adds a multicast MFT to the kernel.
 */
 void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) {
     // Inialize the mfc control structure.
@@ -278,7 +276,7 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
     // Add the mfc to the kernel.
-    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+    LOG(LOG_INFO, 0, "k_addMRoute: Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
                       inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
@@ -292,9 +290,7 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
 }
 
 /**
-*   Removes the multicast routed '*Dp' from the kernel routes
-*   Returns: - 0 if the function succeeds
-*            - the errno value for non-fatal failure condition
+*   Remove multicast MFC from the kernel.
 */
 void k_delMRoute(uint32_t src, uint32_t group, int vif) {
     // Inialize the mfc control structure.
@@ -305,8 +301,8 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #endif
 
     // Remove mfc from kernel.
-    LOG(LOG_NOTICE, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
-                        inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
+    LOG(LOG_INFO, 0, "k_delMRoute: iRemoving MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+                      inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
 }
@@ -318,8 +314,8 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
 void k_deleteUpcalls(uint32_t src, uint32_t group) {
     struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_DELETE_ALL, { {0}, 0, 0 }, { {0}, 0, 0} };
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
-        LOG(LOG_NOTICE, 0, "Failed to delete BW upcall for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
+        LOG(LOG_WARNING, 0, "Failed to delete BW upcall for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
     else
-        LOG(LOG_INFO, 0, "Deleted BW upcalls for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
+        LOG(LOG_INFO, 0, "k_deleteUpcalls: Deleted BW upcalls for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
 }
 #endif

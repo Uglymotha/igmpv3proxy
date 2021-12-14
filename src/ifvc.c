@@ -89,37 +89,32 @@ void rebuildIfVc(uint64_t *tid) {
 *   Builds up a list with all usable interfaces of the machine.
 */
 void buildIfVc(void) {
-    // Get the system interface list.
     struct ifreq ifr;
     struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
+    struct IfDesc *IfDp;
+
+    // Get the system interface list.
     if ((getifaddrs(&IfAddrsP)) == -1)
         LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "Cannot enumerate interfaces.");
-
-    for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
+    else for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
+        unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
-            // Only build Ifdesc for up & running & configured IP interfaces, and can be configured for multicast if not enabled.
+            || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
             || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
             || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))) {
+            || ((IfDp = getIf(ix, 1)) && ! IfDp->conf))
+            // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
             continue;
-        }
 
-        struct IfDesc *IfDp;
         uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
-        unsigned int   ix   = if_nametoindex(tmpIfAddrsP->ifa_name);
-        if ((IfDp = getIf(ix, 1)) && ! IfDp->conf) {
-            // Check if the interface is an alias for an already created or rebuild IfDesc.
-            continue;
-
-        } else if (! IfDp) {
+        if (! IfDp) {
             // New interface, allocate and initialize.
             if (! (IfDp  = malloc(sizeof(struct IfDesc))))
                 LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
-            // Copy the interface name.
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
 
         } else {

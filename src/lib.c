@@ -60,7 +60,8 @@ static char s[4][19];
 *   Convert an IP address in u_long (network) format into a printable string.
 */
 inline const char *inetFmt(uint32_t addr, int pos) {
-    sprintf(s[pos - 1], "%u.%u.%u.%u", ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], ((uint8_t *)&addr)[3]);
+    uint8_t *a = (uint8_t *)&addr;
+    sprintf(s[pos - 1], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
     return s[pos - 1];
 }
 
@@ -68,18 +69,19 @@ inline const char *inetFmt(uint32_t addr, int pos) {
 *   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
 */
 inline const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
-    int bits = 33 - ffs(ntohl(mask));
+    uint8_t *a    = (uint8_t *)&addr;
+    int      bits = 33 - ffs(ntohl(mask));
 
     if ((addr == 0) && (mask == 0))
-        sprintf(s[pos - 1], "default");
+        sprintf(s[pos - 1], "0/0");
     else if (((uint8_t *)&mask)[3] != 0)
-        sprintf(s[pos - 1], "%u.%u.%u.%u/%d", ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], ((uint8_t *)&addr)[3], bits);
+        sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
     else if (((uint8_t *)&mask)[2] != 0)
-        sprintf(s[pos - 1], "%u.%u.%u/%d",    ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], ((uint8_t *)&addr)[2], bits);
+        sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
     else if (((uint8_t *)&mask)[1] != 0)
-        sprintf(s[pos - 1], "%u.%u/%d",       ((uint8_t *)&addr)[0], ((uint8_t *)&addr)[1], bits);
+        sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
     else
-        sprintf(s[pos - 1], "%u/%d",          ((uint8_t *)&addr)[0], bits);
+        sprintf(s[pos - 1], "%u/%d",          a[0], bits);
 
     return s[pos - 1];
 }
@@ -127,7 +129,7 @@ inline bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t 
 }
 
 /**
-*   Optimized ones complement IGMP checksum calculation routine.
+*   Ones complement IGMP checksum calculation routine.
 *   Original Author - Mike Muuss, U. S. Army Ballistic Research Laboratory, December, 1983
 *   Our algorithm is simple, using a 32 bit accumulator (sum), we add sequential 16 bit words to it,
 *   and at the end, fold back all the carry bits from the top 16 bits into the lower 16 bits.
@@ -177,7 +179,7 @@ inline bool noHash(register uint64_t *table) {
     register uint64_t i, n = CONFIG->dHostsHTSize / 8;
     if (CONFIG->fastUpstreamLeave)
         for (i = 0; i < n && table[i] == 0; i++);
-    return !CONFIG->fastUpstreamLeave || i < n ? false : true;
+    return CONFIG->fastUpstreamLeave && i >= n;
 }
 
 /**

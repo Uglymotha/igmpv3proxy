@@ -46,15 +46,7 @@ static struct timeOutQueue {
 static uint64_t id = 1;
 
 /**
-*   Clears all scheduled timeouts...
-*/
-void timer_freeQueue(void) {
-    for (struct timeOutQueue *p = queue; queue; p = p->next, free(queue), queue = p);  // Alloced by timer_setTimer()
-    LOG(LOG_DEBUG, 0, "timer_freeQueue: All Timeouts removed, Queue is empty.");
-}
-
-/**
-*   Execute at most 4 expired timers, return time difference to next scheduled timer.
+*   Execute at most CONFIG->tmQsz expired timers, return time difference to next scheduled timer.
 *   Returns -1,-1 if no timer is scheduled, 0, -1 if next timer has already expired.
 */
 struct timespec timer_ageQueue() {
@@ -82,7 +74,7 @@ struct timespec timer_ageQueue() {
 uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
 
-    if (! (node = malloc(sizeof(struct timeOutQueue))))  // Freed by timer_freeQueue(), timer_ageQueue() or timer_clearTimer()
+    if (! (node = malloc(sizeof(struct timeOutQueue))))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
     *node = (struct timeOutQueue){ id++, "", action, data, {delay.tv_sec, delay.tv_nsec}, NULL };

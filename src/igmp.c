@@ -319,7 +319,6 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         }
         timer_clearTimer(IfDp->querier.Timer);
         timer_clearTimer(IfDp->querier.ageTimer);
-        timer_clearTimer(IfDp->querier.gcTimer);
         memset(&IfDp->querier, 0, sizeof(struct querier));
         IfDp->querier.ip = (uint32_t)-1;
         if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))

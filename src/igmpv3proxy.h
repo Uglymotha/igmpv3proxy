@@ -192,9 +192,8 @@ struct querier {                                        // igmp querier status f
     uint8_t        mrc;                                 // Queriers max response code
     uint64_t       Timer;                               // Self / Other Querier timer
     uint64_t       ageTimer;                            // Route aging timer
-    uint64_t       gcTimer;                             // Garbage collection timer
 };
-#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0, 0 }
+#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
 #define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 // Interfaces configuration.
@@ -404,7 +403,6 @@ void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #define TDELAY(x) (struct timespec){ -1, x }
 #define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 typedef void  (*timer_f)();
-void            timer_freeQueue(void);
 struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);

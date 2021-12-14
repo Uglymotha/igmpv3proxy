@@ -228,7 +228,6 @@ static void igmpProxyCleanUp(void) {
     struct timespec endtime;
 
     rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
-    timer_freeQueue();        // Remove remaining timers.
     k_disableMRouter();       // Disable the MRouter API.
     if (pollFD[1].fd > 0)
         close(pollFD[1].fd);  // Close CLI socket.
