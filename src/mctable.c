@@ -222,7 +222,7 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
             BIT_SET(mct->vifB.d, IfDp->index);
             if (IS_EX(mct, IfDp))
                 // Activate any MFC is exclude mode group is requested for the first time.
-                for (struct mfc *mfc = mct->mfc; mfc; activateRoute(NULL, mfc->src, 0, 0, true), mfc = mfc->next);
+                for (struct mfc *mfc = mct->mfc; mfc; activateRoute(mfc->IfDp, mfc->src, 0, 0, true), mfc = mfc->next);
         }
         IFGETIFL((mct->vifB.us | mct->vifB.ud) != uVifs, IfDp)
             // Check if any upstream interfaces still need to join the group.
@@ -717,7 +717,7 @@ void clearGroups(void *Dp) {
                 struct mfc *mfc;
                 for (mfc = mct->mfc; mfc; mfc = mfc->next) {
                     k_deleteUpcalls(mfc->src->ip, mct->group);
-                    activateRoute(NULL, mfc->src, 0, 0, true);
+                    activateRoute(mfc->IfDp, mfc->src, 0, 0, true);
                 }
 #endif
             } else {
@@ -1266,8 +1266,8 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
 *   If called with pointer to source and !activate the route will be removed.
 */
 inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate) {
-    struct src      *src  = _src;
-    struct mcTable  *mct  = src ? src->mct : findGroup(group, false);
+    struct src      *src = _src;
+    struct mcTable  *mct = src ? src->mct : findGroup(group, false);
     if (! mct) {
         LOG(LOG_DEBUG, 0, "activateRoute: Group %s not found, ignoring activation.", inetFmt(ip, 1), inetFmt(group, 2));
         return;
