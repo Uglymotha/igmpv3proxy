@@ -887,7 +887,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp) && !(IS_IN(mct, IfDp) && !mct->nsrcs)) {
             if (! (qlst1 = malloc(sizeof(struct qlst))))  // // Freed by startQuery() or delQuery().
                 LOG(LOG_ERR, errno, "updateGroup: Out of Memory.");
-            *qlst1 = (struct qlst){ NULL, NULL, mct, IfDp, 0, 0x2, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
+            *qlst1 = (struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
             startQuery(IfDp, qlst1);
         }  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
@@ -895,7 +895,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         if (nsrcs > 0 && !addGroup(mct, IfDp, 1, 0, (uint32_t)-1))
             break;
 
-        qlst->type = 0x4;
+        qlst->type = 4;
         for (i = 0, src = mct->sources; src || i < nsrcs; src = src ? src->next : src) {
             if (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr)) {
                 if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(src, d, IfDp) && (IS_IN(mct, IfDp) || src->vifB.age[IfDp->index] > 0))
@@ -1000,7 +1000,7 @@ static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, st
     uint16_t nsrcs = qlst->nsrcs;
 
     // Add source to query list if required, prevent duplicates.
-    if ((BIT_TST(qlst->type, 5) || IQUERY) && NOT_SET(src, lm, IfDp)
+    if ((BIT_TST(qlst->type, 3) || IQUERY) && NOT_SET(src, lm, IfDp)
                                            && (!nsrcs || qlst->src[qlst->nsrcs - 1]->ip != src->ip)) {
         // In case source is in running query, remove it there and add to current list.
         if (IS_SET(src, qry, IfDp))
@@ -1046,13 +1046,14 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t
     if (nsrcs == 0 && checkFilters(IfDp, 1, NULL, mct)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
-        qlst->type = 0x10;
+        qlst->type = 6;
     } else if (nsrcs > 0) {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
                            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
-        qlst->type = 0x20;
+        qlst->type = 8;
         uint16_t i;
         for (src = mct->sources, i = 0; src && i < nsrcs; i++, src = src ? src->next : src) {
+            LOG(LOG_DEBUG,0,"BLABLA %s %s %d %d", inetFmt(query->igmp_src[i].s_addr, 1), inetFmt(src->ip, 2), src->vifB.d, src->vifB.lm);
             if (src->ip > query->igmp_src[i].s_addr)
                 for (; i < nsrcs && src->ip > query->igmp_src[i].s_addr; i++);
             if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct))
@@ -1069,14 +1070,13 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t
 */
 static inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
     // Check sanity of query list. Remove list if not ok (no sources for gssq, not querier on interface).
-    if (!qlst->type || ((BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 3) || BIT_TST(qlst->type, 5)) && qlst->nsrcs == 0)
-                    || ( !BIT_TST(qlst->type, 4) && !BIT_TST(qlst->type, 5) && !IQUERY)) {
+    if (!qlst->type || ( BIT_TST(qlst->type, 2) && qlst->nsrcs == 0) || (!BIT_TST(qlst->type, 3) && !IQUERY)) {
         free(qlst);  // Alloced by updateGroup(), addSrcToQlst() or processGroupQuery().
         return;
     }
 
     // Check if we should take over for a running GSQ.
-    if ((BIT_TST(qlst->type, 1) || BIT_TST(qlst->type, 4)) && IS_SET(qlst->mct, qry, IfDp))
+    if (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, qry, IfDp))
         delQuery(IfDp, NULL, qlst->mct, NULL, qlst->type);
 
     // Allocate and assign new querier.
@@ -1103,9 +1103,7 @@ static inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
 *   bit 0 - Router Supress flag
 *   bit 1 - Group Specific Query
 *   bit 2 - Group and Source Specific query
-*   bit 3 - Garbage Collection
-*   bit 4 - Group Specific Query (Other querier)
-*   bit 5 - Group and Source Specific query (Other querier)
+*   bit 3 - Other Querier
 */
 static void groupSpecificQuery(struct qlst *qlst) {
     struct igmpv3_query *query = NULL, *query1 = NULL, *query2 = NULL;
@@ -1113,12 +1111,12 @@ static void groupSpecificQuery(struct qlst *qlst) {
 
     // Do aging upon reentry.
     if (qlst->cnt > 0) {
-        if (BIT_TST(qlst->type, 1) || BIT_TST(qlst->type, 4)) {
+        if (BIT_TST(qlst->type, 1)) {
             // Age group in case of GSQ.
             if (NOT_SET(qlst->mct, lm, qlst->IfDp)) {
                 LOG(LOG_INFO, 0, "GSQ: %s no longer in last member state on %s.", inetFmt(qlst->mct->group, 1), qlst->IfDp->Name);
                 BIT_SET(qlst->type, 0);  // Suppress router processing flag for next query.
-                if (BIT_TST(qlst->type, 4))
+                if (BIT_TST(qlst->type, 3))
                     // If aging for other querier, we're done.
                     qlst->cnt = qlst->misc;
             } else if (--qlst->mct->vifB.age[qlst->IfDp->index] == 0) {
@@ -1131,7 +1129,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
                     toInclude(qlst->mct, qlst->IfDp);
             }
 
-        } else if (BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 5)) {
+        } else if (BIT_TST(qlst->type, 2)) {
             // Age sources in case of GSSQ. Create two queries (1 - sources still last member 2 - active source).
             if (! (query1 = malloc(size)) || ! (query2 = malloc(size)))  // Freed by self.
                 LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
@@ -1161,7 +1159,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
                     // Source still in last member state, add to  query.
                     query1->igmp_src[query1->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
             }
-            if (BIT_TST(qlst->type, 5) && !qlst->nsrcs)
+            if (BIT_TST(qlst->type, 3) && !qlst->nsrcs)
                 // If aging for other querier and no sources left to age, we're done.
                 qlst->cnt = qlst->misc;
         }
@@ -1169,13 +1167,13 @@ static void groupSpecificQuery(struct qlst *qlst) {
 
     if (qlst->cnt++ < qlst->misc) {
         // Send a query if not aging for other querier.
-        if (!BIT_TST(qlst->type, 4) && !BIT_TST(qlst->type, 5)) {
+        if (!BIT_TST(qlst->type, 3)) {
             if (qlst->cnt == 1 || BIT_TST(qlst->type, 1)) {
                 // Use qlst in case of group query, or first group and source query.
                 if (! (query = malloc(sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr))))
                     LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
                 *query = (struct igmpv3_query){ qlst->type, qlst->code, 0, {qlst->mct->group}, qlst->misc, 0, qlst->nsrcs };
-                if (BIT_TST(qlst->type, 2) || BIT_TST(qlst->type, 3))
+                if (BIT_TST(qlst->type, 2))
                     for (uint16_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
                 sendIgmp(qlst->IfDp, query);
                 free(query);
@@ -1189,12 +1187,12 @@ static void groupSpecificQuery(struct qlst *qlst) {
         }
         // Set timer for next round if there is still aging to do.
         if (qlst->misc == qlst->cnt && (  (BIT_TST(qlst->type, 1) && NOT_SET(qlst->mct, lm, qlst->IfDp))
-                                       || (BIT_TST(qlst->type, 4) && !qlst->nsrcs)))
+                                       || (BIT_TST(qlst->type, 2) && !qlst->nsrcs)))
             LOG(LOG_INFO, 0, "GSQ: done querying %s/%d on %s.", inetFmt(qlst->mct->group, 1), nsrcs, qlst->IfDp->Name);
         else {
             sprintf(msg, "GSQ (%s): %15s/%u", qlst->IfDp->Name, inetFmt(qlst->mct->group, 1), qlst->nsrcs);
-            uint32_t timeout = BIT_TST(qlst->type, 4) || BIT_TST(qlst->type, 5) ? qlst->code
-                             : qlst->IfDp->querier.ver == 3 ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
+            uint32_t timeout = BIT_TST(qlst->type, 3)            ? qlst->code
+                             : qlst->IfDp->querier.ver == 3      ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
                              : qlst->IfDp->conf->qry.lmInterval;
             qlst->tid = timer_setTimer(TDELAY(timeout), msg, (timer_f)groupSpecificQuery, qlst);
         }
