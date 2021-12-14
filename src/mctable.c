@@ -1053,15 +1053,14 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t
     if (nsrcs == 0 && checkFilters(IfDp, 1, NULL, mct)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
-        qlst->type = 6;
+        qlst->type = 10;
     } else if (nsrcs > 0) {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
                            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
-        qlst->type = 8;
+        qlst->type = 12;
         uint16_t i = 0;
         src        = mct->sources;
         while (src && i < nsrcs) {
-            LOG(LOG_DEBUG,0,"BLABLA %s %s %d %d", inetFmt(query->igmp_src[i].s_addr, 1), inetFmt(src->ip, 2), src->vifB.d, src->vifB.lm);
             if (src->ip > query->igmp_src[i].s_addr) {
                 for (; i < nsrcs && src->ip > query->igmp_src[i].s_addr; i++);
             } else if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct)) {
@@ -1081,7 +1080,7 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t
 */
 static inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
     // Check sanity of query list. Remove list if not ok (no sources for gssq, not querier on interface).
-    if (!qlst->type || ( BIT_TST(qlst->type, 2) && qlst->nsrcs == 0) || (!BIT_TST(qlst->type, 3) && !IQUERY)) {
+    if (!qlst->type || (BIT_TST(qlst->type, 2) && qlst->nsrcs == 0) || (!BIT_TST(qlst->type, 3) && !IQUERY)) {
         free(qlst);  // Alloced by updateGroup(), addSrcToQlst() or processGroupQuery().
         return;
     }
@@ -1439,9 +1438,9 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
                 strcpy(msg, "%d %s %s %s %08x %s %ld %ld");
             }
             if (! cliSockAddr) {
-                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave || !mct->mode ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
             } else {
-                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave || !mct->mode ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
                 sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
             }
             mfc = mfc ? mfc->next : NULL;
