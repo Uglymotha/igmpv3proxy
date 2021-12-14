@@ -131,7 +131,7 @@ static struct src         *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint
                                   struct src *src, uint32_t srcHash);
 static struct src         *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash);
 static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
-static inline void         toInclude(struct mcTable *mct, struct IfDesc *IfDp);
+static struct ifMct       *toInclude(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc);
 static inline void         startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 static void                groupSpecificQuery(struct qlst *qlst);
 
@@ -970,27 +970,34 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 /**
 *   Switches a group from exclude to include mode on interface.
 */
-static void toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
+static struct ifMct *toInclude(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc) {
     struct src *src = mct->sources;
-    uint32_t mode = mct->mode;
+    bool        keep = false;
+    uint32_t    mode = mct->mode;
     BIT_CLR(mode, IfDp->index);
 
     LOG(LOG_INFO, 0, "toInclude: Switching mode for %s to include on %s.", inetFmt(mct->group, 1), IfDp->Name);
     while (src) {
-        // Remove all inactive sources from group on interface, update MFC if source remains on other interfaces.
+        // Remove all inactive sources from group on interface.
         if (!src->vifB.d || (IS_SET(src, d, IfDp) && src->vifB.age[IfDp->index] == 0)) {
             LOG(LOG_DEBUG, 0, "toInclude: Removed inactive source %s from group %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2));
             src = delSrc(src, IfDp, mode ? 0 : 3 , (uint32_t)-1);
-        } else
+        } else {
+            keep = true;
             src = src->next;
+        }
     }
     mct->mode = mode;
     BIT_CLR(mct->v2Bits, IfDp->index);
     mct->vifB.age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
+    if (!keep)
+        imc = delGroup(mct, IfDp, NULL, 1);
     IFGETIFL(!mct->mode && mct->nsrcs, IfDp)
         // If group is joined on upstream interface and remains set new source filter and clear upstream status.
         if (IS_SET(mct, us, IfDp))
             updateSourceFilter(mct, IfDp);
+
+    return imc;
 }
 
 /**
@@ -1126,7 +1133,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
                 qlst->cnt = qlst->misc;  // Make sure we're done.
                 if (!BIT_TST(qlst->mct->v1Bits, qlst->IfDp->index))
                     // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
-                    toInclude(qlst->mct, qlst->IfDp);
+                    toInclude(qlst->mct, qlst->IfDp, NULL);
             }
 
         } else if (BIT_TST(qlst->type, 2)) {
@@ -1381,7 +1388,7 @@ void ageGroups(struct IfDesc *IfDp) {
         // Next age group.
         if (IS_EX(imc->mct, IfDp) && NOT_SET(imc->mct, dd, IfDp) && imc->mct->vifB.age[IfDp->index] == 0
                                   && !BIT_TST(imc->mct->v1Bits, IfDp->index))
-            toInclude(imc->mct, IfDp);
+            imc = toInclude(imc->mct, IfDp, imc);
         if ((IS_IN(imc->mct, IfDp) && !imc->mct->nsrcs) || (IS_SET(imc->mct, dd, IfDp) && imc->mct->vifB.age[IfDp->index] == 0)) {
             LOG(LOG_INFO, 0, "ageGroups: Removed group %s from %s after aging.", inetFmt(imc->mct->group, 2), IfDp->Name);
             imc = delGroup(imc->mct, IfDp, imc, 1);
