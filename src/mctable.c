@@ -1058,15 +1058,19 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint16_t
         LOG(LOG_DEBUG, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
                            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
         qlst->type = 8;
-        uint16_t i;
-        for (src = mct->sources, i = 0; src && i < nsrcs; i++, src = src ? src->next : src) {
+        uint16_t i = 0;
+        src        = mct->sources;
+        while (src && i < nsrcs) {
             LOG(LOG_DEBUG,0,"BLABLA %s %s %d %d", inetFmt(query->igmp_src[i].s_addr, 1), inetFmt(src->ip, 2), src->vifB.d, src->vifB.lm);
-            if (src->ip > query->igmp_src[i].s_addr)
+            if (src->ip > query->igmp_src[i].s_addr) {
                 for (; i < nsrcs && src->ip > query->igmp_src[i].s_addr; i++);
-            if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct))
+            } else if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct)) {
                 // Do not add denied sources to query list.
                 qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
-            for(; src && src->next && src->next->ip < query->igmp_src[i].s_addr; src = src->next);
+                i++;
+                src = src->next;
+            } else
+                for(; src && src->ip < query->igmp_src[i].s_addr; src = src->next);
         }
     }
     startQuery(IfDp, qlst);
