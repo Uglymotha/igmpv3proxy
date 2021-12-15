@@ -751,13 +751,13 @@ void clearGroups(void *Dp) {
                 // Transition to disabled / upstream, remove from group.
                 LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer downstream, removing group %s.",
                                   IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
-                for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
+                for (struct src *src = imc->mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
                 imc = delGroup(imc->mct, IfDp, imc, 1);
             } else if (NOT_SET(imc->mct, dd, IfDp) && !checkFilters(IfDp, 1, NULL, imc->mct)) {
                 // Check against bl / wl changes on config reload / sighup.
                 LOG(LOG_NOTICE, 0, "Group %s no longer allowed downstream on Vif %d - %s.",
                                     inetFmt(imc->mct->group, 1), IfDp->index, IfDp->Name);
-                for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
+                for (struct src *src = imc->mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
                 imc = delGroup(imc->mct, IfDp, imc, 1);
             } else if (IS_SET(imc->mct, dd, IfDp) && addGroup(imc->mct, IfDp, 1, 0, (uint32_t)-1))
                 LOG(LOG_INFO, 0, "clearGroups: Group %s now allowed downstream on %s.", inetFmt(imc->mct->group, 1), IfDp->Name);
@@ -1000,12 +1000,13 @@ static struct ifMct *toInclude(struct mcTable *mct, struct IfDesc *IfDp, struct 
         }
     }
 
-    IFGETIFL(!mct->mode, IfDp)
+    struct IfDesc *If;
+    IFGETIFL(!mct->mode, If)
         // If this was the last interface switching to include for the group, upstream must switch filter mode to include too.
-        if (IS_SET(mct, us, IfDp))
-            updateSourceFilter(mct, IfDp);
+        if (IS_SET(mct, us, If))
+            updateSourceFilter(mct, If);
 
-    return keep ? imc : delGroup(mct, IfDp, NULL, 1);
+    return keep ? imc : delGroup(mct, IfDp, imc, 1);
 }
 
 /**
