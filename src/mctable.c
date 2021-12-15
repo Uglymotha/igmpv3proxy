@@ -448,9 +448,10 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
                 src->vifB.age[IfDp->index] = 0;
         }
         struct IfDesc *If;
-        IFGETIFL(! IfDp || !src->vifB.d || (mct->mode && src->vifB.d != mct->vifB.d && src->vifB.age[IfDp->index] == 0), If)
+        IFGETIFL(! IfDp || !src->vifB.d || src->vifB.d == src->vifB.dd
+                        || (mct->mode && src->vifB.d != mct->mode && src->vifB.age[IfDp->index] == 0), If)
             // Source should not be left / unblocked when switching upstream filter mode.
-            if (mode < 2 && (   ( mct->mode && IS_SET(mct, us, If) && src->vifB.d != src->vifB.d)
+            if (mode < 2 && (   ( mct->mode && IS_SET(mct, us, If) && src->vifB.d != mct->mode)
                              || (!mct->mode && IS_SET(src, us, If)))) {
                 LOG(LOG_INFO, 0, "delSrc: %s source %s in group %s on upstream interface %s", mct->mode ? "Unblocking" : "Leaving",
                                   inetFmt(src->ip, 1), inetFmt(mct->group, 2), If->Name);
@@ -835,6 +836,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 
     bool is_ex, is_in;
     struct IfDesc *If;
+    bool nH = true;
     switch (type) {
     case IGMPV3_CHANGE_TO_EXCLUDE:
         if ((BIT_TST(mct->v1Bits, IfDp->index) || BIT_TST(mct->v2Bits, IfDp->index || IfDp->querier.ver < 3)) && nsrcs > 0) {
@@ -869,7 +871,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                               || (tsrc && tsrc->ip == grec->grec_src[i].s_addr && IS_SET(src, d, IfDp)
                                        && (!is_ex || src->vifB.age[IfDp->index] > 0))))
                         // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y)
-                        qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
+                        qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
                 src = src ? src->next : tsrc;
             }
         }
@@ -911,7 +913,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             if (src && (i >= nsrcs || src->ip < grec->grec_src[i].s_addr)) {
                 if (type == IGMPV3_CHANGE_TO_INCLUDE && IS_SET(src, d, IfDp) && (IS_IN(mct, IfDp) || src->vifB.age[IfDp->index] > 0))
                     // EX: Send Q(G, X - A) IN: Send Q(G, A - B)
-                    qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
+                    qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
             } else if (i < nsrcs && (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr)) do {
                 if (! (src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, true, true, tsrc, srcHash)))
                     // IN (B) = GMI, (A + B) / EX: (A) = GMI, (X + A) (Y - A)
@@ -931,31 +933,21 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 
         qlst->type = 4, i = 0;
         src  = mct->sources;
-        bool nH = true;
         while (i < nsrcs && (IS_EX(mct, IfDp) || src)) {
             // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y), (A - X - Y) = Group Timer?
             if (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr) {
                 if (   ((! src || src->ip > grec->grec_src[i].s_addr) && IS_EX(mct, IfDp))
                     || (src->ip == grec->grec_src[i].s_addr && (   (IS_IN(mct, IfDp) && IS_SET(src, d, IfDp))
                                          || (IS_EX(mct, IfDp) && (src->vifB.age[IfDp->index] > 0 || NOT_SET(src, d, IfDp))))))
-                    if ((src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, true, false, src, (uint32_t)-1))) {
+                    if ((src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, true, false, src, (uint32_t)-1)))
                         qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
-                        if (src->vifB.us && noHash(src->dHostsHT)) {
-                            struct IfDesc *If;
-                            GETIFLIF(If, IS_SET(src, us, If)) {
-                                LOG(LOG_INFO, 0, "updateGroup: Last downstream host %s, quickleave source %s in group %s on %s.",
-                                                  inetFmt(ip, 1), inetFmt(src->ip, 2), inetFmt(group, 3), If->Name);
-                                k_updateGroup(If, false, mct->group, 0, src->ip);
-                                BIT_CLR(src->vifB.us, If->index);
-                            }
-                        }
-                    } else
+                    else
                         src = tsrc;
                 i++;
             }
             if (CONFIG->fastUpstreamLeave)
                 // When quickleave is enabled, check if the client is interested in any other source.
-                for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; nH = !testHash(src->dHostsHT, srcHash),
+                for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr && (nH = !testHash(src->dHostsHT, srcHash));
                                                                                src = src->next);
             else
                 for (; src && i < nsrcs && src->ip < grec->grec_src[i].s_addr; src = src->next);
@@ -1027,12 +1019,20 @@ static inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, st
                           inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), nsrcs + 1);
         if ((nsrcs & 0x1F) == 0 && ! (qlst = realloc(qlst, sizeof(struct qlst) + ((nsrcs >> 5) + 1) * 0x20 * sizeof(void *))))
             LOG(LOG_ERR, errno, "addSrcToQlst; Out of Memory.");  // Freed by startQuery() or delQuery().
-        clearHash(src->dHostsHT, srcHash);
         BIT_SET(src->vifB.d, IfDp->index);
         BIT_SET(src->vifB.qry, IfDp->index);
         BIT_SET(src->vifB.lm, IfDp->index);
         src->vifB.age[IfDp->index] = qlst->misc;
         qlst->src[qlst->nsrcs++] = src;
+        clearHash(src->dHostsHT, srcHash);
+        if (CONFIG->fastUpstreamLeave && srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT)) {
+            GETIFLIF(IfDp, IS_SET(src, us, IfDp)) {
+                LOG(LOG_INFO, 0, "addSrcToQlst: Last downstream host, quickleave source %s in group %s on %s.",
+                                  inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
+                k_updateGroup(IfDp, false, src->mct->group, 0, src->ip);
+                BIT_CLR(src->vifB.us, IfDp->index);
+            }
+        }
     }
     return qlst;
 }
@@ -1139,15 +1139,8 @@ static void groupSpecificQuery(struct qlst *qlst) {
                 if (BIT_TST(qlst->type, 3))
                     // If aging for other querier, we're done.
                     qlst->cnt = qlst->misc;
-            } else if (--qlst->mct->vifB.age[qlst->IfDp->index] == 0) {
-                // Group in exclude mode has aged, switch to include.
-                LOG(LOG_DEBUG, 0, "GSQ: Switch group %s to inlcude on %s after querying.",
-                                  inetFmt(qlst->mct->group, 1), qlst->IfDp->Name);
+            } else if (--qlst->mct->vifB.age[qlst->IfDp->index] == 0)
                 qlst->cnt = qlst->misc;  // Make sure we're done.
-                if (!BIT_TST(qlst->mct->v1Bits, qlst->IfDp->index))
-                    // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
-                    toInclude(qlst->mct, qlst->IfDp, NULL);
-            }
 
         } else if (BIT_TST(qlst->type, 2)) {
             // Age sources in case of GSSQ. Create two queries (1 - sources still last member 2 - active source).
@@ -1218,8 +1211,16 @@ static void groupSpecificQuery(struct qlst *qlst) {
         }
     } else if (qlst->cnt >= qlst->misc) {
         // Done querying. Remove current querier from list (and delete the group if IS_IN no sources?).
-        LOG(LOG_INFO, 0, "GSQ: done querying %s/%d on %s.", inetFmt(qlst->mct->group, 1), nsrcs, qlst->IfDp->Name);
         delQuery(qlst->IfDp, qlst, NULL, NULL, 0);
+        if (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, qlst->IfDp) && qlst->mct->vifB.age[qlst->IfDp->index] == 0
+                                   && !BIT_TST(qlst->mct->v1Bits, qlst->IfDp->index)) {
+            // Group in exclude mode has aged, switch to include.
+            // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
+            LOG(LOG_DEBUG, 0, "GSQ: Switch group %s to inlcude on %s after querying.",
+                               inetFmt(qlst->mct->group, 1), qlst->IfDp->Name);
+            toInclude(qlst->mct, qlst->IfDp, NULL);
+        } else
+            LOG(LOG_INFO, 0, "GSQ: done querying %s/%d on %s.", inetFmt(qlst->mct->group, 1), nsrcs, qlst->IfDp->Name);
     }
 
     free(query1);  // Alloced by self.

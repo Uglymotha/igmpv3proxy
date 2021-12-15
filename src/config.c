@@ -983,8 +983,10 @@ void configureVifs(void) {
             for (oconfPtr = ovifConf; oconfPtr && strcmp(IfDp->Name, oconfPtr->name); oconfPtr = oconfPtr->next);
             for (fil = confPtr->filters, ofil = oconfPtr->filters; fil && ofil && !memcmp(fil, ofil, sizeof(struct filters));
                  fil = fil->next, ofil = ofil->next);
-            if (fil || ofil)
+            if (fil || ofil) {
+                LOG(LOG_DEBUG, 0, "configureVifs: Filters changed for %s.", IfDp->Name);
                 IfDp->filCh = true;
+            }
         }
 
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
