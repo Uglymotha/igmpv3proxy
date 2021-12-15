@@ -903,7 +903,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         }  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
     case IGMPV3_MODE_IS_INCLUDE:
-        if (nsrcs > 0 && !addGroup(mct, IfDp, 1, 0, (uint32_t)-1))
+        if (nsrcs > 0 && !addGroup(mct, IfDp, 1, 0, srcHash))
             break;
 
         qlst->type = 4;
