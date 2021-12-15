@@ -1072,9 +1072,10 @@ void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t
         while (src && i < nsrcs) {
             if (src->ip > query->igmp_src[i].s_addr) {
                 for (; i < nsrcs && src->ip > query->igmp_src[i].s_addr; i++);
-            } else if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct)) {
+            } else if (src->ip == query->igmp_src[i].s_addr) {
                 // Do not add denied sources to query list.
-                qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
+                if (checkFilters(IfDp, 1, src, mct))
+                    qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
                 i++;
                 src = src->next;
             } else
