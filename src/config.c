@@ -793,7 +793,7 @@ static struct vifConfig *parsePhyintToken(void) {
             continue;
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
-            tmpPtr->nodefaultfilter = true;
+            tmpPtr->noDefaultFilter = true;
             LOG(LOG_NOTICE, 0, "Config: IF: Not setting default filters.");
 
         } else if (strcasecmp("updownstream", token) == 0) {
@@ -905,6 +905,9 @@ static struct vifConfig *parsePhyintToken(void) {
                             tmpPtr->qry.interval, f);
     }
 
+    if (!tmpPtr->noDefaultFilter)
+        *filP = commonConfig.defaultFilters;
+
     return tmpPtr;
 }
 
@@ -967,21 +970,11 @@ void configureVifs(void) {
         if (confPtr->qry.ver == 1)
             confPtr->qry.interval = 10, confPtr->qry.responseInterval = 10;
 
-        // Link default filters for interface when reloading config,
-        // or when new interface is detected and no configuration reload has yet occured.
-        if (!IfDp->conf->defaultfilter && !confPtr->nodefaultfilter) {
-            for (fil = IfDp->conf->filters; fil && fil->next; fil = fil->next);
-            if (! fil)
-                IfDp->conf->filters = commonConfig.defaultFilters;
-            else
-                fil->next = commonConfig.defaultFilters;
-            IfDp->conf->defaultfilter = true;
-        }
-
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SSIGHUP)) {
             for (oconfPtr = ovifConf; oconfPtr && strcmp(IfDp->Name, oconfPtr->name); oconfPtr = oconfPtr->next);
-            for (fil = confPtr->filters, ofil = oconfPtr->filters; fil && ofil && !memcmp(fil, ofil, sizeof(struct filters));
+            for (fil = confPtr->filters, ofil = oconfPtr->filters ? oconfPtr->filters : NULL;
+                 fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
             if (fil || ofil) {
                 LOG(LOG_DEBUG, 0, "configureVifs: Filters changed for %s.", IfDp->Name);

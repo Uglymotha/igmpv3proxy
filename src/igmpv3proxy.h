@@ -176,8 +176,7 @@ struct vifConfig {
     uint8_t             threshold;               // Interface MC TTL
     uint64_t            ratelimit;               // Interface ratelimit
     struct queryParam   qry;                     // Configured query parameters
-    bool                nodefaultfilter;         // Do not add default filters to interface
-    bool                defaultfilter;           // Flag when default filters are applied
+    bool                noDefaultFilter;         // Do not add default filters to interface
     struct filters     *filters, *rates;         // ACL and ratelimiters for interface
     struct vifConfig   *next;
 };

@@ -238,7 +238,7 @@ static bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode
             else {
                 LOG(LOG_INFO, 0, "addGroup: Joining group %s upstream on interface %s.",
                                   inetFmt(mct->group, 1), IfDp->Name);
-                if (k_updateGroup(IfDp, true, mct->group, mct->mode, (uint32_t)-1))
+                if (k_updateGroup(IfDp, true, mct->group, 0, (uint32_t)-1))
                     BIT_SET(mct->vifB.us, IfDp->index);
             }
         }
@@ -876,8 +876,8 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             }
         }
         IFGETIFL(is_in, If)
-            // Switch upstream filter mode if inlcude mode group was requested in exlcude mode on any downstream interface.
-            if (IS_SET(mct, us, If))
+            // Switch upstream filter mode if inlcude mode group was requested in exclude mode on any downstream interface.
+            if (IS_SET(mct, u, If) && NOT_SET(mct, ud, IfDp))
                 updateSourceFilter(mct, If);
         break;
 

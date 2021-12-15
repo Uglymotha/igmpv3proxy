@@ -156,8 +156,14 @@ inline void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmod
 #endif
     LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
                      fmode ? "IN" : "EX", nsrcs);
-    if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in), fmode, nsrcs, ss) < 0)
-        LOG(LOG_WARNING, errno, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
+    if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
+                        fmode, nsrcs, ss) < 0) {
+        if (errno == EADDRNOTAVAIL && fmode == MCAST_EXCLUDE && k_updateGroup(IfDp, true, group, 0, (uint32_t)-1))
+            setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
+                            fmode, nsrcs, ss);
+        else
+            LOG(LOG_WARNING, errno, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
+    }
     free(ss);  // Alloced by self.
 }
 
