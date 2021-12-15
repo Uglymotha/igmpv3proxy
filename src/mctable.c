@@ -346,8 +346,7 @@ static struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip,
     } else if (! src || src->ip != ip) {
         // New source should be created. If source was requested downstream increase nrsrcs.
         struct src *nsrc;
-        if (check || set)
-            mct->nsrcs++;
+        mct->nsrcs++;
         LOG(LOG_DEBUG, 0, "addSrc: New source %s (%d) for group %s.", inetFmt(ip, 1), mct->nsrcs, inetFmt(mct->group, 2));
         if (! (nsrc = calloc(1, sizeof(struct src) + CONFIG->dHostsHTSize)))
             LOG(LOG_ERR, errno, "addSrc: Out of memory.");   // Freed by delSrc()
@@ -369,9 +368,7 @@ static struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip,
             src->prev = nsrc;
         }
         src = nsrc;
-    } else if (!src->vifB.d && !src->vifB.dd)
-        // Unrequested sending source was requested, increase nrsrcs.
-        mct->nsrcs++;
+    }
 
     // Set source bits and age, update MFC if present. When source is denied, we still do aging.
     if (set) {
@@ -432,7 +429,7 @@ static struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip,
 static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash) {
     struct src     *nsrc = src->next;
     struct mcTable *mct  = src->mct;
-    LOG(LOG_DEBUG, 0, "delSrc: Remove source %s from %s on %s.", inetFmt(src->ip, 1), inetFmt(mct->group, 2),
+    LOG(LOG_DEBUG, 0, "delSrc: Remove source %s (%d) from %s on %s.", inetFmt(src->ip, 1), mct->nsrcs, inetFmt(mct->group, 2),
                        IfDp ? IfDp->Name : "all interfaces");
 
     // Remove source from hosts hash table, and clear vifbits.
@@ -448,7 +445,7 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
                 src->vifB.age[IfDp->index] = 0;
         }
         struct IfDesc *If;
-        IFGETIFL(! IfDp || !src->vifB.d || src->vifB.d == src->vifB.dd
+        IFGETIFL(! IfDp || !src->vifB.d || (!mct->mode && src->vifB.d == src->vifB.dd)
                         || (mct->mode && src->vifB.d != mct->mode && src->vifB.age[IfDp->index] == 0), If)
             // Source should not be left / unblocked when switching upstream filter mode.
             if (mode < 2 && (   ( mct->mode && IS_SET(mct, us, If) && src->vifB.d != mct->mode)
@@ -461,10 +458,10 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
         if (! IfDp || !src->vifB.d) {
             if (src->mfc && (! IfDp || !mct->mode))
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, false);
-            if (CONFIG->maxOrigins && (--mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins)
-                // Reset maxorigins exceeded flag.
-                mct->nsrcs &= ~0x80000000;
             if ((mode == 0 || mode == 3) && ! src->mfc) {
+                if (CONFIG->maxOrigins && (--mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins)
+                    // Reset maxorigins exceeded flag.
+                    mct->nsrcs &= ~0x80000000;
                 // Remove the source if there are no senders.
                 if (src->next)
                     src->next->prev = src->prev;
@@ -897,7 +894,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                 }
             }
         }
-        if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp) && !(IS_IN(mct, IfDp) && !mct->nsrcs)) {
+        if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp)) {
             if (! (qlst1 = malloc(sizeof(struct qlst))))  // // Freed by startQuery() or delQuery().
                 LOG(LOG_ERR, errno, "updateGroup: Out of Memory.");
             *qlst1 = (struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
