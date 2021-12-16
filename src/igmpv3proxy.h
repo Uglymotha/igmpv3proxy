@@ -361,7 +361,7 @@ int  k_set_ttl(uint8_t t);
 void k_set_loop(int l);
 void k_set_if(struct IfDesc *IfDp);
 bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t src);
-void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
+int  k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int  k_getMrouterFD(void);
 int  k_enableMRouter(void);
 void k_disableMRouter(void);

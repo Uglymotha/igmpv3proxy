@@ -98,8 +98,12 @@ void freeConfig(int old) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
         for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
-        if (SHUTDOWN)
+        if (SHUTDOWN) {
+            timer_clearTimer(timers.rescanConf);
+            timer_clearTimer(timers.rescanVif);
+            timer_clearTimer(timers.bwControl);
             timers = (struct timers){ 0, 0, 0 };
+        }
     }
 
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));

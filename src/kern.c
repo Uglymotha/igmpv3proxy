@@ -140,7 +140,7 @@ inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mo
 /**
 *   Sets group filter for group on iupstream interface.
 */
-inline void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
+inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
     uint32_t i, size = sizeof(struct sockaddr_storage) + nsrcs * sizeof(struct sockaddr_storage) - sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
     if (! (ss = malloc(size)))  // Freed by self.
@@ -158,13 +158,13 @@ inline void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmod
                      fmode ? "IN" : "EX", nsrcs);
     if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
                         fmode, nsrcs, ss) < 0) {
-        if (errno == EADDRNOTAVAIL && fmode == MCAST_EXCLUDE && k_updateGroup(IfDp, true, group, 0, (uint32_t)-1))
-            setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
-                            fmode, nsrcs, ss);
-        else
-            LOG(LOG_WARNING, errno, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
+        LOG(errno == EADDRNOTAVAIL ? LOG_INFO : LOG_WARNING, errno, "Failed to update source filter list for %s on %s.",
+                                                                     inetFmt(group, 1), IfDp->Name);
+        return errno;
     }
+
     free(ss);  // Alloced by self.
+    return 0;
 }
 
 /**
