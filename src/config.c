@@ -279,7 +279,6 @@ static void initCommonConfig(void) {
     commonConfig.defaultInterfaceState = IF_STATE_DISABLED;
     commonConfig.defaultThreshold = DEFAULT_THRESHOLD;
     commonConfig.defaultRatelimit = DEFAULT_RATELIMIT;
-    commonConfig.defaultFilterAny = false;
     commonConfig.defaultFilters   = NULL;
     commonConfig.defaultRates     = NULL;
 
@@ -504,13 +503,15 @@ bool loadConfig(void) {
             if (commonConfig.defaultFilters)
                 LOG(LOG_WARNING, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
-                commonConfig.defaultFilterAny = true;
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
+                if (! (commonConfig.defaultFilters = calloc(1, sizeof(struct filters))))
+                    LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+                *commonConfig.defaultFilters = FILTERANY;
             }
 
         } else if (strcasecmp("defaultfilter", token) == 0) {
             // Got a defaultfilterany token...
-            if (commonConfig.defaultFilterAny)
+            if (commonConfig.defaultFilters)
                 LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
@@ -675,13 +676,6 @@ bool loadConfig(void) {
 
     // Close the configfile.
     configFile(NULL, 0);
-
-    // Create default filter any.
-    if (commonConfig.defaultFilterAny) {
-        if (! (commonConfig.defaultFilters = calloc(1, sizeof(struct filters))))
-            LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-        *commonConfig.defaultFilters = FILTERANY;
-    }
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval

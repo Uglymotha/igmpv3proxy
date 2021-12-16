@@ -120,7 +120,6 @@ struct Config {
     uint8_t             defaultInterfaceState;
     uint8_t             defaultThreshold;
     uint64_t            defaultRatelimit;
-    bool                defaultFilterAny;
     struct filters     *defaultFilters, *defaultRates;
     // Logging Parameters.
     uint8_t             logLevel;

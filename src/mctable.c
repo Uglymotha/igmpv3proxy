@@ -448,8 +448,8 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
             // Source should be left if no more active interfaces in include mode. Source should be unblocked
             // when it is no longer excluded on all exclude mode interfaces or included on include mode interface.
             // Source should not be left / unblocked when switching upstream filter mode.
-            if (! IfDp || !src->vifB.d || (IS_SET(src, us, If) && (!mct->mode && src->vifB.d == src->vifB.dd)
-                                           || (mct->mode && src->vifB.d != mct->mode && src->vifB.age[IfDp->index] == 0))) {
+            if (IS_SET(src, us, If) && (! IfDp || !src->vifB.d || (!mct->mode && src->vifB.d == src->vifB.dd)
+                                               || (mct->mode && src->vifB.d != mct->mode && src->vifB.age[IfDp->index] == 0))) {
                 LOG(LOG_INFO, 0, "delSrc: %s source %s in group %s on upstream interface %s", mct->mode ? "Unblocking" : "Leaving",
                                   inetFmt(src->ip, 1), inetFmt(mct->group, 2), If->Name);
                 k_updateGroup(If, false, mct->group, mct->mode, src->ip);
@@ -461,7 +461,8 @@ static struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, false);
             if ((mode == 0 || mode == 3) && ! src->mfc) {
                 // Remove the source if there are no senders.
-                if ((--mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins && CONFIG->maxOrigins) {
+                mct->nsrcs--;
+                if (CONFIG->maxOrigins && (mct->nsrcs & 0x80000000) && (mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins) {
                     // Reset maxorigins exceeded flag.
                     LOG(LOG_INFO, 0, "delSrc: Maxorigins reset for group %s.", inetFmt(src->mct->group, 1));
                     mct->nsrcs &= ~0x80000000;
@@ -1223,7 +1224,6 @@ static void groupSpecificQuery(struct qlst *qlst) {
         }
     } else if (qlst->cnt >= qlst->misc) {
         // Done querying. Remove current querier from list (and delete the group if IS_IN no sources?).
-        delQuery(qlst->IfDp, qlst, NULL, NULL, 0);
         if (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, qlst->IfDp) && qlst->mct->vifB.age[qlst->IfDp->index] == 0
                                    && !BIT_TST(qlst->mct->v1Bits, qlst->IfDp->index)) {
             // Group in exclude mode has aged, switch to include.
@@ -1233,6 +1233,7 @@ static void groupSpecificQuery(struct qlst *qlst) {
             toInclude(qlst->mct, qlst->IfDp, NULL);
         } else
             LOG(LOG_INFO, 0, "GSQ: done querying %s/%d on %s.", inetFmt(qlst->mct->group, 1), nsrcs, qlst->IfDp->Name);
+        delQuery(qlst->IfDp, qlst, NULL, NULL, 0);
     }
 
     free(query1);  // Alloced by self.
