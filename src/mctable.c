@@ -686,8 +686,10 @@ static void *updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp) {
     }
 
     // Set new upstream source filter and set upstream status if new mode is exclude, clear if inlcude.
-    if (k_setSourceFilter(IfDp, mct->group, mct->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist) == EADDRNOTAVAIL)
-        if (mct->mode && k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1))
+    if (!mct->mode && nsrcs == 0)
+        delGroup(mct, IfDp, NULL, 0);
+    else if (k_setSourceFilter(IfDp, mct->group, mct->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist) == EADDRNOTAVAIL)
+        if (mct->mode && k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1) && nsrcs > 0)
             k_setSourceFilter(IfDp, mct->group, mct->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist);
 
     free(slist);  // Alloced by self
