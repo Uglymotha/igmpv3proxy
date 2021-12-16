@@ -116,7 +116,6 @@ void buildIfVc(void) {
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-
         } else {
             // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
             IfDp->conf   = NULL;

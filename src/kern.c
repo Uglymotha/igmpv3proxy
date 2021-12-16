@@ -216,7 +216,6 @@ void k_disableMRouter(void) {
 void k_delVIF(struct IfDesc *IfDp) {
     struct vifctl vifCtl;
 
-    if (IfDp->index == (uint8_t)-1) return;
     vifCtl.vifc_vifi = IfDp->index;
 
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
@@ -242,7 +241,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
         BIT_SET(vifBits, Dp->index);
     for (;Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
     if (Ix >= MAXVIFS) {
-        LOG(LOG_WARNING, ENOMEM, "addVIF: out of VIF space");
+        LOG(LOG_WARNING, 0, "Out of VIF space");
         return false;
     } else
         IfDp->index = Ix;
@@ -261,7 +260,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
 
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
-        LOG(LOG_WARNING, errno, "addVIF: Error adding VIF %d:%s", IfDp->index, IfDp->Name);
+        LOG(LOG_WARNING, errno, "Error adding VIF %d:%s", IfDp->index, IfDp->Name);
         IfDp->index = (uint8_t)-1;
         return false;
     }

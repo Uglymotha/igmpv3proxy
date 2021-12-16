@@ -127,7 +127,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
-        if (igmp->igmp_type == IGMP_MEMBERSHIP_QUERY || ! (IfDp = getIf(igmpMsg->im_vif, 0)))
+        if (! (IfDp = getIf(igmpMsg->im_vif, 0)))
             return;
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
@@ -172,22 +172,22 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     register uint16_t cksum = igmp->igmp_cksum;
     igmp->igmp_cksum = 0;
     if (! IfDp)
-        LOG(LOG_NOTICE, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
+        LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
                             inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
-        LOG(LOG_NOTICE, 0, "acceptIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
+        LOG(LOG_DEBUG, 0, "acceptIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else if (src == 0xFFFFFFFF || dst == 0 || dst == 0xFFFFFFFF)
-        LOG(LOG_NOTICE, 0, "acceptIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
+        LOG(LOG_INFO, 0, "acceptIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else if (iphdrlen + ipdatalen != recvlen)
-        LOG(LOG_WARNING, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
+        LOG(LOG_NOTICE, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
                              inetFmt(src, 1), recvlen, iphdrlen, ipdatalen);
     else if ((ipdatalen < IGMP_MINLEN) || (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN))
-        LOG(LOG_WARNING, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s.",
+        LOG(LOG_NOTICE, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s.",
                              ipdatalen, inetFmt(src, 1));
     else if (cksum != inetChksum((uint16_t *)igmp, ipdatalen))
-        LOG(LOG_WARNING, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
+        LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
@@ -383,14 +383,14 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             sprintf(msg, "%sv%1d Querier Timer: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
             IfDp->querier.Timer = timer_setTimer(TDELAY(timeout), strcat(msg, IfDp->Name), (timer_f)expireQuerierTimer, IfDp);
 
-            LOG(LOG_INFO, 0, "Detected %sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
-                    IS_DOWNSTREAM(IfDp->state) ? "other " : "", ver, inetFmt(src, 1),
+            LOG(LOG_INFO, 0, "acceptMemberQuery: %sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
+                    IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, inetFmt(src, 1),
                     IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
         }
         if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8))
             processGroupQuery(IfDp, igmpv3, ver == 3 ? ntohs(igmpv3->igmp_nsrcs) : 0, ver);
     } else
-        LOG(LOG_DEBUG, 0, "Received IGMP v%d query from %s on %s, but it does not have priority over %s. Ignoring",
+        LOG(LOG_INFO, 0, "acceptMemberQuery: v%d query from %s on %s, but it does not have priority over %s. Ignoring",
                            ver, inetFmt(src, 1), IfDp->Name,
                            IfDp->querier.ip == IfDp->conf->qry.ip ? "us" : inetFmt(IfDp->querier.ip, 2));
 }
@@ -402,7 +402,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
     uint32_t timeout;
     // Only query interface if set regardless of querier status. If it is downstream of course.
     if (!IS_DOWNSTREAM(IfDp->state)) {
-        LOG(LOG_INFO, 0, "Requested to send a query on %s, but it is %s. Query not sent.",
+        LOG(LOG_NOTICE, 0, "Requested to send a query on %s, but it is %s. Query not sent.",
                           IfDp->Name, IS_UPSTREAM(IfDp->state) ? "upstream" : "disabled");
     } else {
         // Send query.
@@ -425,7 +425,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
                                                 strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
                                                 (timer_f)ageGroups, IfDp);
-        LOG(LOG_DEBUG, 0, "Sent membership query from %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
+        LOG(LOG_INFO, 0, "sendGeneralMemberQuery: From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
                            inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
     }
 }
@@ -434,7 +434,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
 *   Other Querier Timer expired, take over.
 */
 static void expireQuerierTimer(struct IfDesc *IfDp) {
-    LOG(LOG_NOTICE, 0, "Other querier %s on %s expired.", inetFmt(IfDp->querier.ip, 1), IfDp->Name);
+    LOG(LOG_INFO, 0, "expireQuerierTimer: Other querier %s on %s expired.", inetFmt(IfDp->querier.ip, 1), IfDp->Name);
     if (IS_DOWNSTREAM(IfDp->state)) {
         timer_clearTimer(IfDp->querier.ageTimer);
         sendGeneralMemberQuery(IfDp);
