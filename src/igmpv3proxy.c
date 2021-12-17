@@ -226,6 +226,7 @@ static void igmpProxyInit(void) {
 */
 static void igmpProxyCleanUp(void) {
     struct timespec endtime;
+    sigstatus = 0x20;         // Shutdown
 
     rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
     k_disableMRouter();       // Disable the MRouter API.
@@ -240,7 +241,7 @@ static void igmpProxyCleanUp(void) {
         remove(rFile);
         rmdir(CONFIG->runPath);
     }
-    freeConfig(0);          // Free config.
+    freeConfig(0);            // Free config.
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -280,14 +281,16 @@ static void igmpProxyRun(void) {
         }
 
         if (Rt <= 0 || i >= CONFIG->reqQsz) {
+            const struct timespec nto = { 0, 0 };
             // Run queue aging, it wil return the time until next timer is scheduled.
             timeout = timer_ageQueue();
             // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
-            Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &(struct timespec){ 0, 0 } : &timeout, NULL);
+            Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &nto : &timeout, NULL);
             i = 0;
         }
 
         // log and ignore failures
+        const struct timespec nto = { 0, 0 };
         if (Rt < 0 && errno != EINTR)
             LOG(LOG_WARNING, errno, "ppoll() error");
         else if (Rt > 0) do {
@@ -319,7 +322,7 @@ static void igmpProxyRun(void) {
                 LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Cli Connection %d.", i+1);
                 processCliCon(pollFD[1].fd);
             }
-        } while (i++ < CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &(struct timespec){ 0, 0 }, NULL)) > 0 && !sighandled);
+        } while (i++ < CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &nto, NULL)) > 0 && !sighandled);
     }
 }
 
@@ -333,13 +336,11 @@ static void signalHandler(int sig) {
         /* FALLTHRU */
     case SIGTERM:
         LOG(LOG_NOTICE, 0, "%s: Exiting.", sig == SIGINT ? "SIGINT" : "SIGTERM");
-        sigstatus = 0x20;  // Shutdown
         igmpProxyCleanUp();
         exit(1);
     case SIGURG:
         LOG(LOG_NOTICE, 0, "SIGURG: Trying to restart, memory leaks may occur.");
         sighandled |= GOT_SIGURG;
-        sigstatus = 0x20;  // Shutdown
         return;
     case SIGPIPE:
         LOG(LOG_NOTICE, 0, "SIGPIPE: Ceci n'est pas un SIGPIPE.");

@@ -146,10 +146,12 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
     if (! (ss = malloc(size)))  // Freed by self.
         LOG(LOG_ERR, errno, "k_setSourceFilter: Out of Memory.");
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
+    int er = EADDRNOTAVAIL;  // Freebsd errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, group };
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, slist[i]};
 #else
+    int er = EINVAL;  // Linux errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ AF_INET, 0, {group}, {0} };
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
@@ -157,11 +159,11 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
     LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
                      fmode ? "IN" : "EX", nsrcs);
     if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
-                        fmode, nsrcs, ss) < 0 && ((err = errno) != EADDRNOTAVAIL || nsrcs == 0))
+                        fmode, nsrcs, ss) < 0 && ((err = errno) != er || nsrcs == 0))
         LOG(LOG_WARNING, err, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
 
     free(ss);  // Alloced by self.
-    return err;
+    return err ? EADDRNOTAVAIL : 0;
 }
 
 /**
