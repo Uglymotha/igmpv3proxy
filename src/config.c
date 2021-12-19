@@ -362,7 +362,7 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
             LOG(LOG_WARNING, 0, "Config: FIL: %s is not valid subnet/mask pair.", inetFmts(addr, mask, 1));
             fil = filErr;
         } else if (strcasecmp("altnet", list) == 0) {
-            // altnet is not usefull and incompatible with igmpv3, ignore.
+            // altnet is not usefull or compatible with igmpv3, ignore.
             fil = filErr;
         } else if (strcasecmp("whitelist", list) == 0) {
             fil = (struct filters){ {INADDR_ANY, 0}, {addr, mask}, ALLOW, 3, NULL };
@@ -515,7 +515,7 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("defaultfilter", token) == 0) {
             // Got a defaultfilterany token...
-            if (commonConfig.defaultFilters)
+            if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters)
                 LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
