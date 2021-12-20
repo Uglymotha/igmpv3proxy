@@ -124,7 +124,6 @@ struct mcTable *findGroup(register uint32_t group, bool create);
 struct ifMct   *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
 struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash);
 bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
-static void    *updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp);
 struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
 bool            toInclude(struct mcTable *mct, struct IfDesc *IfDp);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);

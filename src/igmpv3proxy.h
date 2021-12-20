@@ -307,10 +307,11 @@ void cliCmd(char *cmd);
 /**
 *   ifvc.c
 */
-#define IFL(x)          x = getIfL(); x; x = x->next
-#define GETIFL(x, ...)  for (IFL(x) __VA_OPT__(,) __VA_ARGS__)
-#define IFGETIFL(y, x)  if (y) GETIFL(x)
-#define GETIFLIF(x, y)  GETIFL(x) if (y)
+#define IFL(x)               x = getIfL(); x; x = x->next
+#define GETIFL(x, ...)       for (IFL(x) __VA_OPT__(,) __VA_ARGS__)
+#define IFGETIFL(y, x)       if (y) GETIFL(x)
+#define GETIFLIF(x, y)       GETIFL(x) if (y)
+#define IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
 void           freeIfDescL();
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
@@ -372,7 +373,7 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif);
 void k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
-*   rttable.c
+*   mctable.c
 */
 #define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
 #define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
@@ -381,18 +382,21 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 #define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
 #define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
 #define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
-uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp);
 void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
-void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver);
-void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
+
+/**
+*   querier.c
+*/
+void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver);
+void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 
 /**
 *   timers.c

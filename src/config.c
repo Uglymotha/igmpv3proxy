@@ -628,17 +628,17 @@ bool loadConfig(void) {
                     LOG(LOG_WARNING, 0, "Config: No logfile path specified. Ignoring.");
                     continue;
                 }
-                FILE *fp = fopen(token, "a");
+                FILE *fp = fopen(token, "w");
                 if (! fp) {
                     LOG(LOG_WARNING, errno, "Config: Cannot open log file %s.", token);
                     commonConfig.logFilePath = "";
                 } else {
                     fclose(fp);
                     strcpy(commonConfig.logFilePath, token);
-                    LOG(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
                     time_t rawtime = time(NULL);
                     utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                     commonConfig.log2File = true;
+                    LOG(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
                 }
             }
 

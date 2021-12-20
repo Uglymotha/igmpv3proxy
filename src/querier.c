@@ -63,13 +63,12 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         src->vifB.age[IfDp->index] = qlst->misc;
         qlst->src[qlst->nsrcs++] = src;
         clearHash(src->dHostsHT, srcHash);
-        if (srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT))
-            GETIFLIF(IfDp, IS_SET(src, us, IfDp)) {
-                LOG(LOG_INFO, 0, "addSrcToQlst: Last downstream host, quickleave source %s in group %s on %s.",
-                                  inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
-                k_updateGroup(IfDp, false, src->mct->group, 0, src->ip);
-                BIT_CLR(src->vifB.us, IfDp->index);
-            }
+        IFGETIFLIF(srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT), IfDp, IS_SET(src, us, IfDp)) {
+            LOG(LOG_INFO, 0, "addSrcToQlst: Last downstream host, quickleave source %s in group %s on %s.",
+                              inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
+            k_updateGroup(IfDp, false, src->mct->group, 0, src->ip);
+            BIT_CLR(src->vifB.us, IfDp->index);
+        }
     }
 
     return qlst;

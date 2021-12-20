@@ -270,10 +270,12 @@ inline uint16_t getIgmpExp(register int val, register int d) {
 *   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
 */
 bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
-    char            LogMsg[256];
-    FILE           *lfp = NULL;
-    va_list         ArgPt;
-    unsigned        Ln;
+    clock_gettime(CLOCK_REALTIME, &curtime);
+    long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
+    char      LogMsg[256];
+    FILE     *lfp = CONFIG->log2File ? fopen(CONFIG->logFilePath, "a") : NULL, *log = lfp ? lfp : stderr;
+    va_list   ArgPt;
+    unsigned  Ln;
 
     va_start(ArgPt, FmtSt);
     Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
@@ -281,17 +283,14 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
     va_end(ArgPt);
 
-    if (CONFIG->log2File || CONFIG->log2Stderr || (STARTUP && Severity <= LOG_ERR)) {
-        clock_gettime(CLOCK_REALTIME, &curtime);
-        long sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
-        if (CONFIG->log2File)
-            lfp = freopen(CONFIG->logFilePath, "a", stderr);
-        fprintf(stderr, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60, sec % 3600 % 60, nsec / 100000, LogMsg);
-        if (lfp)
-            fclose(lfp);
-    } else
+    if (CONFIG->log2File || CONFIG->log2Stderr || (STARTUP && Severity <= LOG_ERR))
+        fprintf(log, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
+                                     sec % 3600 % 60, nsec / 100000, LogMsg);
+    else
         syslog(Severity, "%s", LogMsg);
 
+    if (lfp)
+        fclose(lfp);
     if (Severity <= LOG_ERR)
         exit(-1);
 
