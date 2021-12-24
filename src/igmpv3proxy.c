@@ -196,11 +196,11 @@ static void igmpProxyInit(void) {
     sa.sa_flags = 0;                // Interrupt system calls
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGHUP,  &sa, NULL);
     sigaction(SIGUSR1, &sa, NULL);
     sigaction(SIGUSR2, &sa, NULL);
-    sigaction(SIGURG, &sa, NULL);
+    sigaction(SIGURG,  &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
 
     // Detach daemon from stdin/out/err.
