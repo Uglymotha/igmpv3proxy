@@ -283,7 +283,7 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
     va_end(ArgPt);
 
-    if (CONFIG->log2File || CONFIG->log2Stderr || (STARTUP && Severity <= LOG_ERR))
+    if (CONFIG->log2File || CONFIG->log2Stderr)
         fprintf(log, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                                      sec % 3600 % 60, nsec / 100000, LogMsg);
     else

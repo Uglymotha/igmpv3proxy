@@ -63,11 +63,13 @@ static char          *recv_buf;
 int main(int ArgCn, char *ArgVc[]) {
     int       c = 0, h = 0, i = 0, j = 0;
     uint32_t  addr, mask;
-    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL;
+    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL, paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path;
     fileName = basename(ArgVc[0]);
 
+    // Initialize configuration, syslog and rng.
     memset(CONFIG, 0, sizeof(struct Config));
-    openlog(fileName, LOG_PID, LOG_USER);
+    openlog(fileName, LOG_PID, LOG_DAEMON);
+    CONFIG->logLevel = LOG_WARNING;
     srand(time(NULL) * getpid());
 
     // Parse the commandline options and setup basic settings..
@@ -76,7 +78,7 @@ int main(int ArgCn, char *ArgVc[]) {
         case 'v':
             CONFIG->logLevel = LOG_INFO; // FALLTHRU
         case 'd':
-            CONFIG->logLevel = !CONFIG->logLevel ? LOG_DEBUG : CONFIG->logLevel;
+            CONFIG->logLevel = CONFIG->logLevel == LOG_WARNING ? LOG_DEBUG : CONFIG->logLevel;
             CONFIG->log2Stderr = true; // FALLTHRU
         case 'n':
             CONFIG->notAsDaemon = true;
@@ -143,13 +145,22 @@ int main(int ArgCn, char *ArgVc[]) {
         // Check that we are root.
         fprintf(stderr, "%s: must be root.\n", fileName);
         exit(-1);
-    } else if (optind != ArgCn - 1) {
-        fprintf(stderr, "You must specify the configuration file.\n");
+    } else if (! (CONFIG->configFilePath = calloc(1, sizeof(CFG_PATHS) + strlen(ArgVc[optind - !(optind == ArgCn - 1)])))) {
+        // Freed by igmpProxyCleanup().
         exit(-1);
-    } else {
-        // Write debug notice with file path.
-        CONFIG->configFilePath = ArgVc[optind];
-        fprintf(stderr, "Searching for config file at '%s'\n", CONFIG->configFilePath);
+    } else if (optind == ArgCn - 1) {
+        // Config file specified as last argument.
+       strcpy(CONFIG->configFilePath, ArgVc[optind]);
+    } else for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
+        // Search for config in default locations.
+        struct stat st;
+        strcpy(CONFIG->configFilePath, path);
+        if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
+            break;
+        CONFIG->configFilePath[strlen(CONFIG->configFilePath) - 5] = '/';
+        CONFIG->configFilePath[strlen(CONFIG->configFilePath) - 4] = '\0';
+        if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
+            break;
     }
 
     do {
@@ -173,13 +184,13 @@ int main(int ArgCn, char *ArgVc[]) {
 */
 static void igmpProxyInit(void) {
     struct sigaction sa;
+    sigstatus = 1;  // STARTUP
 
     clock_gettime(CLOCK_REALTIME, &starttime);
     char tS[32] = "", *t = asctime(localtime(&starttime.tv_sec));
     memcpy(tS, t, strlen(t) - 1);
     tS[strlen(t) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy on %s.", tS);
-    sigstatus = 1;  // STARTUP
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
@@ -217,8 +228,6 @@ static void igmpProxyInit(void) {
 
     // Loads configuration for Physical interfaces and mcast vifs.
     rebuildIfVc(NULL);
-
-    sigstatus = 0;
 }
 
 /**
@@ -229,10 +238,10 @@ static void igmpProxyCleanUp(void) {
     sigstatus = 0x20;         // Shutdown
 
     rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
-    k_disableMRouter();       // Disable the MRouter API.
+    k_disableMRouter();
     if (pollFD[1].fd > 0)
-        close(pollFD[1].fd);  // Close CLI socket.
-    if (strstr(CONFIG->runPath, fileName)) {
+        close(pollFD[1].fd);
+    if (CONFIG->runPath) {
         // Remove socket and PID file.
         char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
         sprintf(rFile, "%s/%s.pid", CONFIG->runPath, fileName);
@@ -241,7 +250,7 @@ static void igmpProxyCleanUp(void) {
         remove(rFile);
         rmdir(CONFIG->runPath);
     }
-    freeConfig(0);            // Free config.
+    freeConfig(0);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -251,8 +260,9 @@ static void igmpProxyCleanUp(void) {
     tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 
-    free(CONFIG->logFilePath);
-    free(CONFIG->runPath);
+    free(CONFIG->logFilePath);     // Alloced by loadConfig()
+    free(CONFIG->runPath);         // Alloced by openCliSock()
+    free(CONFIG->configFilePath);  // Alloced by main()
 }
 
 /**
@@ -261,6 +271,8 @@ static void igmpProxyCleanUp(void) {
 static void igmpProxyRun(void) {
     struct timespec timeout;
     int    i = 0, Rt = 0;
+    sigstatus = 0;
+
     while (!(sighandled & GOT_SIGURG)) {
         // Process signaling...
         if (sighandled & GOT_SIGHUP) {

@@ -62,9 +62,9 @@ char *initIgmp(void) {
     struct ip *ip = (struct ip *)send_buf;
     memset(ip, 0, sizeof(struct ip));
 
-    k_set_rcvbuf(512*1024,48*1024); // lots of input buffering
-    curttl = k_set_ttl(1);          // restrict multicasts to one hop
-    k_set_loop(false);              // disable multicast loopback
+    k_set_rcvbuf(512*1024,48*1024); // Set kernel ring buffer size
+    k_set_ttl(1);                   // Restrict multicasts to one hop
+    k_set_loop(false);              // Disable multicast loopback
 
     /*
      * Fields zeroed that aren't filled in later:
@@ -97,10 +97,16 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
     // Sanitycheck the group adress...
     if (! IN_MULTICAST(ntohl(group)))
         LOG(LOG_NOTICE, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
-    /* filter local multicast 224.0.0.0/24 */
+    else if (src == 0xFFFFFFFF)
+        LOG(LOG_INFO, 0, "checkIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
+                            inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
     else if (! CONFIG->proxyLocalMc && IGMP_LOCAL(group))
+        /* filter local multicast 224.0.0.0/24 */
         LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s from %s and proxylocalmc is not set. Ignoring.",
                            IfDp->Name, inetFmt(src, 1));
+    else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
+        LOG(LOG_DEBUG, 0, "checkIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
+                            inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
                               : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
@@ -123,6 +129,24 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     struct igmp       *igmp = (struct igmp *)(recv_buf + iphdrlen);
     struct cmsghdr    *cmsgPtr;
     struct IfDesc     *IfDp = NULL;
+
+    //  Get the source interface from the control message.
+    for (cmsgPtr = CMSG_FIRSTHDR(&msgHdr); cmsgPtr; cmsgPtr = CMSG_NXTHDR(&msgHdr, cmsgPtr))
+        if (cmsgPtr->cmsg_level == IPPROTO_IP && cmsgPtr->cmsg_type == IFINFO) {
+#ifdef IP_PKTINFO
+            struct in_pktinfo *inp = (struct in_pktinfo *)CMSG_DATA(cmsgPtr);
+            ifindex = inp->ipi_ifindex;
+#elif IP_RECVIF
+            struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
+            ifindex = sdl->sdl_index;
+#endif
+            if (! (IfDp = getIf(ifindex, 1))) {
+                LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
+                                  inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
+                return;
+            }
+            break;
+        }
 
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
@@ -153,34 +177,10 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         }
     }
 
-    //  Get the source interface from the control message.
-    for (cmsgPtr = CMSG_FIRSTHDR(&msgHdr); cmsgPtr; cmsgPtr = CMSG_NXTHDR(&msgHdr, cmsgPtr)) {
-        if (cmsgPtr->cmsg_level == IPPROTO_IP && cmsgPtr->cmsg_type == IFINFO) {
-#ifdef IP_PKTINFO
-            struct in_pktinfo *inp = (struct in_pktinfo *)CMSG_DATA(cmsgPtr);
-            ifindex = inp->ipi_ifindex;
-#elif IP_RECVIF
-            struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
-            ifindex = sdl->sdl_index;
-#endif
-            IfDp = getIf(ifindex, 1);
-            break;
-        }
-    }
-
     // Sanity check the request, only allow requests for valid interface, valid src & dst and no corrupt packets.
     register uint16_t cksum = igmp->igmp_cksum;
     igmp->igmp_cksum = 0;
-    if (! IfDp)
-        LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
-                            inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
-    else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
-        LOG(LOG_DEBUG, 0, "acceptIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
-                            inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (src == 0xFFFFFFFF || dst == 0 || dst == 0xFFFFFFFF)
-        LOG(LOG_INFO, 0, "acceptIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
-                            inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (iphdrlen + ipdatalen != recvlen)
+    if (iphdrlen + ipdatalen != recvlen)
         LOG(LOG_NOTICE, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
                              inetFmt(src, 1), recvlen, iphdrlen, ipdatalen);
     else if ((ipdatalen < IGMP_MINLEN) || (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN))
@@ -258,11 +258,8 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
     sdst.sin_len = sizeof(sdst);
 #endif
 
-    // We do not want to hear our own packets.
-    k_set_if(IfDp);
-    k_set_loop(false);
-
     // Set IP / IGMP packet data.
+    k_set_if(IfDp);
     ip->ip_src.s_addr  = IfDp->querier.ip;
     ip->ip_dst.s_addr  = sdst.sin_addr.s_addr = query ? query->igmp_group.s_addr : allhosts_group;
     igmpv3->igmp_type         = IGMP_MEMBERSHIP_QUERY;
@@ -297,10 +294,6 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
         else
             LOG(LOG_DEBUG, 0, msg);
     } while (i < nsrcs);
-
-    // Restore original.
-    k_set_loop(true);
-    k_set_if(NULL);
 }
 
 /**

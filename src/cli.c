@@ -48,8 +48,8 @@ static struct sockaddr_un cliSockAddr;
 *   Opens and binds a socket for cli connections.
 */
 int openCliSock(void) {
-    struct stat    st;
-    int            cliSock;
+    struct stat st;
+    int         cliSock;
 
     memset(&cliSockAddr, 0, sizeof(struct sockaddr_un));
     cliSockAddr.sun_family = AF_UNIX;

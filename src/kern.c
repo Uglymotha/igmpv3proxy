@@ -65,27 +65,20 @@ void k_set_rcvbuf(int bufsize, int minsize) {
     LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, iter);
 }
 
-inline int k_set_ttl(uint8_t t) {
+inline void k_set_ttl(uint8_t ttl) {
 #ifndef RAW_OUTPUT_IS_RAW
-    uint8_t ttl = t;
-
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
 #endif
-    curttl = t;
-    return curttl;
 }
 
-inline void k_set_loop(int l) {
-    unsigned char loop = l;
-
+inline void k_set_loop(bool loop) {
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
 }
 
 inline void k_set_if(struct IfDesc *IfDp) {
     struct in_addr adr = { IfDp ? IfDp->InAdr.s_addr : INADDR_ANY };
-
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
 }

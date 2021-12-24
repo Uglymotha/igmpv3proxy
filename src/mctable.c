@@ -283,19 +283,17 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint3
     }
 
     // Set source bits and age, update MFC if present. When source is denied, we still do aging.
-    if (set) {
-        if (check) {
-            // Source requested in exclude mode.
-            BIT_CLR(src->vifB.lm, IfDp->index);
-            src->vifB.age[IfDp->index] = IfDp->querier.qrv;
-            setHash(src->dHostsHT, srcHash);
-        }
-        if (NOT_SET(src, d, IfDp)) {
-            BIT_SET(src->vifB.d, IfDp->index);
-            if (src->mfc)
-                // Activate route will check ACL for source on downstream interfaces.
-                activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
-        }
+    if (set && check) {
+        // Source requested in exclude mode.
+        BIT_CLR(src->vifB.lm, IfDp->index);
+        src->vifB.age[IfDp->index] = IfDp->querier.qrv;
+        setHash(src->dHostsHT, srcHash);
+    }
+    if (set && NOT_SET(src, d, IfDp)) {
+        BIT_SET(src->vifB.d, IfDp->index);
+        if (src->mfc)
+            // Activate route will check ACL for source on downstream interfaces.
+            activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
     }
 
     struct IfDesc *If;
