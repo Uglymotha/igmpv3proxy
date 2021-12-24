@@ -1,24 +1,20 @@
-sbin_PROGRAMS = igmpproxy
-igmpproxy_SOURCES = \
-	callout.c \
+sbin_PROGRAMS = igmpv3proxy
+igmpv3proxy_SOURCES = \
+	cli.c \
 	config.c \
-	confread.c \
 	ifvc.c \
 	igmp.c \
 	igmpv3.h \
-	igmpproxy.c \
-	igmpproxy.h \
+	igmpv3proxy.c \
+	igmpv3proxy.h \
 	kern.c \
 	lib.c \
-	mcgroup.c \
-	mroute-api.c \
 	os-dragonfly.h \
 	os-freebsd.h \
 	os-linux.h \
 	os-netbsd.h \
 	os-openbsd.h \
 	os-qnxnto.h \
-	request.c \
-	rttable.c \
-	syslog.c \
-	udpsock.c
+	mctable.c \
+    querier.c \
+	timers.c

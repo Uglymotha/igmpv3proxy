@@ -1,6 +1,6 @@
 SUBDIRS = doc src
 EXTRA_DIST = autogen.sh GPL.txt Stanford.txt
-dist_sysconf_DATA = igmpproxy.conf
+dist_sysconf_DATA = igmpv3proxy.conf
 
 .PHONY: ChangeLog
 ChangeLog:

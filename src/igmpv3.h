@@ -1,5 +1,5 @@
 /*
-**  igmpproxy - IGMP proxy based multicast router
+**  igmpv3proxy - IGMP proxy based multicast router
 **  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
 **
 **  This program is free software; you can redistribute it and/or modify
@@ -17,16 +17,29 @@
 **  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **
 */
+
 /**
-*   igmpv3.h - Header file for common IGMPv3 includes.
+*   igmpv3.h - Header file for common IGMPv3 includes. Various OS dont provide common structs, so we just use our own.
 */
+
+struct igmpv3_query {
+    u_char          igmp_type;      /* version & type of IGMP message  */
+    u_char          igmp_code;      /* subtype for routing msgs        */
+    u_short         igmp_cksum;     /* IP-style checksum               */
+    struct in_addr  igmp_group;     /* group address being reported    */
+                                    /*  (zero for queries)             */
+    u_char          igmp_misc;      /* reserved/suppress/robustness    */
+    u_char          igmp_qqi;       /* querier's query interval        */
+    u_short         igmp_nsrcs;     /* number of sources               */
+    struct in_addr  igmp_src[];     /* source addresses */
+};
 
 struct igmpv3_grec {
     u_int8_t grec_type;
     u_int8_t grec_auxwords;
     u_int16_t grec_nsrcs;
     struct in_addr grec_mca;
-    struct in_addr grec_src[0];
+    struct in_addr grec_src[];
 };
 
 struct igmpv3_report {
@@ -35,8 +48,10 @@ struct igmpv3_report {
     u_int16_t igmp_cksum;
     u_int16_t igmp_resv2;
     u_int16_t igmp_ngrec;
-    struct igmpv3_grec igmp_grec[0];
+    struct igmpv3_grec igmp_grec[];
 };
+
+#define IGMP_LOCAL(x) ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
 
 #define IGMPV3_MODE_IS_INCLUDE   1
 #define IGMPV3_MODE_IS_EXCLUDE   2
