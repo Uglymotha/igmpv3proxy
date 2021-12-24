@@ -193,7 +193,7 @@ static void igmpProxyInit(void) {
     LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy on %s.", tS);
 
     sa.sa_handler = signalHandler;
-    sa.sa_flags = 0;    /* Interrupt system calls */
+    sa.sa_flags = 0;                // Interrupt system calls
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
