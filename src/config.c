@@ -51,7 +51,7 @@ static struct vifConfig *parsePhyintToken(void);
 static struct Config commonConfig, oldcommonConfig;
 
 // All valid configuration options.
-static const char *options = "phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize";
+static const char *options = "phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
 static const char *phyintopt = "updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Configuration file reading.
@@ -69,8 +69,6 @@ static struct timers {
     uint64_t rescanVif;
     uint64_t bwControl;
 } timers = { 0, 0, 0 };
-
-#define INTTOKEN ((intToken = atoll(nextConfigToken())) || !intToken)
 
 /**
 *   Returns pointer to the configuration.
@@ -260,6 +258,8 @@ static void initCommonConfig(void) {
     // Request queue size. This many request buffered requests will be handled before other work is done.
     commonConfig.reqQsz = REQQSZ;
     commonConfig.tmQsz  = TMQSZ;
+    commonConfig.kBufsz = K_BUF_SIZE;
+    commonConfig.pBufsz = BUF_SIZE;
 
     // Default values for leave intervals...
     commonConfig.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
@@ -287,7 +287,6 @@ static void initCommonConfig(void) {
     commonConfig.defaultRates     = NULL;
 
     // Log to file disabled by default.
-    commonConfig.log2File = false;
     commonConfig.logLevel = !commonConfig.log2Stderr ? LOG_WARNING : commonConfig.logLevel;
 
     // Default no timed rebuild interfaces / reload config.
@@ -402,6 +401,7 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
     }
 }
 
+#define INTTOKEN ((intToken = atoll(nextConfigToken())) || !intToken)
 /**
 *   Loads the configuration from file, and stores the config in respective holders.
 */
@@ -434,6 +434,16 @@ bool loadConfig(void) {
                 continue;
             } else if (!STARTUP)
                 return false;
+
+        } else if (STARTUP && strcasecmp("kbufsize", token) == 0 && INTTOKEN) {
+            // Got a reqqueuesize token....
+            commonConfig.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
+            LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dKB.", intToken);
+
+        } else if (STARTUP && strcasecmp("pbufsize", token) == 0 && INTTOKEN) {
+            // Got a reqqueuesize token....
+            commonConfig.pBufsz = intToken > 0 && intToken < 65536 ? intToken : BUF_SIZE;
+            LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dB.", intToken);
 
         } else if (strcasecmp("reqqueuesize", token) == 0 && INTTOKEN) {
             // Got a reqqueuesize token....
@@ -468,12 +478,10 @@ bool loadConfig(void) {
                 LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.dHostsHTSize / 8);
             }
 
-        } else if (strcasecmp("mctables", token) == 0 && INTTOKEN) {
+        } else if (STARTUP && strcasecmp("mctables", token) == 0 && INTTOKEN) {
             // Got a routetables token...
-            if (STARTUP) {
-                commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
-                LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
-            }
+            commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
+            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
 
         } else if (strcasecmp("defaultupdown", token) == 0) {
             // Got a defaultupdown token...
@@ -525,7 +533,8 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("defaultratelimit", token) == 0 && INTTOKEN) {
             // Default Ratelimit
-            if (intToken < 0) LOG(LOG_WARNING, 0, "Config: Ratelimit must be more than 0.");
+            if (intToken < 0)
+                LOG(LOG_WARNING, 0, "Config: Ratelimit must be more than 0.");
             else {
                 commonConfig.defaultRatelimit = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default ratelimit %d.", intToken);
@@ -614,32 +623,26 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("loglevel", token) == 0 && INTTOKEN) {
             // Got a loglevel token...
-            if (!commonConfig.log2Stderr) {
-                commonConfig.logLevel = intToken > 7 ? 7 : intToken < 0 ? 0 : intToken;
-                LOG(LOG_NOTICE, 0, "Config: Log Level %d", intToken);
-            }
+            commonConfig.logLevel = !commonConfig.log2Stderr && intToken > 0 && intToken < 8 ? intToken : commonConfig.logLevel;
+            LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
 
         } else if (strcasecmp("logfile", token) == 0 && (token = nextConfigToken())) {
             // Got a logfile token. Only use log file if not logging to stderr.
-            if (!commonConfig.log2Stderr) {
-                // Freed by igmpProxyCleanUp()
-                commonConfig.logFilePath = ! commonConfig.logFilePath ? malloc(MAX_TOKEN_LENGTH) : commonConfig.logFilePath;
-                if (strstr(options, token)) {
-                    LOG(LOG_WARNING, 0, "Config: No logfile path specified. Ignoring.");
-                    continue;
-                }
-                FILE *fp = fopen(token, "w");
-                if (! fp) {
-                    LOG(LOG_WARNING, errno, "Config: Cannot open log file %s.", token);
-                    commonConfig.logFilePath = "";
-                } else {
-                    fclose(fp);
-                    strcpy(commonConfig.logFilePath, token);
-                    time_t rawtime = time(NULL);
-                    utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
-                    commonConfig.log2File = true;
-                    LOG(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
-                }
+            FILE *fp;
+            if (commonConfig.logFilePath)
+                free(commonConfig.logFilePath);  // Alloced by self
+            if (strstr(options, token))
+                LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
+            else if (!commonConfig.log2Stderr && (! (fp = fopen(token, "w")) || fclose(fp)))
+                LOG(LOG_WARNING, errno, "Config: Cannot open log file %s.", token);
+            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = malloc(strlen(token))))
+                // Freed by igmpProxyCleanUp() or self
+                LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+            else if (!commonConfig.log2Stderr) {
+                strcpy(commonConfig.logFilePath, token);
+                time_t rawtime = time(NULL);
+                utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
+                LOG(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
             }
 
         } else if (strcasecmp("proxylocalmc", token) == 0) {

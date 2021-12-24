@@ -34,20 +34,19 @@
 
 #include "igmpv3proxy.h"
 
-static int curttl = 0, mrouterFD = -1;
+static int mrouterFD = -1;
 
 /**
 *   Set the socket buffer. If we can't set it as large as we want, search around to try to find the highest acceptable
 *   value. The highest acceptable value being smaller than minsize is a fatal error.
 */
-void k_set_rcvbuf(int bufsize, int minsize) {
-    int delta = bufsize / 2;
-    int iter = 0;
+void k_set_rcvbuf(int bufsize) {
+    int minsize = 48*1024, delta = bufsize / 2, i = 0;      // No less than 48Kb of kernel ring bufer space.
 
     if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
         bufsize -= delta;
         while (1) {
-            iter++;
+            i++;
             if (delta > 1)
                  delta /= 2;
             if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
@@ -62,7 +61,7 @@ void k_set_rcvbuf(int bufsize, int minsize) {
         }
     }
 
-    LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, iter);
+    LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, i);
 }
 
 inline void k_set_ttl(uint8_t ttl) {

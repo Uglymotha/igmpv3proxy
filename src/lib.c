@@ -273,7 +273,7 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
     clock_gettime(CLOCK_REALTIME, &curtime);
     long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
     char      LogMsg[256];
-    FILE     *lfp = CONFIG->log2File ? fopen(CONFIG->logFilePath, "a") : NULL, *log = lfp ? lfp : stderr;
+    FILE     *lfp = CONFIG->logFilePath ? fopen(CONFIG->logFilePath, "a") : NULL, *log = lfp ? lfp : stderr;
     va_list   ArgPt;
     unsigned  Ln;
 
@@ -283,7 +283,7 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
     va_end(ArgPt);
 
-    if (CONFIG->log2File || CONFIG->log2Stderr)
+    if (CONFIG->logFilePath || CONFIG->log2Stderr)
         fprintf(log, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                                      sec % 3600 % 60, nsec / 100000, LogMsg);
     else

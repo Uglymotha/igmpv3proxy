@@ -38,6 +38,9 @@
 #include "igmpv3proxy.h"
 #include "mctable.h"
 
+static struct qlst *qL = NULL;    // List of running GSQ
+static uint32_t     qC = 0;       // Querier count.
+
 /**
 *   Adds a source to list of sources to query. Toggles appropriate flags and adds to qlst array.
 */

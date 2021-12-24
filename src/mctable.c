@@ -47,6 +47,8 @@ static inline void        joinBlockSrc(struct src *src, struct IfDesc *IfDp);
 static inline void        quickLeave(struct mcTable *mct, uint32_t src);
 static void               updateSourceFilter(struct mcTable *mct, struct IfDesc *IfDp);
 
+static struct mcTable **MCT = NULL;    // Multicast group membership tables
+
 /**
 *   Private access function to find a given group in MCT, creates new if required.
 */

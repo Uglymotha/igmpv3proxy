@@ -113,10 +113,6 @@ struct qlst {
     struct src        *src[];                     // Array of pointers to sources
 };
 
-// Routing table static vars.
-static struct mcTable  **MCT           = NULL;    // Multicast group membership tables
-static struct qlst      *qL            = NULL;    // List of running GSQ
-static uint32_t          qC            = 0;       // Querier count.
 static char              msg[TMNAMESZ] = "";      // Timer name buffer
 
 // Prototypes

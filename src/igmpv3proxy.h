@@ -81,9 +81,10 @@
 #endif
 
 // In / output buffering (Jumbo MTU).
-#define BUF_SIZE 9216
-#define REQQSZ   16
-#define TMQSZ    4
+#define BUF_SIZE   9216
+#define K_BUF_SIZE 512
+#define REQQSZ     16
+#define TMQSZ      4
 
 // Limit of configuration token.
 #define READ_BUFFER_SIZE    2048
@@ -99,6 +100,8 @@ struct Config {
     char               *runPath;
     uint16_t            reqQsz;
     uint16_t            tmQsz;
+    uint32_t            kBufsz;
+    uint16_t            pBufsz;
     // Default interface igmp parameters.
     uint32_t            querierIp;
     uint8_t             querierVer;
@@ -124,7 +127,6 @@ struct Config {
     struct filters     *defaultFilters, *defaultRates;
     // Logging Parameters.
     uint8_t             logLevel;
-    bool                log2File;
     char               *logFilePath;
     bool                log2Stderr;              // Log to stderr instead of to syslog / file
     // Set if nneed to detect new interface.
@@ -358,7 +360,7 @@ bool            myLog(int Serverity, int Errno, const char *FmtSt, ...);
 *   kern.c
 */
 #define MROUTERFD k_getMrouterFD()
-void k_set_rcvbuf(int bufsize, int minsize);
+void k_set_rcvbuf(int bufsize);
 void k_set_ttl(uint8_t ttl);
 void k_set_loop(bool l);
 void k_set_if(struct IfDesc *IfDp);

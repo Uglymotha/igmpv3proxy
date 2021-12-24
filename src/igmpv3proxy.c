@@ -260,6 +260,7 @@ static void igmpProxyCleanUp(void) {
     tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 
+    free(recv_buf);                // Alloced by initIgmp()
     free(CONFIG->logFilePath);     // Alloced by loadConfig()
     free(CONFIG->runPath);         // Alloced by openCliSock()
     free(CONFIG->configFilePath);  // Alloced by main()

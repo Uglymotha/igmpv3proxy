@@ -49,22 +49,23 @@ uint32_t    allrouters_group;          // All hosts addr in net order
 uint32_t    alligmp3_group;            // IGMPv3 addr in net order
 
 // Buffers for sending and receiving IGMP packets.
-static char recv_buf[BUF_SIZE];        // input packet buffer
-static char send_buf[BUF_SIZE];        // output packet buffer
-static char msg[TMNAMESZ];
-static int  curttl = 1;
+static char *recv_buf;        // Input packet buffer
+static char *send_buf;        // Output packet buffer
+static char  msg[TMNAMESZ];
 
 /**
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
 *   Returns pointer to the receive buffer.
 */
 char *initIgmp(void) {
+    // Allocate send and receive packet buffers.
+    if (! (recv_buf = calloc(2, CONFIG->pBufsz)) || !(send_buf = recv_buf + CONFIG->pBufsz))
+        LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by igmpProxyCleanup()
     struct ip *ip = (struct ip *)send_buf;
-    memset(ip, 0, sizeof(struct ip));
 
-    k_set_rcvbuf(512*1024,48*1024); // Set kernel ring buffer size
-    k_set_ttl(1);                   // Restrict multicasts to one hop
-    k_set_loop(false);              // Disable multicast loopback
+    k_set_rcvbuf(CONFIG->kBufsz*1024);  // Set kernel ring buffer size
+    k_set_ttl(1);                       // Restrict multicasts to one hop
+    k_set_loop(false);                  // Disable multicast loopback
 
     /*
      * Fields zeroed that aren't filled in later:
