@@ -9,12 +9,10 @@ on:
 jobs:
   build:
 
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
-    - name: autoconf
-      run: brew install automake
     - name: autogen
       run: ./autogen.sh
     - name: configure
