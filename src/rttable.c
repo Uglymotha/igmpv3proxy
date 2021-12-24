@@ -75,9 +75,6 @@ void logRouteTable(const char *header);
 int internAgeRoute(struct RouteTable *croute);
 int internUpdateKernelRoute(struct RouteTable *route, int activate);
 
-// Socket for sending join or leave requests.
-int mcGroupSock = 0;
-
 
 /**
 *   Functions for downstream hosts hash table
@@ -117,16 +114,6 @@ static inline int testNoDownstreamHost(struct Config *conf, struct RouteTable *c
 }
 
 /**
-*   Function for retrieving the Multicast Group socket.
-*/
-int getMcGroupSock(void) {
-    if( ! mcGroupSock ) {
-        mcGroupSock = openUdpSocket( INADDR_ANY, 0 );;
-    }
-    return mcGroupSock;
-}
-
-/**
 *   Initializes the routing table.
 */
 void initRouteTable(void) {
@@ -143,12 +130,11 @@ void initRouteTable(void) {
             my_log(LOG_DEBUG, 0, "Joining all-routers group %s on vif %s",
                          inetFmt(allrouters_group,s1),inetFmt(Dp->InAdr.s_addr,s2));
 
-            //k_join(allrouters_group, Dp->InAdr.s_addr);
-            joinMcGroup( getMcGroupSock(), Dp, allrouters_group );
+            k_join(Dp, allrouters_group);
 
             my_log(LOG_DEBUG, 0, "Joining all igmpv3 multicast routers group %s on vif %s",
                          inetFmt(alligmp3_group,s1),inetFmt(Dp->InAdr.s_addr,s2));
-            joinMcGroup( getMcGroupSock(), Dp, alligmp3_group );
+            k_join(Dp, alligmp3_group);
         }
     }
 }
@@ -171,18 +157,25 @@ static void sendJoinLeaveUpstream(struct RouteTable* route, int join) {
                 my_log(LOG_ERR, 0 ,"FATAL: Unable to get Upstream IF.");
             }
 
-            // Check if there is a white list for the upstram VIF
+            // Check if there is a black- or whitelist for the upstram VIF
             if (upstrIf->allowedgroups != NULL) {
-              uint32_t           group = route->group;
-                struct SubnetList* sn;
+                bool                 allow_list = false;
+                struct SubnetList   *match = NULL;
+                struct SubnetList   *sn;
+                uint32_t             group = route->group;
 
                 // Check if this Request is legit to be forwarded to upstream
-                for(sn = upstrIf->allowedgroups; sn != NULL; sn = sn->next)
+                for(sn = upstrIf->allowedgroups; sn != NULL; sn = sn->next) {
+                    // Check if there is a whitelist
+                    if (sn->allow)
+                        allow_list = true;
                     if((group & sn->subnet_mask) == sn->subnet_addr)
-                        // Forward is OK...
-                        break;
+                        match = sn;
+                }
 
-                if (sn == NULL) {
+                // Keep in sync with request.c, note the negation
+                if(!((!allow_list && match == NULL) ||
+                  (allow_list && match != NULL && match->allow))) {
                     my_log(LOG_INFO, 0, "The group address %s may not be forwarded upstream. Ignoring.", inetFmt(group, s1));
                     return;
                 }
@@ -196,8 +189,7 @@ static void sendJoinLeaveUpstream(struct RouteTable* route, int join) {
                                  inetFmt(route->group, s1),
                                  inetFmt(upstrIf->InAdr.s_addr, s2));
 
-                    //k_join(route->group, upstrIf->InAdr.s_addr);
-                    joinMcGroup( getMcGroupSock(), upstrIf, route->group );
+                    k_join(upstrIf, route->group);
 
                     route->upstrState = ROUTESTATE_JOINED;
                 } else {
@@ -211,8 +203,7 @@ static void sendJoinLeaveUpstream(struct RouteTable* route, int join) {
                                  inetFmt(route->group, s1),
                                  inetFmt(upstrIf->InAdr.s_addr, s2));
 
-                    //k_leave(route->group, upstrIf->InAdr.s_addr);
-                    leaveMcGroup( getMcGroupSock(), upstrIf, route->group );
+                    k_leave(upstrIf, route->group);
 
                     route->upstrState = ROUTESTATE_NOTJOINED;
                 }

@@ -49,6 +49,9 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <time.h>
+#include <grp.h>
+#include <limits.h>
+#include <pwd.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -142,6 +145,7 @@ struct SubnetList {
     uint32_t            subnet_addr;
     uint32_t            subnet_mask;
     struct SubnetList   *next;
+    bool                allow;
 };
 
 struct IfDesc {
@@ -178,6 +182,8 @@ struct Config {
     // Set if not detect new interface for down stream.
     unsigned short	defaultInterfaceState;	// 0: disable, 2: downstream
     //~ aimwang added done
+    char                chroot[PATH_MAX];
+    char                user[LOGIN_NAME_MAX];
 };
 
 // Holds the indeces of the upstream IF...
@@ -242,20 +248,8 @@ void k_hdr_include(int hdrincl);
 void k_set_ttl(int t);
 void k_set_loop(int l);
 void k_set_if(uint32_t ifa);
-/*
-void k_join(uint32_t grp, uint32_t ifa);
-void k_leave(uint32_t grp, uint32_t ifa);
-*/
-
-/* udpsock.c
- */
-int openUdpSocket( uint32_t PeerInAdr, uint16_t PeerPort );
-
-/* mcgroup.c
- */
-int joinMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
-int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
-
+void k_join(struct IfDesc *ifd, uint32_t grp);
+void k_leave(struct IfDesc *ifd, uint32_t grp);
 
 /* rttable.c
  */
@@ -267,7 +261,6 @@ void ageActiveRoutes(void);
 void setRouteLastMemberMode(uint32_t group, uint32_t src);
 int lastMemberGroupAge(uint32_t group);
 int interfaceInRoute(int32_t group, int Ix);
-int getMcGroupSock(void);
 
 /* request.c
  */
