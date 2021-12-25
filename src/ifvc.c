@@ -191,7 +191,7 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
-    GETIFL(IfDp, i++) {
+    for (IFL(IfDp), i++) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
@@ -222,7 +222,7 @@ void getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd) {
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
-    GETIFL(IfDp, i++) {
+    for (IFL(IfDp), i++) {
         struct filters *filter;
         int             i = 1;
         for (filter = IfDp->conf->filters; filter; filter = filter->next, i++) {
