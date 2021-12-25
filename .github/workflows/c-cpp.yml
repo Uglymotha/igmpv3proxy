@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-
+    name: Test Ubuntu Latest
     runs-on: ubuntu-latest
 
     steps:
@@ -20,8 +20,8 @@ jobs:
     - name: make
       run: make
 
-build:
-
+build2:
+    name: Test Ubuntu 18.04
     runs-on: ubuntu-18.04
 
     steps:
