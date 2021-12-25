@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: Test Build
 
 on:
   push:
@@ -7,9 +7,22 @@ on:
     branches: [ master ]
 
 jobs:
-  build:
+  build1:
 
     runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure
+    - name: make
+      run: make
+
+build2:
+
+    runs-on: ubuntu-18.04
 
     steps:
     - uses: actions/checkout@v2
