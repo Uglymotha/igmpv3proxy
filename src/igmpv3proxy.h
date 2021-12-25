@@ -311,7 +311,7 @@ void cliCmd(char *cmd);
 *   ifvc.c
 */
 #define IFL(x)               x = getIfL(); x; x = x->next
-#define GETIFL(x, ...)       for (IFL(x) __VA_OPT__(,) __VA_ARGS__)
+#define GETIFL(x, ...)       for (x = getIfL(); x; x = x->next __VA_OPT__(,) __VA_ARGS__)
 #define IFGETIFL(y, x)       if (y) GETIFL(x)
 #define GETIFLIF(x, y)       GETIFL(x) if (y)
 #define IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)

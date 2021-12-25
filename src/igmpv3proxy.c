@@ -318,7 +318,7 @@ static void igmpProxyRun(void) {
                     char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
 #endif
                 } cmsgUn;
-                struct iovec  ioVec[1] = { { recv_buf, BUF_SIZE } };
+                struct iovec  ioVec[1] = { { recv_buf, CONFIG->pBufsz } };
                 struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
 
                 int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
