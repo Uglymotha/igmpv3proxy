@@ -92,16 +92,16 @@ void freeConfig(int old) {
         for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
         free(cConf);
     }
-    if (old || SHUTDOWN) {
+    if (old) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
         for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
-        if (SHUTDOWN) {
-            timer_clearTimer(timers.rescanConf);
-            timer_clearTimer(timers.rescanVif);
-            timer_clearTimer(timers.bwControl);
-            timers = (struct timers){ 0, 0, 0 };
-        }
+    }
+    if (SHUTDOWN) {
+        timer_clearTimer(timers.rescanConf);
+        timer_clearTimer(timers.rescanVif);
+        timer_clearTimer(timers.bwControl);
+        timers = (struct timers){ 0, 0, 0 };
     }
 
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
@@ -115,16 +115,14 @@ static bool configFile(char *filename, int open) {
     if (! open || ! (confFilePtr = fopen(filename, "r")) || ! (iBuffer = malloc(sizeof(char) * READ_BUFFER_SIZE))) {
         if (confFilePtr)
             fclose(confFilePtr);
-        if (iBuffer)
-            free(iBuffer);   // Alloced by self
+        free(iBuffer);   // Alloced by self
+        iBuffer     = NULL;
         confFilePtr = NULL;
-        iBuffer = NULL;
         return open ? false : true;
     }
 
     // Reset bufferpointer and readsize
-    bufPtr = 0;
-    readSize = 0;
+    bufPtr = readSize = 0;
 
     return true;
 }
@@ -133,40 +131,32 @@ static bool configFile(char *filename, int open) {
 *   Returns the next token from the configfile or NULL if there are no more tokens in the file.
 */
 static char *nextConfigToken(void) {
-    unsigned int tokenPtr = 0;
-    static char  cToken[MAX_TOKEN_LENGTH];
-    bool         finished = false, oversized = false, commentFound = false;
-    // If no file or buffer, return NULL
-    if (! confFilePtr || ! iBuffer)
-        return NULL;
+    static char cToken[MAX_TOKEN_LENGTH];
+    uint32_t    tokenPtr = 0;
+    bool        finished = false, oversized = false, commentFound = false;
 
-    // Outer buffer fill loop...
-    while (! finished) {
-        // If readpointer is at the end of the buffer, we should read next chunk...
+    while (!finished) {
+        // If readpointer is at the end of the buffer, we should read next chunk.
         if (bufPtr == readSize) {
-            // Fill up the buffer...
-            readSize = fread(iBuffer, sizeof(char), READ_BUFFER_SIZE, confFilePtr);
             bufPtr = 0;
-
-            // If the readsize is 0, we should just return...
-            if (readSize == 0)
+            // Fill up the buffer. If the readsize is 0, we should just return.
+            if ((readSize = fread(iBuffer, sizeof(char), READ_BUFFER_SIZE, confFilePtr)) == 0);
                 return NULL;
         }
 
-        // Inner char loop...
-        while (bufPtr < readSize && ! finished) {
-            // Break loop on \0
+        while (bufPtr < readSize && !finished) {
+            // Break loop on \0.
             if (iBuffer[bufPtr] == '\0') {
                 break;
             } else if (commentFound) {
-                if (iBuffer[bufPtr] == '\n') {
+                // On comment read characters until EOL.
+                if (iBuffer[bufPtr] == '\n')
                     commentFound = false;
-                }
             } else {
-                // Check current char...
+                // Check current char.
                 switch (iBuffer[bufPtr]) {
                 case '#':
-                    // Found a comment start...
+                    // Found a comment start.
                     commentFound = true;
                     break;
 
@@ -183,34 +173,29 @@ static char *nextConfigToken(void) {
 
                 default:
                     // Append char to token. When token is oversized do not increase tokenPtr, but keep parsing until whitespace.
-                    cToken[tokenPtr] = ! oversized ? iBuffer[bufPtr] : cToken[tokenPtr];
-                    tokenPtr =         ! oversized ? tokenPtr + 1    : tokenPtr;
+                    cToken[tokenPtr] = !oversized ? iBuffer[bufPtr] : cToken[tokenPtr];
+                    tokenPtr         = !oversized ? tokenPtr + 1    : tokenPtr;
                     break;
                 }
             }
 
-            // Check end of token buffer !!!
+            // Prevent buffer overrun.
             if (tokenPtr == MAX_TOKEN_LENGTH) {
-                // Prevent buffer overrun...
                 tokenPtr--;
                 oversized = true;
             }
-            // Next char...
+            // Next char.
             bufPtr++;
         }
         // If the readsize is less than buffersize, we assume EOF.
-        if (readSize < READ_BUFFER_SIZE && bufPtr == readSize) {
-            if (tokenPtr > 0)
-                finished = true;
-            else
-                return NULL;
-        }
+        if (readSize < READ_BUFFER_SIZE && bufPtr == readSize)
+            finished = true;
     }
+
     if (tokenPtr > 0) {
         cToken[tokenPtr] = '\0';  // Make sure token is null terminated string.
         return cToken;
     }
-
     return NULL;
 }
 
@@ -219,15 +204,14 @@ static char *nextConfigToken(void) {
 */
 void reloadConfig(uint64_t *tid) {
     // Check and set sigstatus to what we are actually doing right now.
-    if (NOSIG)
-        sigstatus = GOT_CONFREL;
+    sigstatus       = NOSIG ? GOT_CONFREL : sigstatus;
     ovifConf        = vifConf;
     vifConf         = NULL;
     oldcommonConfig = commonConfig;
 
     // Load the new configuration keep reference to the old.
     if (!loadConfig()) {
-        LOG(LOG_WARNING, 0, "reloadConfig: Unable to load config file, keeping current.");
+        LOG(LOG_WARNING, 0, "Unable to load config file %s, keeping current.", commonConfig.configFilePath);
         commonConfig = oldcommonConfig;
         if (vifConf)
             freeConfig(0);
@@ -237,7 +221,7 @@ void reloadConfig(uint64_t *tid) {
         rebuildIfVc(NULL);
         freeConfig(1);
 
-        LOG(LOG_DEBUG, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", ovifConf, vifConf);
+        LOG(LOG_INFO, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", ovifConf, vifConf);
     }
     if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
         *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", (timer_f)reloadConfig, tid);
@@ -415,7 +399,7 @@ bool loadConfig(void) {
     // Open config file and read first token.
     if (! configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken()))
         return false;
-    LOG(LOG_DEBUG, 0, "Loading config from '%s'", commonConfig.configFilePath);
+    LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
 
     // Set pointer to pointer to filters list.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;

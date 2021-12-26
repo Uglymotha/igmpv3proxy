@@ -355,7 +355,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             }
             // For downstream interface and general query set the age timer.
             if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
-                timeout = ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10;
+                timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10) + 1;
                 IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
                                                         strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
                                                         (timer_f)ageGroups, IfDp);
@@ -411,7 +411,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
                                                                        : IfDp->querier.qqi, 0);
         else
             timeout = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi;
-        IfDp->querier.Timer = timer_setTimer(TDELAY((timeout * 10) + (rand() % 4)),
+        IfDp->querier.Timer = timer_setTimer(TDELAY((timeout * 10) + ((uint8_t)IfDp->Name[0] % 4)),
                                              strcat(strcpy(msg, "General Query: "), IfDp->Name),
                                              (timer_f)sendGeneralMemberQuery, IfDp);
         // Set timer for route aging.

@@ -92,8 +92,8 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
                                          ver == 3 ? query->igmp_misc & ~0x8 : IfDp->conf->qry.lmCount, 0, 0 });
     } else {
         // Sort array of sources in query.
-        struct qlst     *qlst = NULL;
-        struct src      *src  = mct->sources;
+        struct qlst *qlst = NULL;
+        struct src  *src  = mct->sources;
         nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
         for (uint32_t i = 0; src && i < nsrcs; src = src->next)
             if (src->ip >= query->igmp_src[i].s_addr) {
@@ -228,9 +228,9 @@ void groupSpecificQuery(struct qlst *qlst) {
     if (!(qlst->cnt <= qlst->misc && (   (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, qlst->IfDp))
                                       || (BIT_TST(qlst->type, 2) && qlst->nsrcs > 0)))) {
         // Set timer for next round if there is still aging to do.
-        uint32_t timeout = BIT_TST(qlst->type, 3)            ? qlst->code
-                         : qlst->IfDp->querier.ver == 3      ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
-                         : qlst->IfDp->conf->qry.lmInterval;
+        uint32_t timeout = (BIT_TST(qlst->type, 3)            ? qlst->code
+                         :  qlst->IfDp->querier.ver == 3      ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
+                         :  qlst->IfDp->conf->qry.lmInterval) + 1;
         sprintf(msg, "GSQ (%s): %15s/%u", qlst->IfDp->Name, inetFmt(qlst->mct->group, 1), qlst->nsrcs);
         qlst->tid = timer_setTimer(TDELAY(timeout), msg, (timer_f)groupSpecificQuery, qlst);
     } else if (qlst->cnt >= qlst->misc && (   (BIT_TST(qlst->type, 2) && !qlst->mct->mode && qlst->mct->nsrcs == 0)
