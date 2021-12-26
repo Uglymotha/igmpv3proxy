@@ -43,7 +43,6 @@ static inline bool        addGroup(struct mcTable* mct, struct IfDesc *IfDp, int
 static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
                                  struct src *src, uint32_t srcHash);
 static uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
-static inline void        joinBlockSrc(struct src *src, struct IfDesc *If, bool join);
 static inline void        quickLeave(struct mcTable *mct, uint32_t src);
 static void               updateSourceFilter(struct mcTable *mct, int mode);
 
@@ -372,7 +371,7 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
 *   Join the source upstream if group is in include mode.
 *   Block the souce upstream if it is in exclude mode on all exclude mode interfaces.
 */
-static inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
+inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
     struct IfDesc *IfDp;
     IFGETIFLIF(join && ((src->vifB.ud | src->vifB.us) != uVifs || src->vifB.su != uVifs), IfDp, (! If || (IfDp = If))
                                                                                                  && IS_UPSTREAM(IfDp->state)) {
