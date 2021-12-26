@@ -313,12 +313,9 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
             if (strcasecmp("ratelimit", token) == 0 || strcasecmp("r", token) == 0 || strcasecmp("2", token) == 0) {
                 uint64_t rl = atol((token = nextConfigToken()));
                 if (! commonConfig.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
-                    if (! commonConfig.bwControlInterval)
-                        LOG(LOG_INFO, 0, "Config: FIL: BW Control disabled. Ignoring %s - %s %lld.",
-                                          inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
-                    else
-                        LOG(LOG_INFO, 0, "Config: FIL: Ratelimit rules must have INADDR_ANY as source. Ignoring %s - %s %lld.",
-                                          inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
+                    LOG(LOG_INFO, 0, "Config: FIL: %s Ignoring %s - %s %lld.", ! commonConfig.bwControlInterval ?
+                        "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
+                         inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
                     fil = filNew;
                     continue;
                 } else
