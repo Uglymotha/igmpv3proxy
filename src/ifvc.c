@@ -40,7 +40,7 @@ static struct IfDesc *IfDescL = NULL;
 /**
 *   Frees the IfDesc table. Paramter specifies cleanup after an interface rebuild.
 */
-void freeIfDescL() {
+static void freeIfDescL() {
     struct IfDesc *IfDp = IfDescL, *fIfDp;
     while (IfDp) {
         if ((IfDp == IfDescL && (IfDp->state & 0x80)) || (IfDp->next && (IfDp->next->state & 0x80))) {

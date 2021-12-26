@@ -315,7 +315,6 @@ void cliCmd(char *cmd);
 #define IFGETIFL(y, x)       if (y) GETIFL(x)
 #define GETIFLIF(x, y)       GETIFL(x) if (y)
 #define IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
-void           freeIfDescL();
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);

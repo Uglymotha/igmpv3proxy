@@ -66,11 +66,10 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         src->vifB.age[IfDp->index] = qlst->misc;
         qlst->src[qlst->nsrcs++] = src;
         clearHash(src->dHostsHT, srcHash);
-        IFGETIFLIF(srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT), IfDp, IS_SET(src, us, IfDp)) {
+        if (srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT)) {
             LOG(LOG_INFO, 0, "addSrcToQlst: Last downstream host, quickleave source %s in group %s on %s.",
                               inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
-            k_updateGroup(IfDp, false, src->mct->group, 0, src->ip);
-            BIT_CLR(src->vifB.us, IfDp->index);
+            joinBlockSrc(src, NULL, false);
         }
     }
 
@@ -81,41 +80,32 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
 *   Process a group specific query received from other querier.
 */
 inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver) {
-    uint32_t         i    = 0;
     struct mcTable  *mct  = findGroup(query->igmp_group.s_addr, false);
-    struct qlst     *qlst = NULL, qlst1;
-    struct src      *src;
-
     // If no group found for query, not active or denied on interface return.
     if (! mct || NOT_SET(mct, d, IfDp) || !checkFilters(IfDp, 1, NULL, mct)) {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 1),
                            ! mct ? "not found." : NOT_SET(mct, d, IfDp) ? "not active." : "denied.");
-        return;
-    }
-
-
-    if (nsrcs == 0) {
+    } else if (nsrcs == 0) {
         // Only start last member aging when group is allowed on interface.
-        qlst1 = (struct qlst){ NULL, NULL, mct, IfDp, 0, 10, query->igmp_code,
-                               ver == 3 ? query->igmp_misc & ~0x8 : IfDp->conf->qry.lmCount, 0, 0 };
-        LOG(LOG_DEBUG, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
-    } else if (nsrcs > 0) {
+        LOG(LOG_INFO, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
+        startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, query->igmp_code,
+                                         ver == 3 ? query->igmp_misc & ~0x8 : IfDp->conf->qry.lmCount, 0, 0 });
+    } else {
         // Sort array of sources in query.
+        struct qlst     *qlst = NULL;
+        struct src      *src  = mct->sources;
         nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
-        for (src = mct->sources; src && i < nsrcs; src = src->next) {
-            if (src->ip > query->igmp_src[i].s_addr)
-                for (; i < nsrcs && src->ip > query->igmp_src[i].s_addr; i++);
-            if (src->ip == query->igmp_src[i].s_addr) {
+        for (uint32_t i = 0; src && i < nsrcs; src = src->next)
+            if (src->ip >= query->igmp_src[i].s_addr) {
                 // Do not add denied sources to query list.
-                if (checkFilters(IfDp, 1, src, mct))
+                if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct))
                     qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
                 i++;
             }
-        }
-        LOG(LOG_DEBUG, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
+        LOG(LOG_INFO, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
                            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
+        startQuery(IfDp, qlst);
     }
-    startQuery(IfDp, nsrcs > 0 ? qlst : &qlst1);
 }
 
 /**
@@ -139,12 +129,9 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
         BIT_SET(qlst->mct->vifB.qry, IfDp->index);
         BIT_SET(qlst->mct->vifB.lm, IfDp->index);
         qlst->mct->vifB.age[IfDp->index] = qlst->misc;
-    } else {
+    } else
         LOG(LOG_INFO, 0, "startQuery #%d: Querying %d sources for %s on %s.",
                           qC, qlst->nsrcs, inetFmt(qlst->mct->group, 1), IfDp->Name);
-        if (!IQUERY)
-            BIT_SET(qlst->type, 3);
-    }
 
     // Allocate and assign new querier.
     if (qL) {
@@ -154,6 +141,8 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
     qL = qlst;
     qC++;
 
+    if (!IQUERY)
+        BIT_SET(qlst->type, 3);
     groupSpecificQuery(qlst);
 }
 
@@ -261,6 +250,7 @@ void groupSpecificQuery(struct qlst *qlst) {
     free(query1);  // Alloced by self.
     free(query2);  // Alloced by self.
 }
+
 /**
 *   Removes all active queriers specified by parameters.
 */

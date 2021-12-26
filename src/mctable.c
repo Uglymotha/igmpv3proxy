@@ -374,23 +374,17 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
 */
 static inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
     struct IfDesc *IfDp;
-    IFGETIFLIF(join && ((src->vifB.ud | src->vifB.us) != uVifs || src->vifB.su != uVifs), IfDp, (! If || IfDp == If)
-                                         && IS_UPSTREAM(IfDp->state) && (NOT_SET(src, us, IfDp) || NOT_SET(src, su, IfDp))) {
+    IFGETIFLIF(join && ((src->vifB.ud | src->vifB.us) != uVifs || src->vifB.su != uVifs), IfDp, (! If || (IfDp = If))
+                                                                                                 && IS_UPSTREAM(IfDp->state)) {
         // Join or block the source upstream if necessary.
-        if (!src->mct->mode && !checkFilters(IfDp, 0, src, src->mct)) {
-            // For group in include mode on all interfaces, check if source is allowed upstream.
-            LOG(LOG_NOTICE, 0, "Source %s from group %s not allowed upstream on %s.",
+        if (!src->mct->mode && IS_SET(src, us, IfDp) && NOT_SET(src, su, IfDp) && !checkFilters(IfDp, 0, src, src->mct)) {
+            // If source was joined upstream and acl changed, leave.
+            LOG(LOG_NOTICE, 0, "Source %s from group %s no longer allowed upstream on %s.",
                                 inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), IfDp->Name);
-            if (IS_SET(src, us, IfDp)) {
-                // If source was joined upstream and acl changed, leave.
-                LOG(LOG_INFO, 0, "Leaving source %s from group %s upstream on %s.",
-                                  inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), IfDp->Name);
-                k_updateGroup(IfDp, false, src->mct->group, 0, src->ip);
-                BIT_CLR(src->vifB.us, IfDp->index);
-                if (src->mfc)
-                    // If source has active MFC it must be removed as it's no longer forwarded.
-                    activateRoute(src->mfc->IfDp, src, src->ip, src->mct->group, false);
-            }
+            joinBlockSrc(src, IfDp, 0);
+            if (src->mfc)
+                // If source has active MFC it must be removed as it's no longer forwarded.
+                activateRoute(src->mfc->IfDp, src, src->ip, src->mct->group, false);
         } else if (NOT_SET(src, us, IfDp) && (!src->mct->mode || src->vifB.d == src->mct->mode)) {
             // Only block exclude mode sources upstream if they are blocked on all downstream interfaces in exclude mode.
             for (int i = 0; src->mct->mode && i < MAXVIFS && (!BIT_TST(src->vifB.d, i) || src->vifB.age[i] == 0); i++)
@@ -398,20 +392,23 @@ static inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
                 LOG(!src->vifB.d ? LOG_INFO : LOG_NOTICE, 0, "%s%s from group %s%s.",
                     !src->vifB.d ? "joinBlockSource: No downstream listeners for source " : "Source ", inetFmt(src->ip, 1),
                     inetFmt(src->mct->group, 2), !src->vifB.d ? ", not joining upstream on " : " denied upstream on " , IfDp->Name);
-            else if ((!src->mct->mode || i >= MAXVIFS) && k_updateGroup(IfDp, true, src->mct->group, src->mct->mode, src->ip)) {
+            else if ((!src->mct->mode || i >= MAXVIFS || !checkFilters(IfDp, 0, src, src->mct))
+                     && k_updateGroup(IfDp, true, src->mct->group, src->mct->mode, src->ip)) {
                 LOG(LOG_INFO, 0, "joinBlockSrc: %s source %s from group %s on upstream interface %s.",
                                   src->mct->mode ? "Blocked" : "Joined", inetFmt(src->ip, 1), inetFmt(src->mct->group, 2),
                                   IfDp->Name);
                 BIT_SET(src->vifB.us, IfDp->index);
             }
         }
-    } else IFGETIFLIF(!join, IfDp, IS_SET(src, us, IfDp)) {
+        if (If)
+            return;
+    } else IFGETIFLIF(!join, IfDp, (! If || (IfDp = If)) && IS_SET(src, us, IfDp)) {
         // Source should not be unblocked when upstream mode is exclude and source is not allowed.
         if (src->mct->mode &&!checkFilters(IfDp, 0, src, src->mct))
             LOG(LOG_NOTICE, 0, "Not unblocking denied source %s from group %s upstream on %s.", inetFmt(src->ip, 1),
                                 inetFmt(src->mct->group, 2), IfDp->Name);
         else {
-            LOG(LOG_INFO, 0, "delSrc: %s source %s from group %s upstream on %s", src->mct->mode ? "Unblocking" : "Leaving",
+            LOG(LOG_INFO, 0, "joinBlockSrc: %s source %s from group %s upstream on %s", src->mct->mode ? "Unblocking" : "Leaving",
                               inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), If->Name);
             k_updateGroup(If, false, src->mct->group, src->mct->mode, src->ip);
             BIT_CLR(src->vifB.us, IfDp->index);
@@ -419,6 +416,8 @@ static inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
                 // If source was unblocked upstream, traffic must now be forwarded, update MFC.
                 activateRoute(src->mfc->IfDp, src, src->ip, src->mct->group, true);
         }
+        if (If)
+            return;
     }
 }
 
@@ -833,7 +832,6 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         break;
 
     case IGMPV3_CHANGE_TO_INCLUDE:
-        qlst1 = (struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
         if (BIT_TST(mct->v1Bits, IfDp->index) || IfDp->querier.ver == 1) {
             LOG(LOG_INFO, 0, "updateGroup: Ignoring TO_IN for %s on %s, v1 host/querier present.", inetFmt(group, 1), IfDp->Name);
             break;
@@ -843,7 +841,8 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             quickLeave(mct, ip);
         if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp))
             // EX: Send Q(G).
-            startQuery(IfDp, &qlst1);  /* FALLTHRU */
+            startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval,
+                                             IfDp->conf->qry.lmCount, 0, 0 });  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
     case IGMPV3_MODE_IS_INCLUDE:
         if (nsrcs > 0 && !addGroup(mct, IfDp, 1, 0, srcHash))
@@ -988,8 +987,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
                 // In exclude mode, we can explicitely block a denied source and request upstream routers not to send traffic.
                 LOG(LOG_NOTICE, 0, "Explicitely blocking denied source %s for group %s on upstream interface %s.",
                                     inetFmt(src->ip, 1), inetFmt(mct->group, 2), IfDp->Name);
-                if (k_updateGroup(IfDp, true, mct->group, 1, src->ip))
-                    BIT_SET(src->vifB.us, IfDp->index);
+                joinBlockSrc(src, IfDp, true);
                 return;
             }
         }
