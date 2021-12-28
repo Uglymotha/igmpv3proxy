@@ -152,31 +152,29 @@ static char *nextConfigToken(void) {
                 // On comment read characters until EOL.
                 if (iBuffer[bufPtr] == '\n')
                     commentFound = false;
-            } else {
+            } else switch (iBuffer[bufPtr]) {
                 // Check current char.
-                switch (iBuffer[bufPtr]) {
-                case '#':
-                    // Found a comment start.
-                    commentFound = true;
-                    break;
+            case '#':
+                // Found a comment start.
+                commentFound = true;
+                break;
 
-                case '\n':
-                case '\r':
-                case '\t':
-                case ' ':
-                    // Newline, CR, Tab and space are end of token, or ignored.
-                    if (tokenPtr > 0) {
-                        cToken[tokenPtr] = '\0';    // EOL
-                        finished = true;
-                    }
-                    break;
-
-                default:
-                    // Append char to token. When token is oversized do not increase tokenPtr, but keep parsing until whitespace.
-                    cToken[tokenPtr] = !oversized ? iBuffer[bufPtr] : cToken[tokenPtr];
-                    tokenPtr         = !oversized ? tokenPtr + 1    : tokenPtr;
-                    break;
+            case '\n':
+            case '\r':
+            case '\t':
+            case ' ':
+                // Newline, CR, Tab and space are end of token, or ignored.
+                if (tokenPtr > 0) {
+                    cToken[tokenPtr] = '\0';    // EOL
+                    finished = true;
                 }
+                break;
+
+            default:
+                // Append char to token. When token is oversized do not increase tokenPtr, but keep parsing until whitespace.
+                cToken[tokenPtr] = !oversized ? iBuffer[bufPtr] : cToken[tokenPtr];
+                tokenPtr         = !oversized ? tokenPtr + 1    : tokenPtr;
+                break;
             }
 
             // Prevent buffer overrun.

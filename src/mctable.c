@@ -408,8 +408,8 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
                                 inetFmt(src->mct->group, 2), IfDp->Name);
         else {
             LOG(LOG_INFO, 0, "joinBlockSrc: %s source %s from group %s upstream on %s", src->mct->mode ? "Unblocking" : "Leaving",
-                              inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), If->Name);
-            k_updateGroup(If, false, src->mct->group, src->mct->mode, src->ip);
+                              inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), IfDp->Name);
+            k_updateGroup(IfDp, false, src->mct->group, src->mct->mode, src->ip);
             BIT_CLR(src->vifB.us, IfDp->index);
             if (src->mfc && src->mct->mode)
                 // If source was unblocked upstream, traffic must now be forwarded, update MFC.
@@ -578,7 +578,7 @@ bool checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable 
     struct filters *filter;
     for (filter = IfDp->conf->filters; filter && ((dir ? !IS_DOWNSTREAM(filter->dir) : !IS_UPSTREAM(filter->dir))
             || !(src ? ((src->ip & filter->src.mask) == filter->src.ip && (mct->group & filter->dst.mask) == filter->dst.ip)
-                     : ((mct->group & filter->dst.mask) == filter->dst.ip))); filter = filter->next);
+                     : ((mct->group & filter->dst.mask) == filter->dst.ip && filter->action))); filter = filter->next);
     if (! filter || !filter->action)
         // When denied set denied bit for source or group.
         src ? (dir ? BIT_SET(src->vifB.dd, IfDp->index) : BIT_SET(src->vifB.ud, IfDp->index))
