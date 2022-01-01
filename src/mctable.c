@@ -102,7 +102,8 @@ struct mcTable *findGroup(register uint32_t group, bool create) {
 *  can be kept for as long as the group is being requested on the interface.
 */
 static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode, uint32_t srcHash) {
-    struct ifMct *imc, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
+    struct IfDesc *If = IfDp;
+    struct ifMct  *imc, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     if (dir ? NOT_SET(mct, d, IfDp) : NOT_SET(mct, u, IfDp)) {
         if (! (imc = malloc(sizeof(struct ifMct))))   // Freed by delGroup or freeIfDescL()
             LOG(LOG_ERR, errno, "addGroup: Out of Memory.");
@@ -112,48 +113,37 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         *list = imc;
     }
 
-    if (!checkFilters(IfDp, dir, NULL, mct)) {
-        LOG(LOG_NOTICE, 0, "The group %s may not be requested %s on %s.", inetFmt(mct->group , 1),
-                            dir ? "downstream" : "upstream", IfDp->Name);
-        dir ? BIT_SET(mct->vifB.d, IfDp->index) : BIT_SET(mct->vifB.u, IfDp->index);
-        if (dir && mode) {
-            BIT_SET(mct->mode, IfDp->index);
-            mct->vifB.age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
-        }
-        return false;
+    // Set downstream status and join group upstream if necessary.
+    if (dir && mode && BIT_SET(mct->mode, IfDp->index)) {
+        // Exclude mode group, reset last member state and set age to GMI.
+        BIT_CLR(mct->vifB.lm, IfDp->index);
+        mct->vifB.age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
     }
-
-    if (dir) {
-        // Set downstream status and join group upstream if necessary.
+    if (dir && !checkFilters(IfDp, 1, NULL, mct) && BIT_SET(mct->vifB.d, IfDp->index)) {
+        LOG(LOG_NOTICE, 0, "Group %s denied downstream on %s.", inetFmt(mct->group , 1), IfDp->Name);
+        return false;
+    } else if (dir) {
         setHash(mct->dHostsHT, srcHash);
-        if (mode) {
-            // Exclude mode group, set age to GMI.
-            BIT_SET(mct->mode, IfDp->index);
-            BIT_CLR(mct->vifB.lm, IfDp->index);
-            mct->vifB.age[IfDp->index] = IfDp->querier.qrv;  // Group timer = GMI
-        }
-        if (NOT_SET(mct, d, IfDp)) {
-            BIT_SET(mct->vifB.d, IfDp->index);
-            if (IS_EX(mct, IfDp))
-                // Activate any MFC is exclude mode group is requested for the first time.
-                for (struct mfc *mfc = mct->mfc; mfc; activateRoute(mfc->IfDp, mfc->src, 0, 0, true), mfc = mfc->next);
-        }
-        IFGETIFLIF((mct->vifB.us | mct->vifB.ud) != uVifs, IfDp, IS_UPSTREAM(IfDp->state) && NOT_SET(mct, us, IfDp))
-            // Check if any upstream interfaces still need to join the group.
-            addGroup(mct, IfDp, 0, 1, (uint32_t)-1);
-    } else {
+        if (NOT_SET(mct, d, IfDp) && BIT_SET(mct->vifB.d, IfDp->index) && IS_EX(mct, IfDp))
+            // Activate any MFC is exclude mode group is requested for the first time.
+            for (struct mfc *mfc = mct->mfc; mfc; activateRoute(mfc->IfDp, mfc->src, 0, 0, true), mfc = mfc->next);
+        // Check if any upstream interfaces still need to join the group.
+        addGroup(mct, NULL, 0, 1, (uint32_t)-1);
+    } else IFGETIFLIF((mct->vifB.us | mct->vifB.ud) != uVifs, IfDp, (!If || (IfDp = If)) && IS_UPSTREAM(IfDp->state)
+                                                                     && BIT_SET(mct->vifB.u, IfDp->index) && NOT_SET(mct, us, IfDp)) {
         // Set upstream status and join group if it is in exclude mode upstream.
-        BIT_SET(mct->vifB.u, IfDp->index);
-        if (NOT_SET(mct, us, IfDp)) {
-            if (mct->mode && CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit) {
-                LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
-                                    IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
-            } else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 0, (uint32_t)-1)) {
-                LOG(LOG_INFO, 0, "addGroup: Joined group %s upstream on interface %s.",
-                                  inetFmt(mct->group, 1), IfDp->Name);
-                BIT_SET(mct->vifB.us, IfDp->index);
-            }
-        }
+        if (!checkFilters(IfDp, 0, NULL, mct)) {
+            LOG(LOG_NOTICE, 0, "Group %s denied upstream on %s.", inetFmt(mct->group , 1), IfDp->Name);
+            if (If)
+                return false;
+        } else if (mct->mode && CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit) {
+            LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
+                                IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
+        } else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 0, (uint32_t)-1) && BIT_SET(mct->vifB.us, IfDp->index))
+            LOG(LOG_INFO, 0, "addGroup: Joined group %s upstream on interface %s.",
+                              inetFmt(mct->group, 1), IfDp->Name);
+        if (If || ! IfDp->next)
+            return true;
     }
 
     return true;
@@ -291,12 +281,9 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint3
         src->vifB.age[IfDp->index] = IfDp->querier.qrv;
         setHash(src->dHostsHT, srcHash);
     }
-    if (set && NOT_SET(src, d, IfDp)) {
-        BIT_SET(src->vifB.d, IfDp->index);
-        if (src->mfc)
-            // Activate route will check ACL for source on downstream interfaces.
-            activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
-    }
+    if (set && NOT_SET(src, d, IfDp) && BIT_SET(src->vifB.d, IfDp->index) && src->mfc)
+        // Activate route will check ACL for source on downstream interfaces.
+        activateRoute(src->mfc->IfDp, src, src->ip, mct->group, true);
 
     if (check && !checkFilters(IfDp, 1, src, mct)) {
         // Check if the source is allowed on interface.
