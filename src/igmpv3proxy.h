@@ -334,8 +334,7 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
-int     qdlm;    // Quick & dirty Macro to reduce logging impact.
-#define LOG(x, ...) qdlm = (x <= CONFIG->logLevel && myLog(x, __VA_ARGS__))
+#define LOG(x, ...) x <= CONFIG->logLevel ? myLog(x, __VA_ARGS__) : (void)0
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
@@ -353,7 +352,7 @@ const char     *grecKind(unsigned int type);
 uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
-bool            myLog(int Serverity, int Errno, const char *FmtSt, ...);
+void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
 
 /**
 *   kern.c
@@ -408,6 +407,6 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 #define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 typedef void  (*timer_f)();
 struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *);
+uint64_t        timer_setTimer(struct timespec delay, const char *name, timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);

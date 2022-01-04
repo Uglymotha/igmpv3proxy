@@ -37,11 +37,11 @@
 // Queue definition.
 static struct timeOutQueue {
     uint64_t              id;
-    char                  name[TMNAMESZ];  // name of the timer
-    timer_f               func;            // function to call
-    void                 *data;            // Argument for function.
-    struct timespec       time;            // Time for event
-    struct timeOutQueue  *next;            // Next event in queue
+    timer_f               func;    // function to call
+    void                 *data;    // Argument for function.
+    struct timespec       time;    // Time for event
+    struct timeOutQueue  *next;    // Next event in queue
+    char                  name[];  // name of the timer
 }     *queue = NULL;
 static uint64_t id = 1;
 
@@ -71,14 +71,15 @@ struct timespec timer_ageQueue() {
 *   Inserts a timer in queue. Queue is maintained in order ofr execution.
 *   FIFO if timers are scheduled at exactly the same time.
 */
-uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_f action, void *data) {
+uint64_t timer_setTimer(struct timespec delay, const char *name, timer_f action, void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
+    uint64_t  		    i = 1,        n = strlen(name) + 1;
 
-    if (! (node = malloc(sizeof(struct timeOutQueue))))  // Freed by timer_ageQueue() or timer_clearTimer()
+    if (! (node = malloc(sizeof(struct timeOutQueue)) + n))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, "", action, data, {delay.tv_sec, delay.tv_nsec}, NULL };
-    strcpy(node->name, name);
+    *node = (struct timeOutQueue){ id++, action, data, {delay.tv_sec, delay.tv_nsec}, NULL };
+    for (int j = 0; j < n; node->name[j] = name[j]);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
         if (curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 > 1000000000)
@@ -89,7 +90,6 @@ uint64_t timer_setTimer(struct timespec delay, const char name[TMNAMESZ], timer_
                                             curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
     }
 
-    uint64_t i = 1;
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
         node->next = queue;

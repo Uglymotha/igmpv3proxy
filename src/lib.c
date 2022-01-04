@@ -269,7 +269,7 @@ inline uint16_t getIgmpExp(register int val, register int d) {
 /**
 *   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
 */
-bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
+void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     clock_gettime(CLOCK_REALTIME, &curtime);
     long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
     char      LogMsg[256];
@@ -293,6 +293,4 @@ bool myLog(int Severity, int Errno, const char *FmtSt, ...) {
         fclose(lfp);
     if (Severity <= LOG_ERR)
         exit(-1);
-
-    return qdlm;
 }
