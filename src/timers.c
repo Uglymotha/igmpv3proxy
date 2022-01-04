@@ -73,13 +73,13 @@ struct timespec timer_ageQueue() {
 */
 uint64_t timer_setTimer(struct timespec delay, const char *name, timer_f action, void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
-    uint64_t  		    i = 1,        n = strlen(name) + 1;
+    uint64_t  		        i = 1,        n = strlen(name) + 1;
 
-    if (! (node = malloc(sizeof(struct timeOutQueue)) + n))  // Freed by timer_ageQueue() or timer_clearTimer()
+    if (! (node = malloc(sizeof(struct timeOutQueue) + n)))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
     *node = (struct timeOutQueue){ id++, action, data, {delay.tv_sec, delay.tv_nsec}, NULL };
-    for (int j = 0; j < n; node->name[j] = name[j]);
+    for (int j = 0; j < n; node->name[j] = name[j], j++);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
         if (curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 > 1000000000)

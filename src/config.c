@@ -92,7 +92,7 @@ void freeConfig(int old) {
         for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
         free(cConf);
     }
-    if (old) {
+    if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
         for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
@@ -111,19 +111,20 @@ void freeConfig(int old) {
 *   Opens or closes config file specified by filename.
 */
 static bool configFile(char *filename, int open) {
-    // Open config file and allocate memory for inputbuffer. Freed by closeConfigFile()
-    if (! open || ! (confFilePtr = fopen(filename, "r")) || ! (iBuffer = malloc(sizeof(char) * READ_BUFFER_SIZE))) {
+    if (!open || ! (confFilePtr = fopen(filename, "r"))) {
+        // Close Config file and free buffer.
         if (confFilePtr)
             fclose(confFilePtr);
         free(iBuffer);   // Alloced by self
         iBuffer     = NULL;
         confFilePtr = NULL;
         return open ? false : true;
-    }
+    } else if (! (iBuffer = malloc(sizeof(char) * READ_BUFFER_SIZE)))
+        // Open config file and allocate memory for inputbuffer. Freed by closeConfigFile()
+        LOG(LOG_ERR, errno, "configFile: Out of Memory.");
 
-    // Reset bufferpointer and readsize
+    // Reset bufferpointer and readsize.
     bufPtr = readSize = 0;
-
     return true;
 }
 
@@ -140,7 +141,7 @@ static char *nextConfigToken(void) {
         if (bufPtr == readSize) {
             bufPtr = 0;
             // Fill up the buffer. If the readsize is 0, we should just return.
-            if ((readSize = fread(iBuffer, sizeof(char), READ_BUFFER_SIZE, confFilePtr)) == 0);
+            if ((readSize = fread(iBuffer, sizeof(char), READ_BUFFER_SIZE, confFilePtr)) == 0)
                 return NULL;
         }
 
@@ -153,7 +154,6 @@ static char *nextConfigToken(void) {
                 if (iBuffer[bufPtr] == '\n')
                     commentFound = false;
             } else switch (iBuffer[bufPtr]) {
-                // Check current char.
             case '#':
                 // Found a comment start.
                 commentFound = true;
@@ -385,14 +385,14 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
 *   Loads the configuration from file, and stores the config in respective holders.
 */
 bool loadConfig(void) {
-    struct  vifConfig *tmpPtr, **currPtr = &vifConf;
+    struct  vifConfig *tmpPtr;
     int64_t            intToken;
 
     // Initialize common config
     initCommonConfig();
 
     // Open config file and read first token.
-    if (! configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken()))
+    if (!configFile(commonConfig.configFilePath, 1) || ! (token = nextConfigToken()))
         return false;
     LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
 
@@ -401,18 +401,14 @@ bool loadConfig(void) {
 
     // Loop until all configuration is read.
     while (token) {
-        if (strcasecmp("phyint", token) == 0) {
-            // Got a phyint token... Call phyint parser
-            tmpPtr = parsePhyintToken();
-            if (tmpPtr) {
-                LOG(LOG_NOTICE, 0, "Config: IF: %s, Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p: %p",
-                                    tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters);
-                // Insert config, and move temppointer to next location...
-                *currPtr = tmpPtr;
-                currPtr = &tmpPtr->next;
-                continue;
-            } else if (!STARTUP)
-                return false;
+        if (strcasecmp("phyint", token) == 0 && (tmpPtr = parsePhyintToken())) {
+            // Got a valid interface config.
+            LOG(LOG_NOTICE, 0, "Config: IF: %s, Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p: %p",
+                                tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters);
+            // Insert config, and move temppointer to next location...
+            tmpPtr->next = vifConf;
+            vifConf      = tmpPtr;
+            continue;
 
         } else if (STARTUP && strcasecmp("kbufsize", token) == 0 && INTTOKEN) {
             // Got a reqqueuesize token....
@@ -864,8 +860,7 @@ static struct vifConfig *parsePhyintToken(void) {
         } else if (! strstr(options, token)) {
             // Unknown token.
             LOG(LOG_WARNING, 0, "Config: IF: Unknown token '%s' in configfile.", token);
-            if (!STARTUP)
-                 return NULL;
+            return NULL;
 
         } else
             break;   // Send pointer and return to main config parser.
