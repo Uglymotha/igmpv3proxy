@@ -203,16 +203,11 @@ static void igmpProxyInit(void) {
     sigaction(SIGURG,  &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
 
-    // Detach daemon from stdin/out/err.
-    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0
-        || open("/dev/null", 0) != 0 || dup2(0, 1) < 0 || dup2(0, 2) < 0
-        || setpgid(0, 0) < 0)) {
-        LOG(LOG_ERR, errno, "Failed to detach daemon.\n");
-    }
-
-    // Fork daemon.
-    if (!CONFIG->notAsDaemon && fork())
-        exit(0);
+    // Detach daemon from stdin/out/err, and fork.
+    int f = -1;
+    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
+         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
+        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.\n") : exit(0);
 
     // Load the config file.
     if (!loadConfig())
