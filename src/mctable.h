@@ -36,6 +36,9 @@
 *   Common multicast group structures and functions.
 */
 
+#ifndef MCTABLE_H
+#define MCTABLE_H
+
 struct vifFlags {
     // Generic per vif flags, applies to both groups and sources
     uint32_t            sd;                       // Filters set flag for downstream
@@ -125,3 +128,5 @@ struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *
 bool            toInclude(struct mcTable *mct, struct IfDesc *IfDp);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 void            groupSpecificQuery(struct qlst *qlst);
+
+#endif // MCTABLE_H_INCLUDED
