@@ -216,6 +216,15 @@ struct IfDesc {
 };
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
+union cmsgU {
+    struct cmsghdr cmsgHdr;
+#ifdef IP_PKTINFO
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
+#elif IP_RECVIF
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
+#endif
+};
+
 // Interface states
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
 #define IS_DISABLED(x)         ((x & 0x3) == 0)
