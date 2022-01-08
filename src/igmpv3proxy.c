@@ -305,14 +305,7 @@ static void igmpProxyRun(void) {
             // Read IGMP request, and handle it...
             if (pollFD[0].revents & POLLIN) {
                 LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Queued Packet %d.", i+1);
-                union {
-                    struct cmsghdr cmsgHdr;
-#ifdef IP_PKTINFO
-                    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
-#elif IP_RECVIF
-                    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
-#endif
-                } cmsgUn;
+                union  cmsgU  cmsgUn;
                 struct iovec  ioVec[1] = { { recv_buf, CONFIG->pBufsz } };
                 struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
 
