@@ -388,12 +388,13 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
         }
         if (If)
             return;
-    } else IFGETIFLIF(!join, IfDp, (! If || (IfDp = If)) && IS_SET(src, us, IfDp)) {
+    }
+    IFGETIFLIF(!join, IfDp, (! If || (IfDp = If)) && IS_SET(src, us, IfDp)) {
         // Source should not be unblocked when upstream mode is exclude and source is not allowed.
-        if (src->mct->mode &&!checkFilters(IfDp, 0, src, src->mct))
+        if (src->mct->mode &&!checkFilters(IfDp, 0, src, src->mct)) {
             LOG(LOG_NOTICE, 0, "Not unblocking denied source %s from group %s upstream on %s.", inetFmt(src->ip, 1),
                                 inetFmt(src->mct->group, 2), IfDp->Name);
-        else {
+        } else {
             LOG(LOG_INFO, 0, "joinBlockSrc: %s source %s from group %s upstream on %s", src->mct->mode ? "Unblocking" : "Leaving",
                               inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), IfDp->Name);
             k_updateGroup(IfDp, false, src->mct->group, src->mct->mode, src->ip);
@@ -752,7 +753,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
     uint32_t         group   = grec->grec_mca.s_addr, srcHash = murmurhash3(ip) % CONFIG->dHostsHTSize;
     struct src      *src     = NULL, *tsrc  = NULL;
-    struct qlst     *qlst    = NULL,  qlst1;
+    struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
 
     // Return if request is bogus (BLOCK / ALLOW / IS_IN with no sources, or no group when BLOCK or TO_IN with no sources).
@@ -864,11 +865,12 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             if (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr) {
                 if (   ((! src || src->ip > grec->grec_src[i].s_addr) && IS_EX(mct, IfDp))
                     || (src->ip == grec->grec_src[i].s_addr && (   (IS_IN(mct, IfDp) && IS_SET(src, d, IfDp))
-                                         || (IS_EX(mct, IfDp) && (src->vifB.age[IfDp->index] > 0 || NOT_SET(src, d, IfDp))))))
+                                         || (IS_EX(mct, IfDp) && (src->vifB.age[IfDp->index] > 0 || NOT_SET(src, d, IfDp)))))) {
                     if ((src = addSrc(IfDp, mct, grec->grec_src[i].s_addr, true, false, src, (uint32_t)-1)))
                         qlst = addSrcToQlst(src, IfDp, qlst, srcHash);
                     else
                         src = tsrc;
+                    }
                 i++;
             }
             // When quickleave is enabled, check if the client is interested in any other source.
