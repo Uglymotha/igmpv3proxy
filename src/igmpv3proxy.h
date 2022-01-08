@@ -65,16 +65,9 @@
 #include <net/if.h>
 #include <arpa/inet.h>
 
-#include "igmpv3.h"
-
 //#################################################################################
 //  Global definitions and declarations.
 //#################################################################################
-
-// Bit manipulation macros.
-#define BIT_SET(X,n)     ((X) |= 1 << (n))
-#define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
-#define BIT_TST(X,n)     (((X) >> (n)) & 1)
 
 // Set type of control message structure for received socket data.
 #ifdef IP_PKTINFO
@@ -83,11 +76,21 @@
 #define IFINFO IP_RECVIF
 #endif
 
-// In / output buffering (Jumbo MTU).
-#define BUF_SIZE   9216
-#define K_BUF_SIZE 512
-#define REQQSZ     16
-#define TMQSZ      4
+//  Socket control message union.
+union cmsgU {
+    struct cmsghdr cmsgHdr;
+#ifdef IP_PKTINFO
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
+#elif IP_RECVIF
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
+#endif
+};
+
+// In / output buffering.
+#define BUF_SIZE   9216     // Jumbo MTU
+#define K_BUF_SIZE 512      // Default kernel ring buffer size in KB
+#define REQQSZ     16       // Default request queue size
+#define TMQSZ      4        // Default timer queue size
 
 // Limit of configuration token.
 #define READ_BUFFER_SIZE    2048
@@ -219,17 +222,7 @@ struct IfDesc {
 };
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
-//  Socket control message union.
-union cmsgU {
-    struct cmsghdr cmsgHdr;
-#ifdef IP_PKTINFO
-    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
-#elif IP_RECVIF
-    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
-#endif
-};
-
-// Interface states
+/// Interface states.
 #define IF_STATE_DISABLED      0                              // Interface should be ignored.
 #define IS_DISABLED(x)         ((x & 0x3) == 0)
 #define IF_STATE_UPSTREAM      1                              // Interface is upstream
@@ -278,10 +271,62 @@ union cmsgU {
 #define CLI_CMD_BUF    256
 #define CLI_SOCK_PATHS "/run /var/run /tmp /var/tmp"
 
+// Bit manipulation macros.
+#define BIT_SET(X,n)     ((X) |= 1 << (n))
+#define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
+#define BIT_TST(X,n)     (((X) >> (n)) & 1)
+
 //#################################################################################
+// Common IGMPv3 includes. Various OS dont provide common structs, so we just use our own.
+//#################################################################################
+
+// IGMP Query Definition.
+struct igmpv3_query {
+    u_char          igmp_type;      // version & type of IGMP message
+    u_char          igmp_code;      // subtype for routing msgs
+    u_short         igmp_cksum;     // IP-style checksum
+    struct in_addr  igmp_group;     // group address being reported
+                                    //  (zero for queries)
+    u_char          igmp_misc;      // reserved/suppress/robustness
+    u_char          igmp_qqi;       // querier's query interval
+    u_short         igmp_nsrcs;     // number of sources
+    struct in_addr  igmp_src[];     // source addresses
+};
+
+// IGMP v3 Group Record Definition.
+struct igmpv3_grec {
+    u_int8_t grec_type;             // Group record type
+    u_int8_t grec_auxwords;         // Nr of auxwords data after sources
+    u_int16_t grec_nsrcs;           // Nr of sources in group report
+    struct in_addr grec_mca;        // Group multicast address
+    struct in_addr grec_src[];      // Array of source addresses
+};
+
+// IGMP Report Definition.
+struct igmpv3_report {
+    u_int8_t igmp_type;             // IGMP Report type
+    u_int8_t igmp_resv1;            //
+    u_int16_t igmp_cksum;           // IGMP checksum
+    u_int16_t igmp_resv2;           //
+    u_int16_t igmp_ngrec;           // Nr. of group records in report
+    struct igmpv3_grec igmp_grec[]; // Array of group records
+};
+
+// IGMP Defines.
+#define IGMPV3_MODE_IS_INCLUDE   1
+#define IGMPV3_MODE_IS_EXCLUDE   2
+#define IGMPV3_CHANGE_TO_INCLUDE 3
+#define IGMPV3_CHANGE_TO_EXCLUDE 4
+#define IGMPV3_ALLOW_NEW_SOURCES 5
+#define IGMPV3_BLOCK_OLD_SOURCES 6
+#define IGMPV3_MINLEN            12
+#define IGMP_LOCAL(x) ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
+
+//##################################################################################
 //  Global Variables.
 //############A#####################################################################
-// Help string.
+
+// Filename, Help string.
 extern const char *fileName, Usage[];
 
 // Timekeeping.
