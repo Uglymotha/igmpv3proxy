@@ -216,6 +216,7 @@ struct IfDesc {
 };
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
+//  Socket control message union.
 union cmsgU {
     struct cmsghdr cmsgHdr;
 #ifdef IP_PKTINFO
