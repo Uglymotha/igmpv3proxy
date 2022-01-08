@@ -35,6 +35,9 @@
 /**
 *   igmpv3proxy.h - Header file for common includes.
 */
+#ifndef IGMPV3PROXY_H
+#define IGMPV3PROXY_H
+
 #include "config.h"
 #include "os.h"
 
@@ -420,3 +423,5 @@ struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(struct timespec delay, const char *name, timer_f action, void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+
+#endif // IGMPV3PROXY_H_INCLUDED
