@@ -87,10 +87,10 @@ union cmsgU {
 };
 
 // In / output buffering.
-#define BUF_SIZE   9216     // Jumbo MTU
-#define K_BUF_SIZE 512      // Default kernel ring buffer size in KB
-#define REQQSZ     16       // Default request queue size
-#define TMQSZ      4        // Default timer queue size
+#define BUF_SIZE   9216                                 // Jumbo MTU
+#define K_BUF_SIZE 512                                  // Default kernel ring buffer size in KB
+#define REQQSZ     16                                   // Default request queue size
+#define TMQSZ      4                                    // Default timer queue size
 
 // Limit of configuration token.
 #define READ_BUFFER_SIZE    2048
@@ -134,7 +134,7 @@ struct Config {
     // Logging Parameters.
     uint8_t             logLevel;
     char               *logFilePath;
-    bool                log2Stderr;              // Log to stderr instead of to syslog / file
+    bool                log2Stderr;                     // Log to stderr instead of to syslog / file
     // Set if nneed to detect new interface.
     uint32_t            rescanVif;
     // Set if nneed to detect config change.
@@ -148,44 +148,46 @@ struct Config {
 };
 
 // Linked list of filters.
-#define ALLOW 1
-#define BLOCK 0
 struct subnet {
     uint32_t  ip;
     uint32_t  mask;
 };
-
-#define FILTERANY (struct filters){ {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, ALLOW, 3, NULL }
 struct filters {
-    struct subnet         src, dst;
-    uint64_t              action;
-    uint8_t               dir;
+    struct subnet         src;                          // Source / Sender) address
+    struct subnet         dst;                          // Destination multicast group
+    uint8_t               dir;                          // Filter direction (up/downstream)
+    uint8_t               mode;                         // Mode for group (include / exclude)
+    uint64_t              action;                       // Action (aalow / block / ratelimit)
     struct filters       *next;
 };
+#define ALLOW 1
+#define BLOCK 0
+#define FILTERANY (struct filters){ {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, 3, 3, ALLOW, NULL }
 
 // Keeps configured Querier parameters.
 struct queryParam {
-    uint32_t            ip;                     // Configured querier IP
-    uint8_t             ver;                    // Configured querier version
-    bool                election;               // Configured querier election mode
-    uint8_t             robustness;             // Configured robustness value
-    uint8_t             interval;               // Configured query interval
-    uint8_t             responseInterval;       // Configured query response interval
-    uint8_t             lmInterval;             // Configured lastmember query interval value
-    uint8_t             lmCount;                // Configured lastmember count value
-    uint8_t             startupQueryInterval;   // Configured startup query interval
-    uint8_t             startupQueryCount;      // Configured startup query count
+    uint32_t            ip;                             // Configured querier IP
+    uint8_t             ver;                            // Configured querier version
+    bool                election;                       // Configured querier election mode
+    uint8_t             robustness;                     // Configured robustness value
+    uint8_t             interval;                       // Configured query interval
+    uint8_t             responseInterval;               // Configured query response interval
+    uint8_t             lmInterval;                     // Configured lastmember query interval value
+    uint8_t             lmCount;                        // Configured lastmember count value
+    uint8_t             startupQueryInterval;           // Configured startup query interval
+    uint8_t             startupQueryCount;              // Configured startup query count
 };
 
 // Structure to keep configuration for VIFs.
 struct vifConfig {
     char                name[IF_NAMESIZE];
-    uint8_t             state;                   // Configured interface state
-    uint8_t             threshold;               // Interface MC TTL
-    uint64_t            ratelimit;               // Interface ratelimit
-    struct queryParam   qry;                     // Configured query parameters
-    bool                noDefaultFilter;         // Do not add default filters to interface
-    struct filters     *filters, *rates;         // ACL and ratelimiters for interface
+    uint8_t             state;                          // Configured interface state
+    uint8_t             threshold;                      // Interface MC TTL
+    uint64_t            ratelimit;                      // Interface ratelimit
+    struct queryParam   qry;                            // Configured query parameters
+    bool                noDefaultFilter;                // Do not add default filters to interface
+    struct filters     *filters;                        // ACL for interface
+    struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
 #define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, false, NULL, NULL }
@@ -213,7 +215,8 @@ struct IfDesc {
     struct vifConfig             *conf;                  // Pointer to interface configuraion
     bool                          filCh;                 // Flag for filter change during config reload
     struct querier                querier;               // igmp querier for interface
-    uint64_t                      bytes, rate;           // Counters for bandwith control
+    uint64_t                      bytes;                 // Total bytes sent/received on interface
+    uint64_t                      rate;                  // Rate in bytes / s
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
     void                         *dMct;                  // Pointers to active downstream groups for vif
@@ -223,13 +226,13 @@ struct IfDesc {
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 /// Interface states.
-#define IF_STATE_DISABLED      0                              // Interface should be ignored.
+#define IF_STATE_DISABLED      0                         // Interface should be ignored.
 #define IS_DISABLED(x)         ((x & 0x3) == 0)
-#define IF_STATE_UPSTREAM      1                              // Interface is upstream
+#define IF_STATE_UPSTREAM      1                         // Interface is upstream
 #define IS_UPSTREAM(x)         (x & 0x1)
-#define IF_STATE_DOWNSTREAM    2                              // Interface is downstream
+#define IF_STATE_DOWNSTREAM    2                         // Interface is downstream
 #define IS_DOWNSTREAM(x)       (x & 0x2)
-#define IF_STATE_UPDOWNSTREAM  3                              // Interface is both up and downstream
+#define IF_STATE_UPDOWNSTREAM  3                         // Interface is both up and downstream
 #define IS_UPDOWNSTREAM(x)     ((x & 0x3) == 3)
 #define IF_OLDSTATE(x)         ((x->state >> 2) & 0x3)
 #define IF_NEWSTATE(x)         (x->state & 0x3)
@@ -249,9 +252,9 @@ struct IfDesc {
 #define IP_HEADER_RAOPT_LEN	24
 
 // Route parameters.
-#define DEFAULT_MAX_ORIGINS     64  // Maximun nr of route sources, controlable by maxorigins config paramter, in which case this also acts as mimimun.
-#define DEFAULT_HASHTABLE_SIZE  32  // Default host tracking hashtable size.
-#define DEFAULT_ROUTE_TABLES    32  // Default hash table size for route table.
+#define DEFAULT_MAX_ORIGINS     64                       // Maximun nr of group sources.
+#define DEFAULT_HASHTABLE_SIZE  32                       // Default host tracking hashtable size.
+#define DEFAULT_ROUTE_TABLES    32                       // Default hash table size for route table.
 
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
 #define GOT_SIGHUP  0x02
@@ -282,34 +285,33 @@ struct IfDesc {
 
 // IGMP Query Definition.
 struct igmpv3_query {
-    u_char          igmp_type;      // version & type of IGMP message
-    u_char          igmp_code;      // subtype for routing msgs
-    u_short         igmp_cksum;     // IP-style checksum
-    struct in_addr  igmp_group;     // group address being reported
-                                    //  (zero for queries)
-    u_char          igmp_misc;      // reserved/suppress/robustness
-    u_char          igmp_qqi;       // querier's query interval
-    u_short         igmp_nsrcs;     // number of sources
-    struct in_addr  igmp_src[];     // source addresses
+    u_char          igmp_type;                         // version & type of IGMP message
+    u_char          igmp_code;                         // subtype for routing msgs
+    u_short         igmp_cksum;                        // IP-style checksum
+    struct in_addr  igmp_group;                        // group address being reported
+    u_char          igmp_misc;                         // reserved/suppress/robustness
+    u_char          igmp_qqi;                          // querier's query interval
+    u_short         igmp_nsrcs;                        // number of sources
+    struct in_addr  igmp_src[];                        // source addresses
 };
 
 // IGMP v3 Group Record Definition.
 struct igmpv3_grec {
-    u_int8_t grec_type;             // Group record type
-    u_int8_t grec_auxwords;         // Nr of auxwords data after sources
-    u_int16_t grec_nsrcs;           // Nr of sources in group report
-    struct in_addr grec_mca;        // Group multicast address
-    struct in_addr grec_src[];      // Array of source addresses
+    u_int8_t grec_type;                                // Group record type
+    u_int8_t grec_auxwords;                            // Nr of auxwords data after sources
+    u_int16_t grec_nsrcs;                              // Nr of sources in group report
+    struct in_addr grec_mca;                           // Group multicast address
+    struct in_addr grec_src[];                         // Array of source addresses
 };
 
 // IGMP Report Definition.
 struct igmpv3_report {
-    u_int8_t igmp_type;             // IGMP Report type
-    u_int8_t igmp_resv1;            //
-    u_int16_t igmp_cksum;           // IGMP checksum
-    u_int16_t igmp_resv2;           //
-    u_int16_t igmp_ngrec;           // Nr. of group records in report
-    struct igmpv3_grec igmp_grec[]; // Array of group records
+    u_int8_t igmp_type;                                // IGMP Report type
+    u_int8_t igmp_resv1;
+    u_int16_t igmp_cksum;                              // IGMP checksum
+    u_int16_t igmp_resv2;
+    u_int16_t igmp_ngrec;                              // Nr. of group records in report
+    struct igmpv3_grec igmp_grec[];                    // Array of group records
 };
 
 // IGMP Defines.
@@ -339,9 +341,9 @@ extern uint8_t  sighandled, sigstatus;
 extern uint32_t uVifs;
 
 // Global IGMP groups.
-extern uint32_t allhosts_group;            /* All hosts addr in net order */
-extern uint32_t allrouters_group;          /* All hosts addr in net order */
-extern uint32_t alligmp3_group;            /* IGMPv3 addr in net order */
+extern uint32_t allhosts_group;                        // All hosts addr in net order
+extern uint32_t allrouters_group;                      // All hosts addr in net order
+extern uint32_t alligmp3_group;                        // IGMPv3 addr in net order
 
 //#################################################################################
 //  Lib function prototypes.
