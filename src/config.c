@@ -82,15 +82,27 @@ inline struct Config *getConfig(void) {
 */
 void freeConfig(int old) {
     struct vifConfig *tConf, *cConf;
-    struct filters   *tFil,  *dFil  = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters,
-                     *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
+    struct filters   *fil, *tFil,  *dFil  = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters,
+                           *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
-        for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
-        for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
-        free(cConf);
+        if (!old || !(cConf->state & 0x80)) {
+            // Do not remove and free filters, if interface config should be reused.
+            for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
+            for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
+        }
+        if (old && (cConf->state & 0x80)) {
+            // If interface was flagged, because of interface config error reset flag.
+            cConf->state &= ~0x80;
+        } else if ((cConf->state & 0x80) && !cConf->noDefaultFilter) {
+            // If interface was flagged and config reload failed enterely, reset to old default filters.
+            for (fil = cConf->filters; fil && fil->next != dFil; fil = fil->next);
+            fil ? (fil->next = oldcommonConfig.defaultFilters) : (cConf->filters = oldcommonConfig.defaultFilters);
+        } else
+            free(cConf);
+
     }
     if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
@@ -210,10 +222,10 @@ void reloadConfig(uint64_t *tid) {
     // Load the new configuration keep reference to the old.
     if (!loadConfig()) {
         LOG(LOG_WARNING, 0, "Unable to load config file %s, keeping current.", commonConfig.configFilePath);
-        commonConfig = oldcommonConfig;
         if (vifConf)
             freeConfig(0);
         vifConf = ovifConf;
+        commonConfig = oldcommonConfig;
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
@@ -291,10 +303,10 @@ static void initCommonConfig(void) {
 *   Parsing of filters. If an error is made in a list, the whole list will be ignored.
 */
 static void parseFilters(struct filters ***filP, struct filters ***rateP) {
-    char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
     uint32_t addr, mask;
-    struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint64_t)-1, (uint8_t)-1, NULL },
-                   filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint64_t)-1, (uint8_t)-1, NULL },
+    char list[MAX_TOKEN_LENGTH], *filteropt = "allow block ratelimit up down updown both";
+    struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
+                   filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    fil    = filNew;
 
     for (strcpy(list, token), token = nextConfigToken(); token && (strstr(filteropt, token) || !strstr(options, token));
@@ -343,7 +355,7 @@ static void parseFilters(struct filters ***filP, struct filters ***rateP) {
             // altnet is not usefull or compatible with igmpv3, ignore.
             fil = filErr;
         } else if (strcasecmp("whitelist", list) == 0) {
-            fil = (struct filters){ {INADDR_ANY, 0}, {addr, mask}, ALLOW, 3, NULL };
+            fil = (struct filters){ {INADDR_ANY, 0}, {addr, mask}, 3, 3, ALLOW, NULL };
         } else if (fil.src.ip == 0xFFFFFFFF) {
             if (! IN_MULTICAST(ntohl(addr))) {
                 fil.src.ip   = addr;
@@ -498,13 +510,15 @@ bool loadConfig(void) {
 
         } else if (strcasecmp("defaultfilter", token) == 0) {
             // Got a defaultfilterany token...
-            if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters)
+            if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
                 LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-            else {
+                for (token = nextConfigToken(); token && !strstr(options, token); token = nextConfigToken());
+            } else {
                 LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                 strcpy(token, "filter");
                 parseFilters(&filP, &rateP);
             }
+            continue;
 
         } else if (strcasecmp("defaultratelimit", token) == 0 && INTTOKEN) {
             // Default Ratelimit
@@ -740,10 +754,10 @@ static struct vifConfig *parsePhyintToken(void) {
 
     // First token should be the interface name....
     if (! (token = nextConfigToken())) {
-        LOG(LOG_WARNING, 0, "Config: IF: You should at least name your interfeces.");
+        LOG(LOG_WARNING, 0, "Config: You should at least name your interfeces.");
         return NULL;
     }
-    LOG(LOG_NOTICE, 0, "Config: IF: Config for interface %s.", token);
+    LOG(LOG_NOTICE, 0, "Config (%s): Configuring interface.", token);
 
     // Allocate and initialize memory for new configuration.
     if (! (tmpPtr = malloc(sizeof(struct vifConfig))))
@@ -754,8 +768,8 @@ static struct vifConfig *parsePhyintToken(void) {
     memcpy(tmpPtr->name, token, IF_NAMESIZE);
     tmpPtr->name[IF_NAMESIZE - 1] = '\0';
     if (strlen(token) >= IF_NAMESIZE)
-        LOG(LOG_WARNING, 0, "Config: IF: Interface name %s larger than system IF_NAMESIZE(%d), truncated to %s."
-                             ,token, IF_NAMESIZE, tmpPtr->name);
+        LOG(LOG_WARNING, 0, "Config (%s): %s larger than system IF_NAMESIZE(%d)."
+                             ,tmpPtr->name, IF_NAMESIZE, token);
 
     // Set pointer to pointer to filters list.
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
@@ -764,102 +778,118 @@ static struct vifConfig *parsePhyintToken(void) {
     token = nextConfigToken();
     while (token) {
         if (strcasecmp("filter", token) == 0 || strcasecmp("altnet", token) == 0 || strcasecmp("whitelist", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config: IF: Parsing %s.", token);
+            LOG(LOG_NOTICE, 0, "Config (%s): Parsing %s.", tmpPtr->name, token);
             parseFilters(&filP, &rateP);
             continue;
 
         } else if (strcasecmp("nodefaultfilter", token) == 0) {
             tmpPtr->noDefaultFilter = true;
-            LOG(LOG_NOTICE, 0, "Config: IF: Not setting default filters.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Not setting default filters.", tmpPtr->name);
 
         } else if (strcasecmp("updownstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPDOWNSTREAM;
-            LOG(LOG_NOTICE, 0, "Config: IF: Updownstream.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Updownstream.", tmpPtr->name);
 
         } else if (strcasecmp("upstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPSTREAM;
-            LOG(LOG_NOTICE, 0, "Config: IF: Upstream.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Upstream.", tmpPtr->name);
 
         } else if (strcasecmp("downstream", token) == 0) {
             tmpPtr->state = IF_STATE_DOWNSTREAM;
-            LOG(LOG_NOTICE, 0, "Config: IF: Downstream.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Downstream.");
 
         } else if (strcasecmp("disabled", token) == 0) {
             tmpPtr->state = IF_STATE_DISABLED;
-            LOG(LOG_NOTICE, 0, "Config: IF: Disabled.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Disabled.", tmpPtr->name);
 
         } else if (strcasecmp("ratelimit", token) == 0 && INTTOKEN) {
             if (intToken < 0)
-                LOG(LOG_WARNING, 0, "Config: IF: Ratelimit must 0 or more.");
+                LOG(LOG_WARNING, 0, "Config (%s): Ratelimit must 0 or more.", tmpPtr->name);
             else {
                 tmpPtr->ratelimit = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Setting ratelimit to %lld.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting ratelimit to %lld.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("threshold", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config IF: Threshold must be between 1 and 255.");
+                LOG(LOG_WARNING, 0, "Config (%s): Threshold must be between 1 and 255.", tmpPtr->name);
             else {
                 tmpPtr->threshold = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Setting threshold to %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("querierip", token) == 0 && (token = nextConfigToken())) {
             tmpPtr->qry.ip = inet_addr(token);
-            LOG(LOG_NOTICE, 0, "Config IF: Setting querier ip address to %s.", inetFmt(tmpPtr->qry.ip, 1));
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.",tmpPtr->name,  inetFmt(tmpPtr->qry.ip, 1));
 
         } else if (strcasecmp("querierver", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 3)
-                LOG(LOG_WARNING, 0, "Config IF: IGMP version %d not valid.", intToken);
+                LOG(LOG_WARNING, 0, "Config (%s): IGMP version %d not valid.", tmpPtr->name, intToken);
             else {
                 tmpPtr->qry.ver = intToken;
-                LOG(LOG_NOTICE, 0, "Config IF: Setting querier version %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting querier version %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("noquerierelection", token) == 0) {
             tmpPtr->qry.election = false;
-            LOG(LOG_NOTICE, 0, "Config IF: Will not participate in IGMP querier election.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not participate in IGMP querier election.", tmpPtr->name);
 
         } else if (strcasecmp("robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
-                LOG(LOG_WARNING, 0, "Config IF: Robustness value mus be between 1 and 7.");
+                LOG(LOG_WARNING, 0, "Config (%s): Robustness value mus be between 1 and 7.", tmpPtr->name);
             else {
                 tmpPtr->qry.robustness = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Settings robustness to %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Settings robustness to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("queryinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config IF: Query interval value should be between 1 than 255.");
+                LOG(LOG_WARNING, 0, "Config (%s): Query interval value should be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.interval = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Setting query interval to %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("queryresponseinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config IF: Query response interval value should be between 1 than 255.");
+                LOG(LOG_WARNING, 0, "Config (%s): Query response interval value should be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.responseInterval = intToken;
-                LOG(LOG_NOTICE, 0, "Config: IF: Setting query response interval to %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting query response interval to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("lastmemberinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config IF: Last member interval value should be between 1 than 255.");
+                LOG(LOG_WARNING, 0, "Config (%s): Last member interval value should be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.lmInterval =  intToken;
-                LOG(LOG_NOTICE, 0, "Config: Setting last member query interval to %d.", intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query interval to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcasecmp("lastmembercount", token) == 0 && INTTOKEN) {
             tmpPtr->qry.lmCount = intToken < 1 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
             tmpPtr->qry.lmCount = intToken;
-            LOG(LOG_NOTICE, 0, "Config: IF: Setting last member query count to %d.", tmpPtr->qry.lmCount);
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
 
         } else if (! strstr(options, token)) {
-            // Unknown token.
-            LOG(LOG_WARNING, 0, "Config: IF: Unknown token '%s' in configfile.", token);
+            // Unknown token, return error.
+            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s', discarding configuration.", tmpPtr->name, token);
+            if (!STARTUP) {
+                // When reloading config, find old vifconf and return that.
+                char   name[IF_NAMESIZE];
+                struct filters *fil;
+                strcpy(name, tmpPtr->name);
+                for (tmpPtr = ovifConf; tmpPtr && strcmp(name, tmpPtr->name) != 0; tmpPtr = tmpPtr->next);
+                if (tmpPtr) {
+                    LOG(LOG_WARNING, 0, "Config (%s): Reusing old configuration.", tmpPtr->name);
+                    tmpPtr->state |= 0x80;   // Flag interface, it must not be freed after reload.
+                    if (!tmpPtr->noDefaultFilter) {
+                        for (fil = tmpPtr->filters; fil && fil->next != oldcommonConfig.defaultFilters; fil = fil->next);
+                        fil ? (fil->next = NULL, filP = &fil->next) : (tmpPtr->filters = NULL, filP = &tmpPtr->filters);
+                    }
+                    break;
+                }
+            }
             return NULL;
 
         } else
