@@ -217,7 +217,6 @@ void groupSpecificQuery(struct qlst *qlst) {
         if (BIT_TST(qlst->type, 2))
             for (uint32_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
         sendIgmp(qlst->IfDp, query);
-        free(query);
     } else if (!BIT_TST(qlst->type, 3) && qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2)) {
         if (query1 && query1->igmp_nsrcs)
             sendIgmp(qlst->IfDp, query1);
@@ -225,8 +224,8 @@ void groupSpecificQuery(struct qlst *qlst) {
             sendIgmp(qlst->IfDp, query2);
     }
 
-    if (!(qlst->cnt <= qlst->misc && (   (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, qlst->IfDp))
-                                      || (BIT_TST(qlst->type, 2) && qlst->nsrcs > 0)))) {
+    if (qlst->cnt <= qlst->misc && (   (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, qlst->IfDp))
+                                    || (BIT_TST(qlst->type, 2) && qlst->nsrcs > 0))) {
         // Set timer for next round if there is still aging to do.
         uint32_t timeout = (BIT_TST(qlst->type, 3)            ? qlst->code
                          :  qlst->IfDp->querier.ver == 3      ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
