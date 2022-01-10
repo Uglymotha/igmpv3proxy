@@ -41,7 +41,7 @@
 #include "igmpv3proxy.h"
 
 // Local Prototypes.
-static FILE             *configFile(char *fileName, int open);
+static FILE             *configFile(char *file, int open);
 static bool              nextConfigToken(char *token);
 static void              initCommonConfig();
 static void              parseFilters(char *token, struct filters ***filP, struct filters ***rateP);
@@ -122,14 +122,16 @@ void freeConfig(int old) {
 *   When opening a file and file was not closed, retry and bail if it fails again.
 *   When called with NULL pointer to filename, return current config file pointer.
 */
-static FILE *configFile(char *fileName, int open) {
+static FILE *configFile(char *file, int open) {
     static FILE *confFilePtr = NULL;
     if (!open && confFilePtr && fclose(confFilePtr) == 0)
         confFilePtr = NULL;
-    else if (open && fileName && confFilePtr && fclose(confFilePtr) != 0)
-        LOG(LOG_ERR, errno, "Failed to close config file %s.", fileName);
+    else if (open == 2)
+        confFilePtr = (FILE *)file;
+    else if (open && file && confFilePtr && fclose(confFilePtr) != 0)
+        LOG(LOG_ERR, errno, "Failed to close config file %s.", file);
 
-    return !open || !(! fileName || (confFilePtr = fopen(fileName, "r"))) ? NULL : confFilePtr;
+    return !open || !(open == 2 || ! file || (confFilePtr = fopen(file, "r"))) ? NULL : confFilePtr;
 }
 
 /**
@@ -137,8 +139,8 @@ static FILE *configFile(char *fileName, int open) {
 */
 static bool nextConfigToken(char *token) {
     static uint16_t bufPtr = 0, readSize = 0, tokenPtr;
-    static char     cBuffer[READ_BUFFER_SIZE];
     bool            finished = false, overSized = false, commentFound = false;
+    char           *cBuffer = token + MAX_TOKEN_LENGTH;
 
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
     while (!finished) {
@@ -372,18 +374,20 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
 *   Loads the configuration from file, and stores the config in respective holders.
 */
 bool loadConfig(char *cfgFile) {
-    static char        token[MAX_TOKEN_LENGTH];
-    struct  vifConfig *tmpPtr;
-    int64_t            intToken;
+    char             *token, *buf;
+    FILE             *confFilePtr;
+    int64_t           intToken;
+    struct vifConfig *tmpPtr;
 
     // Initialize common config
     initCommonConfig();
 
     // Open config file and read first token.
-    if (! configFile(cfgFile, 1) || !nextConfigToken(token))
+    if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE)) || !(buf = token + MAX_TOKEN_LENGTH))  // Freed by self
+        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+    else if (! (confFilePtr = configFile(cfgFile, 1)) || !nextConfigToken(token))
         return false;
     LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
-
     // Set pointer to pointer to filters list.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
 
@@ -649,6 +653,7 @@ bool loadConfig(char *cfgFile) {
 
     // Close the configfile.
     configFile(NULL, 0);
+    free(token);  // Alloced by self
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
