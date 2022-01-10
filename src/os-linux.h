@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <linux/types.h>
 #include <linux/mroute.h>
+#include <ctype.h>
 
 #define IGMP_V3_MEMBERSHIP_REPORT 0x22
 
