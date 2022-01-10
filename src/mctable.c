@@ -751,7 +751,8 @@ void clearGroups(void *Dp) {
 */
 void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
-    uint32_t         group   = grec->grec_mca.s_addr, srcHash = murmurhash3(ip) % CONFIG->dHostsHTSize;
+    uint32_t         group   = grec->grec_mca.s_addr,
+                     srcHash  = CONFIG->fastUpstreamLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : 0;
     struct src      *src     = NULL, *tsrc  = NULL;
     struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
