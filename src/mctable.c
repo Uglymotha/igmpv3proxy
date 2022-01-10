@@ -941,8 +941,8 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         return;
     }
 
-    LOG(LOG_INFO, 0, "activateRoute: %s for src: %s to group: %s on VIF %s (%d)", activate ? "Activation" : "Deactivation",
-                      inetFmt(ip, 1), inetFmt(group, 2), IfDp->Name, IfDp->index);
+    LOG(LOG_INFO, 0, "activateRoute: %s for src: %s to group: %s on VIF #%d %s.", activate ? "Activation" : "Deactivation",
+                      inetFmt(ip, 1), inetFmt(group, 2), IfDp->index, IfDp->Name);
     if (!activate) {
         // Remove kernel MFC and delete the upstream source.
         k_delMRoute(src->ip, mct->group, src->mfc->IfDp->index);
