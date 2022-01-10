@@ -147,7 +147,7 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
     while (!finished) {
         // Outer loop, If read pointer is at the end of the buffer, we should read next chunk.
-        if (bufPtr == readSize || cBuffer[bufPtr] == '\0') {
+        if (bufPtr == readSize) {
             // Fill buffer. If 0 bytes read, or less then BUFFER bytes were read, assume EOF.
             bufPtr = 0;
             if (   (readSize > 0 && readSize < READ_BUFFER_SIZE)
@@ -157,8 +157,8 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
             }
         }
 
-        while (!finished && !(cBuffer[bufPtr] == '\0') && bufPtr < readSize) {
-            // Inner loop, character processing. \0 means EOF.
+        while (!finished && bufPtr < readSize) {
+            // Inner loop, character processing.
             switch (cBuffer[bufPtr]) {
             case '#':
                 // Found a comment start.
@@ -167,10 +167,11 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
 
             case '\n':
                 commentFound = false;  /* FALLTHRU */
+            case '\0':
             case '\r':
             case '\t':
             case ' ':
-                // Newline, CR, Tab and space are end of token, or ignored.
+                // Newline, Null, CR, Tab and space are end of token, or ignored.
                 finished = true;
                 break;
 
