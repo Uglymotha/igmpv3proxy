@@ -125,7 +125,7 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
             LOG(LOG_ERR, errno, "starQuery: Out of Memory.");
         memcpy(qlst1, qlst, sizeof(struct qlst));
         qlst = qlst1;
-        LOG(LOG_INFO, 0, "startQuery #%d: Querying group %s on %s.", qC, inetFmt(qlst->mct->group, 1), IfDp->Name);
+        LOG(LOG_INFO, 0, "startQuery #%d: Querying group %s on %s", qC + 1, inetFmt(qlst->mct->group, 1), IfDp->Name);
         BIT_SET(qlst->mct->vifB.qry, IfDp->index);
         BIT_SET(qlst->mct->vifB.lm, IfDp->index);
         qlst->mct->vifB.age[IfDp->index] = qlst->misc;
