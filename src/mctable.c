@@ -412,13 +412,15 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
 *   Check if a group can be left upstream, because no more listeners downstream.
 */
 static inline void quickLeave(struct mcTable *mct, uint32_t src) {
-    struct IfDesc * IfDp;
-    clearHash(mct->dHostsHT, murmurhash3(src) % (CONFIG->dHostsHTSize));
-    IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IS_SET(mct, us, IfDp)) {
-        // Quickleave group upstream is last downstream host was detected.
-        LOG(LOG_INFO, 0, "iquickLeave: Group %s on %s. Last downstream host %s.",
-                          inetFmt(mct->group, 1), inetFmt(src, 2), IfDp->Name);
-        delGroup(mct, IfDp, NULL, 0);
+    if (CONFIG->fastUpstreamLeave) {
+        struct IfDesc * IfDp;
+        clearHash(mct->dHostsHT, src);
+        IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IS_SET(mct, us, IfDp)) {
+            // Quickleave group upstream is last downstream host was detected.
+            LOG(LOG_INFO, 0, "QuickLeave: Group %s on %s. Last downstream host %s.",
+                              inetFmt(mct->group, 1), inetFmt(src, 2), IfDp->Name);
+            delGroup(mct, IfDp, NULL, 0);
+        }
     }
 }
 
@@ -752,7 +754,7 @@ void clearGroups(void *Dp) {
 void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
     uint32_t         group   = grec->grec_mca.s_addr,
-                     srcHash  = CONFIG->fastUpstreamLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : 0;
+                     srcHash  = CONFIG->fastUpstreamLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
     struct src      *src     = NULL, *tsrc  = NULL;
     struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
