@@ -210,7 +210,7 @@ static void igmpProxyInit(void) {
         f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.\n") : exit(0);
 
     // Load the config file.
-    if (!loadConfig())
+    if (!loadConfig(CONFIG->configFilePath))
         LOG(LOG_ERR, 0, "Failed to load configuration file %s.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
