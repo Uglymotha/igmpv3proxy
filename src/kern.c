@@ -297,7 +297,7 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #endif
 
     // Remove mfc from kernel.
-    LOG(LOG_INFO, 0, "k_delMRoute: iRemoving MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+    LOG(LOG_INFO, 0, "k_delMRoute: Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
                       inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
