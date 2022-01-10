@@ -42,7 +42,7 @@
 
 // Local Prototypes.
 static FILE             *configFile(char *file, int open);
-static bool              nextConfigToken(char *token);
+static uint16_t          nextConfigToken(char *token, uint16_t ptr);
 static void              initCommonConfig();
 static void              parseFilters(char *token, struct filters ***filP, struct filters ***rateP);
 static struct vifConfig *parsePhyintToken(char *token);
@@ -66,7 +66,7 @@ static struct timers {
 } timers = { 0, 0, 0 };
 
 // Macro to get a token which should be integer.
-#define INTTOKEN (nextConfigToken(token) && ((intToken = atoll(token)) || !intToken))
+#define INTTOKEN (nextConfigToken(token, 0) && ((intToken = atoll(token)) || !intToken))
 
 /**
 *   Returns pointer to the configuration.
@@ -137,15 +137,17 @@ static FILE *configFile(char *file, int open) {
 /**
 *   Read next token from config file. Return false if EOF.
 */
-static bool nextConfigToken(char *token) {
+static uint16_t nextConfigToken(char *token, uint16_t ptr) {
     static uint16_t bufPtr = 0, readSize = 0, tokenPtr;
     bool            finished = false, overSized = false, commentFound = false;
     char           *cBuffer = token + MAX_TOKEN_LENGTH;
 
+    if (ptr > 0)
+        bufPtr = ptr;
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
     while (!finished) {
         // Outer loop, If read pointer is at the end of the buffer, we should read next chunk.
-        if (bufPtr == readSize) {
+        if (bufPtr == readSize || cBuffer[bufPtr] == '\0') {
             // Fill buffer. If 0 bytes read, or less then BUFFER bytes were read, assume EOF.
             bufPtr = 0;
             if (   (readSize > 0 && readSize < READ_BUFFER_SIZE)
@@ -185,7 +187,7 @@ static bool nextConfigToken(char *token) {
 
     token[tokenPtr++] = ' ';   // Add trailing whitespace.
     token[tokenPtr]   = '\0';  // Make sure token is null terminated string.
-    return (tokenPtr > 2);     // Valid token is more than 2 white spaces.
+    return bufPtr;     // Valid token is more than 2 white spaces.
 }
 
 /**
@@ -289,7 +291,7 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
                    filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    fil    = filNew;
     strcpy(list, token);
-    for (;nextConfigToken(token) && (strstr(filteropt, token) || !strstr(options, token));) {
+    for (;nextConfigToken(token, 0) && (strstr(filteropt, token) || !strstr(options, token));) {
         if (strcmp(" filter ", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
             if (fil.dir == (uint8_t)-1) {
                 if (strcmp(" up ", token) == 0 || strcmp(" 1 ", token) == 0)
@@ -349,7 +351,7 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
 
         if (fil.src.ip == 0xFFFFFFFF && fil.src.mask == 0) {
             // Error in list detected, go to next.
-            while (nextConfigToken(token) && ! strstr(options, token));
+            while (nextConfigToken(token, 0) && ! strstr(options, token));
             break;
         } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
@@ -385,7 +387,7 @@ bool loadConfig(char *cfgFile) {
     // Open config file and read first token.
     if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE)) || !(buf = token + MAX_TOKEN_LENGTH))  // Freed by self
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-    else if (! (confFilePtr = configFile(cfgFile, 1)) || !nextConfigToken(token))
+    else if (! (confFilePtr = configFile(cfgFile, 1)) || !nextConfigToken(token, 0))
         return false;
     LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
     // Set pointer to pointer to filters list.
@@ -492,7 +494,7 @@ bool loadConfig(char *cfgFile) {
             // Got a defaultfilterany token...
             if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
                 LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-                while (nextConfigToken(token) && !strstr(options, token));
+                while (nextConfigToken(token, 0) && !strstr(options, token));
             } else {
                 LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                 strcpy(token, "filter");
@@ -518,7 +520,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Default threshold %d.", intToken);
             }
 
-        } else if (strcmp(" defaultquerierip ", token) == 0 && nextConfigToken(token)) {
+        } else if (strcmp(" defaultquerierip ", token) == 0 && nextConfigToken(token, 0)) {
             // Got a querierip token.
             commonConfig.querierIp = inet_addr(token);
             LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(commonConfig.querierIp, 1));
@@ -595,7 +597,7 @@ bool loadConfig(char *cfgFile) {
             commonConfig.logLevel = !commonConfig.log2Stderr && intToken > 0 && intToken < 8 ? intToken : commonConfig.logLevel;
             LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
 
-        } else if (strcmp(" logfile ", token) == 0 && nextConfigToken(token)) {
+        } else if (strcmp(" logfile ", token) == 0 && nextConfigToken(token, 0)) {
             // Got a logfile token. Only use log file if not logging to stderr.
             FILE *fp;
             if (commonConfig.logFilePath)
@@ -624,7 +626,7 @@ bool loadConfig(char *cfgFile) {
             commonConfig.querierElection = false;
             LOG(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
 
-        } else if (strcmp(" cligroup ", token) == 0 && nextConfigToken(token)) {
+        } else if (strcmp(" cligroup ", token) == 0 && nextConfigToken(token, 0)) {
             // Got a cligroup token....
             if (! getgrnam(token))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group %s.", token);
@@ -637,7 +639,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strstr(phyintopt, token)) {
             LOG(LOG_WARNING, 0, "Config: %s without phyint. Ignoring.", token);
-            while (nextConfigToken(token) && !strstr(options, token));
+            while (nextConfigToken(token, 0) && !strstr(options, token));
             continue;
 
         } else {
@@ -647,7 +649,7 @@ bool loadConfig(char *cfgFile) {
                 return false;
         }
 
-        if (!nextConfigToken(token))
+        if (!nextConfigToken(token, 0))
             break;
     }
 
@@ -734,7 +736,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
     struct vifConfig *tmpPtr;
     int64_t           intToken;
 
-    if (!nextConfigToken(token)) {
+    if (!nextConfigToken(token, 0)) {
         // First token should be the interface name.
         LOG(LOG_WARNING, 0, "Config: You should at least name your interfeces.");
         return NULL;
@@ -753,7 +755,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
 
     // Parse the rest of the config.
-    if (nextConfigToken(token)) while (true) {
+    if (nextConfigToken(token, 0)) while (true) {
         if (strcmp(" filter ", token) == 0 || strcmp(" altnet ", token) == 0 || strcmp(" whitelist ", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing %s.", tmpPtr->name, token);
             parseFilters(token, &filP, &rateP);
@@ -795,7 +797,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpPtr->name, intToken);
             }
 
-        } else if (strcmp(" querierip ", token) == 0 && nextConfigToken(token)) {
+        } else if (strcmp(" querierip ", token) == 0 && nextConfigToken(token, 0)) {
             tmpPtr->qry.ip = inet_addr(token);
             LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.",tmpPtr->name,  inetFmt(tmpPtr->qry.ip, 1));
 
@@ -870,7 +872,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
             return NULL;
         }
 
-        if (!nextConfigToken(token))
+        if (!nextConfigToken(token, 0))
             break;
     }
 
