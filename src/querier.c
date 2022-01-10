@@ -80,16 +80,16 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
 *   Process a group specific query received from other querier.
 */
 inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver) {
-    struct mcTable  *mct  = findGroup(query->igmp_group.s_addr, false);
+    struct mcTable  *mct = findGroup(query->igmp_group.s_addr, false);
     // If no group found for query, not active or denied on interface return.
     if (! mct || NOT_SET(mct, d, IfDp) || !checkFilters(IfDp, 1, NULL, mct)) {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 1),
                            ! mct ? "not found." : NOT_SET(mct, d, IfDp) ? "not active." : "denied.");
-    } else if (nsrcs == 0) {
+    } else if (nsrcs == 0 && IS_SET(mct, d, IfDp)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
         startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, query->igmp_code,
-                                         ver == 3 ? query->igmp_misc & ~0x8 : IfDp->conf->qry.lmCount, 0, 0 });
+                                         ver == 3 ? (query->igmp_misc & ~0x8) : IfDp->conf->qry.lmCount, 0, 0 });
     } else {
         // Sort array of sources in query.
         struct qlst *qlst = NULL;
@@ -218,7 +218,7 @@ void groupSpecificQuery(struct qlst *qlst) {
             for (uint32_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
         sendIgmp(qlst->IfDp, query);
         free(query);
-    } else if (qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2) && !BIT_TST(qlst->type, 3)) {
+    } else if (!BIT_TST(qlst->type, 3) && qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2)) {
         if (query1 && query1->igmp_nsrcs)
             sendIgmp(qlst->IfDp, query1);
         if (query2 && query2->igmp_nsrcs)
