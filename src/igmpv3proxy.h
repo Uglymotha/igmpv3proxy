@@ -93,8 +93,8 @@ union cmsgU {
 #define TMQSZ      4                                    // Default timer queue size
 
 // Limit of configuration token.
-#define READ_BUFFER_SIZE    2048
-#define MAX_TOKEN_LENGTH    128
+#define READ_BUFFER_SIZE    512
+#define MAX_TOKEN_LENGTH    64
 #define MAX_GROUPNAME_SIZE  32
 
 // Keeps common configuration settings.
@@ -356,7 +356,7 @@ extern uint32_t alligmp3_group;                        // IGMPv3 addr in net ord
 struct Config *getConfig(void);
 void           freeConfig(int old);
 void           reloadConfig(uint64_t *tid);
-bool           loadConfig(void);
+bool           loadConfig(char *cfgFile);
 void           configureVifs(void);
 
 /**
