@@ -123,31 +123,12 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
 *   Process a newly received IGMP packet that is sitting in the input packet buffer.
 */
 void acceptIgmp(int recvlen, struct msghdr msgHdr) {
-    char               ifName[IF_NAMESIZE];
     struct ip         *ip = (struct ip *)recv_buf;
     register uint32_t  src = ip->ip_src.s_addr, dst = ip->ip_dst.s_addr;
     register int       ipdatalen = IPDATALEN, iphdrlen = ip->ip_hl << 2, ifindex = 0;
     struct igmp       *igmp = (struct igmp *)(recv_buf + iphdrlen);
     struct cmsghdr    *cmsgPtr;
     struct IfDesc     *IfDp = NULL;
-
-    //  Get the source interface from the control message.
-    for (cmsgPtr = CMSG_FIRSTHDR(&msgHdr); cmsgPtr; cmsgPtr = CMSG_NXTHDR(&msgHdr, cmsgPtr))
-        if (cmsgPtr->cmsg_level == IPPROTO_IP && cmsgPtr->cmsg_type == IFINFO) {
-#ifdef IP_PKTINFO
-            struct in_pktinfo *inp = (struct in_pktinfo *)CMSG_DATA(cmsgPtr);
-            ifindex = inp->ipi_ifindex;
-#elif IP_RECVIF
-            struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
-            ifindex = sdl->sdl_index;
-#endif
-            if (! (IfDp = getIf(ifindex, 1))) {
-                LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
-                                  inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
-                return;
-            }
-            break;
-        }
 
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
@@ -176,7 +157,24 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             LOG(LOG_NOTICE, 0, "Received unsupported upcall %d.", igmpMsg->im_msgtype);
             return;
         }
-    }
+    } else for (cmsgPtr = CMSG_FIRSTHDR(&msgHdr); cmsgPtr; cmsgPtr = CMSG_NXTHDR(&msgHdr, cmsgPtr))
+        //  Get the source interface from the control message.
+        if (cmsgPtr->cmsg_level == IPPROTO_IP && cmsgPtr->cmsg_type == IFINFO) {
+#ifdef IP_PKTINFO
+            struct in_pktinfo *inp = (struct in_pktinfo *)CMSG_DATA(cmsgPtr);
+            ifindex = inp->ipi_ifindex;
+#elif IP_RECVIF
+            struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
+            ifindex = sdl->sdl_index;
+#endif
+            if (! (IfDp = getIf(ifindex, 1))) {
+                char ifName[IF_NAMESIZE];
+                LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
+                                  inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
+                return;
+            }
+            break;
+        }
 
     // Sanity check the request, only allow requests for valid interface, valid src & dst and no corrupt packets.
     register uint16_t cksum = igmp->igmp_cksum;
