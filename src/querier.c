@@ -120,7 +120,7 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
         struct qlst *qlst1;
         // Check if we should take over a running GSQ. Allocate a new qlst as given may change when new queries are started. 
         if (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, qry, IfDp))
-            delQuery(IfDp, NULL, qlst->mct, NULL, qlst->type);
+            delQuery(IfDp, NULL, qlst->mct, NULL, 2);
         if (! (qlst1 = malloc(sizeof(struct qlst))))  // Freed by delQuery().
             LOG(LOG_ERR, errno, "starQuery: Out of Memory.");
         memcpy(qlst1, qlst, sizeof(struct qlst));
@@ -263,7 +263,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
     while (ql) {
         struct qlst *nql = qry ? NULL : ql->next;
         // Find all queriers for interface, group and type.
-        if (ql->IfDp == IfDp && ((! mct || ql->mct == mct) && (!type || type == (ql->type & ~0x1)))) {
+        if (ql->IfDp == IfDp && ((! mct || ql->mct == mct) && (!type || !((ql->type - type) & ~0x9)))) {
             if (src) {
                 // Find and remove source from all queries.
                 uint32_t i;
