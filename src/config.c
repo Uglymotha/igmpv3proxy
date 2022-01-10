@@ -280,8 +280,9 @@ static void initCommonConfig(void) {
 *   Parsing of filters. If an error is made in a list, the whole list will be ignored.
 */
 static void parseFilters(char *token, struct filters ***filP, struct filters ***rateP) {
+    int64_t  intToken;
     uint32_t addr, mask;
-    char list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
+    char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
     struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    fil    = filNew;
@@ -297,15 +298,14 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
                     fil.dir = 3;
             }
             if ((strcmp("ratelimit", token) == 0 || strcmp(" r ", token) == 0 || strcmp(" rl ", token) || strcmp(" 2 ", token) == 0) && INTTOKEN) {
-                uint64_t rl = atol(token);
                 if (! commonConfig.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
                     LOG(LOG_INFO, 0, "Config: FIL: %s Ignoring %s - %s %lld.", ! commonConfig.bwControlInterval ?
                         "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
-                         inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), rl);
+                         inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), intToken);
                     fil = filNew;
                     continue;
                 } else
-                    fil.action = rl >= 2 ? rl : 2;
+                    fil.action = intToken >= 2 ? intToken : 2;
             } else if (strcmp(" allow ", token) == 0 || strcmp(" a ", token) == 0 || strcmp(" 1 ", token) == 0)
                 fil.action = ALLOW;
             else if (strcmp(" block ", token) == 0 || strcmp(" b ", token) == 0 || strcmp(" 0 ", token) == 0)
