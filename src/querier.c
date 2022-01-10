@@ -90,7 +90,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
         LOG(LOG_INFO, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
         startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, query->igmp_code,
                                          ver == 3 ? (query->igmp_misc & ~0x8) : IfDp->conf->qry.lmCount, 0, 0 });
-    } else {
+    } else if (nsrcs > 0) {
         // Sort array of sources in query.
         struct qlst *qlst = NULL;
         struct src  *src  = mct->sources;
