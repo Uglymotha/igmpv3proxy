@@ -85,7 +85,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
     if (! mct || NOT_SET(mct, d, IfDp) || !checkFilters(IfDp, 1, NULL, mct)) {
         LOG(LOG_DEBUG, 0, "processGroupQuery: Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 1),
                            ! mct ? "not found." : NOT_SET(mct, d, IfDp) ? "not active." : "denied.");
-    } else if (nsrcs == 0 && IS_SET(mct, d, IfDp)) {
+    } else if (nsrcs == 0 && NOT_SET(mct, lm, IfDp)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "processGroupQuery: Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
         startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, query->igmp_code,
