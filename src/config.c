@@ -126,7 +126,7 @@ static FILE *configFile(char *fileName, int open) {
     static FILE *confFilePtr = NULL;
     if (!open && confFilePtr && fclose(confFilePtr) == 0)
         confFilePtr = NULL;
-    else if (open && confFilePtr && fclose(confFilePtr) != 0)
+    else if (open && fileName && confFilePtr && fclose(confFilePtr) != 0)
         LOG(LOG_ERR, errno, "Failed to close config file %s.", fileName);
 
     return !open || !(! fileName || (confFilePtr = fopen(fileName, "r"))) ? NULL : confFilePtr;
@@ -600,7 +600,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
             else if (!commonConfig.log2Stderr && (! (fp = fopen(token, "w")) || fclose(fp)))
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file %s.", token);
-            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = malloc(strlen(token))))
+            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = malloc(strlen(token) + 1)))
                 // Freed by igmpProxyCleanUp() or self
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else if (!commonConfig.log2Stderr) {
@@ -744,11 +744,10 @@ static struct vifConfig *parsePhyintToken(char *token) {
     tmpPtr->name[IF_NAMESIZE - 1] = '\0';
     if (strlen(token) >= IF_NAMESIZE)
         LOG(LOG_WARNING, 0, "Config (%s): %s larger than system IF_NAMESIZE(%d).", tmpPtr->name, IF_NAMESIZE, token);
-
     // Set pointer to pointer to filters list.
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
 
-    // Parse the rest of the config..
+    // Parse the rest of the config.
     if (nextConfigToken(token)) while (true) {
         if (strcmp(" filter ", token) == 0 || strcmp(" altnet ", token) == 0 || strcmp(" whitelist ", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing %s.", tmpPtr->name, token);
