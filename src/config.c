@@ -743,17 +743,17 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" logfile ", token) == 0 && (*bufPtr = nextConfigToken(token, 0))) {
             // Got a logfile token. Only use log file if not logging to stderr.
             FILE *fp;
-            if (commonConfig.logFilePath)
-                free(commonConfig.logFilePath);  // Alloced by self
             if (strstr(options, token))
                 LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
-            else if (!commonConfig.log2Stderr && (! (fp = fopen(token, "w")) || fclose(fp)))
-                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s%s'.", token + 1, "\b");
-            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = malloc(strlen(token) + 1)))
-                // Freed by igmpProxyCleanUp() or self
+            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
+                // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+            memcpy(commonConfig.logFilePath, token + 1, strlen(token) - 2);
+            commonConfig.logFilePath[strlen(token) - 2] = '\0';
+
+            if (!commonConfig.log2Stderr && (! (fp = fopen(commonConfig.logFilePath, "w")) || fclose(fp)))
+                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s%s'.", token + 1, "\b");
             else if (!commonConfig.log2Stderr) {
-                strcpy(commonConfig.logFilePath, token);
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
