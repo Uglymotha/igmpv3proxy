@@ -1,6 +1,6 @@
 /*
-**  igmpv3proxy - IGMP proxy based multicast router
-**  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
+**  igmpv3proxy - IGMPv3 Proxy based multicast router
+**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -30,7 +30,9 @@
 **  Leland Stanford Junior University.
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
+**  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
+
 /**
 *   querier.c: Process group and group and source specific queries.
 */
@@ -217,6 +219,7 @@ void groupSpecificQuery(struct qlst *qlst) {
         if (BIT_TST(qlst->type, 2))
             for (uint32_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
         sendIgmp(qlst->IfDp, query);
+        free(query);
     } else if (!BIT_TST(qlst->type, 3) && qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2)) {
         if (query1 && query1->igmp_nsrcs)
             sendIgmp(qlst->IfDp, query1);
