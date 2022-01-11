@@ -63,7 +63,8 @@ static char          *recv_buf;
 int main(int ArgCn, char *ArgVc[]) {
     int       c = 0, h = 0, i = 0, j = 0;
     uint32_t  addr, mask;
-    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL, paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path;
+    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL,
+              paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path = NULL, *file;
     fileName = basename(ArgVc[0]);
 
     // Initialize configuration, syslog and rng.
@@ -151,17 +152,23 @@ int main(int ArgCn, char *ArgVc[]) {
     } else if (optind == ArgCn - 1) {
         // Config file specified as last argument.
        strcpy(CONFIG->configFilePath, ArgVc[optind]);
-    } else for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
-        // Search for config in default locations.
-        struct stat st;
-        strcpy(CONFIG->configFilePath, path);
-        if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
-            break;
-        CONFIG->configFilePath[strlen(CONFIG->configFilePath) - 5] = '/';
-        CONFIG->configFilePath[strlen(CONFIG->configFilePath) - 4] = '\0';
-        if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
-            break;
+    } else {
+        for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
+            // Search for config in default locations.
+            struct stat st;
+            strcpy(CONFIG->configFilePath, path);
+            if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
+                break;
+            path[strlen(CONFIG->configFilePath) - 5] = '/';
+            path[strlen(CONFIG->configFilePath) - 4] = '\0';
+            if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
+                break;
+        }
+        if (! path)
+            CONFIG->configFilePath = NULL;
     }
+    if (! CONFIG->configFilePath)
+        LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
 
     do {
         sighandled = sigstatus = 0;
@@ -211,7 +218,7 @@ static void igmpProxyInit(void) {
 
     // Load the config file.
     if (!loadConfig(CONFIG->configFilePath))
-        LOG(LOG_ERR, 0, "Failed to load configuration file %s.", CONFIG->configFilePath);
+        LOG(LOG_ERR, 0, "Failed to load configuration file '%s'.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Enable mroute api open cli socket and set pollFD.
