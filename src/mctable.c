@@ -45,7 +45,7 @@ static inline bool        addGroup(struct mcTable* mct, struct IfDesc *IfDp, int
 static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
                                  struct src *src, uint32_t srcHash);
 static uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
-static inline void        quickLeave(struct mcTable *mct, uint32_t src);
+static inline void        quickLeave(struct mcTable *mct, uint32_t ip, uint32_t srcHash);
 static void               updateSourceFilter(struct mcTable *mct, int mode);
 
 // Multicast group membership tables.
@@ -413,14 +413,14 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
 /**
 *   Check if a group can be left upstream, because no more listeners downstream.
 */
-static inline void quickLeave(struct mcTable *mct, uint32_t src) {
+static inline void quickLeave(struct mcTable *mct, uint32_t ip, uint32_t srcHash) {
     if (CONFIG->fastUpstreamLeave) {
         struct IfDesc * IfDp;
-        clearHash(mct->dHostsHT, src);
+        clearHash(mct->dHostsHT, srcHash);
         IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IS_SET(mct, us, IfDp)) {
             // Quickleave group upstream is last downstream host was detected.
             LOG(LOG_INFO, 0, "QuickLeave: Group %s on %s. Last downstream host %s.",
-                              inetFmt(mct->group, 1), inetFmt(src, 2), IfDp->Name);
+                              inetFmt(mct->group, 1), inetFmt(ip, 2), IfDp->Name);
             delGroup(mct, IfDp, NULL, 0);
         }
     }
@@ -830,7 +830,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         }
         if (nsrcs == 0)
             // Leave message, check for quicleave.
-            quickLeave(mct, ip);
+            quickLeave(mct, ip, srcHash);
         if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp))
             // EX: Send Q(G).
             startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval,
@@ -889,7 +889,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                 LOG(LOG_DEBUG, 0, "updateGroup: Last source %s in group %s for client %s on %s.",
                                    inetFmt(grec->grec_src[i - (i >= nsrcs ? 1 : 0)].s_addr, 1), inetFmt(mct->group, 2),
                                    inetFmt(ip, 3), IfDp->Name);
-                quickLeave(mct, ip);
+                quickLeave(mct, ip, srcHash);
             }
         }
     }
