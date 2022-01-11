@@ -357,13 +357,13 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
         // Allocate and initialize memory for new configuration.
         LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
     *tmpPtr = DEFAULT_VIFCONF;
-    LOG(LOG_NOTICE, 0, "Config (%s%s): Configuring Interface.", token + 1, "\b");
+    LOG(LOG_NOTICE, 0, "Config (%s\b): Configuring Interface.", token + 1);
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
     memcpy(tmpPtr->name, token + 1, strlen(token) - 2);
     tmpPtr->name[strlen(token) - 2] = '\0';
     if (strlen(token) >= IF_NAMESIZE + 2)
-        LOG(LOG_WARNING, 0, "Config (%s): %s%s larger than system IF_NAMESIZE(%d).", tmpPtr->name, token + 1, "\b", IF_NAMESIZE);
+        LOG(LOG_WARNING, 0, "Config (%s): '%s\b' larger than system IF_NAMESIZE(%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
 
     // Set pointer to pointer to filters list.
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
@@ -371,7 +371,7 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
     // Parse the rest of the config.
     while ((*bufPtr = nextConfigToken(token, 0))) {
         while (strcmp(" filter ", token) == 0 || strcmp(" altnet ", token) == 0 || strcmp(" whitelist ", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s%s'.", tmpPtr->name, token + 1, "\b");
+            LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s\b'.", tmpPtr->name, token + 1);
             parseFilters(token, bufPtr, &filP, &rateP);
         }
 
@@ -466,7 +466,7 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
 
         } else if (!strstr(options, token) && strcmp("  ", token) != 0) {
             // Unknown token, return error. Token may be "  " if parseFilters() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s%s', discarding configuration.", tmpPtr->name, token + 1, "\b");
+            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s\b', discarding configuration.", tmpPtr->name, token + 1);
             if (!STARTUP) {
                 // When reloading config, find old vifconf and return that.
                 char   name[IF_NAMESIZE];
@@ -549,7 +549,7 @@ bool loadConfig(char *cfgFile) {
                     parseFilters(token, bufPtr, &filP, &rateP);
                 }
             } else if (strstr(phyintopt, token)) {
-                LOG(LOG_WARNING, 0, "Config: '%s%s' without phyint. Ignoring.", token + 1, "\b");
+                LOG(LOG_WARNING, 0, "Config: '%s\b' without phyint. Ignoring.", token + 1);
                 while ((*bufPtr = nextConfigToken(token, 0)) && !strstr(options, token));
             }
         } while (strcmp(" phyint ", token) == 0 || strcmp(" defaultfilter ", token) == 0 || strstr(phyintopt, token));
@@ -599,7 +599,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultupdown ", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s\b'.", token + 1);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
@@ -607,7 +607,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultup ", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s\b'.", token + 1);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
@@ -615,7 +615,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultdown ", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s\b'.", token + 1);
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
@@ -716,18 +716,20 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" logfile ", token) == 0 && (*bufPtr = nextConfigToken(token, 0))) {
             // Only use log file if not logging to stderr.
             FILE *fp;
+            if (commonConfig.log2Stderr)
+                continue;
             if (strstr(options, token))
                 LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
             else if (commonConfig.logFilePath && memcmp(commonConfig.logFilePath, token + 1, strlen(token) - 2) == 0)
                 continue;
-            else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
+            else if (! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             memcpy(commonConfig.logFilePath, token + 1, strlen(token) - 2);
             commonConfig.logFilePath[strlen(token) - 2] = '\0';
 
             if (!commonConfig.log2Stderr && (! (fp = fopen(commonConfig.logFilePath, "w")) || fclose(fp)))
-                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s%s'.", token + 1, "\b");
+                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s\b'.", token + 1);
             else if (!commonConfig.log2Stderr) {
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
@@ -745,7 +747,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" cligroup ", token) == 0 && (*bufPtr = nextConfigToken(token, 0))) {
             token[strlen(token) - 1] = '\0';
             if (! getgrnam(token + 1))
-                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group %s%s.", token + 1, "\b");
+                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s\b'.", token + 1);
             else {
                 commonConfig.socketGroup = *getgrnam(token + 1);
                 if (!STARTUP)
@@ -755,7 +757,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp("  ", token) != 0) {
             // Token may be "  " if parsePhyintToken() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config: Unknown token '%s%s' in config file.", token + 1, "\b");
+            LOG(LOG_WARNING, 0, "Config: Unknown token '%s\b' in config file.", token + 1);
             return false;
         }
     }
