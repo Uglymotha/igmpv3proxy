@@ -1,6 +1,6 @@
 /*
-**  igmpv3proxy - IGMP proxy based multicast router
-**  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
+**  igmpv3proxy - IGMPv3 Proxy based multicast router
+**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@
 **  Leland Stanford Junior University.
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
+**  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
 
 #include "igmpv3proxy.h"
