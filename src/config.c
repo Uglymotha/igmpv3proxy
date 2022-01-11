@@ -389,7 +389,7 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
 
         } else if (strcmp(" downstream ", token) == 0) {
             tmpPtr->state = IF_STATE_DOWNSTREAM;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Downstream.");
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Downstream.", tmpPtr->name);
 
         } else if (strcmp(" disabled ", token) == 0) {
             tmpPtr->state = IF_STATE_DISABLED;
@@ -874,7 +874,7 @@ void reloadConfig(uint64_t *tid) {
     oldcommonConfig = commonConfig;
 
     // Load the new configuration keep reference to the old.
-    if (!loadConfig(CONFIG->configFilePath)) {
+    if (!loadConfig(commonConfig.configFilePath)) {
         LOG(LOG_WARNING, 0, "Unable to load config file %s, keeping current.", commonConfig.configFilePath);
         if (vifConf)
             freeConfig(0);
