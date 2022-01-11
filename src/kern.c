@@ -33,6 +33,10 @@
 **  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
 
+/**
+*   Kern.c - Kernel API functions.
+*/
+
 #include "igmpv3proxy.h"
 
 static int mrouterFD = -1;
