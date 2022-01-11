@@ -55,6 +55,7 @@
 #include <time.h>
 #include <grp.h>
 #include <ifaddrs.h>
+#include <ctype.h>
 
 #include <sys/stat.h>
 #include <sys/socket.h>
