@@ -514,7 +514,7 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
     else if (! (confFilePtr = configFile(cfgFile, 1)))
         return false;
-    LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
+    LOG(LOG_INFO, 0, "loadConfig: Loading config from '%s'.", cfgFile);
     // Set pointer to pointer to filters list.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
 
