@@ -122,6 +122,7 @@ void freeConfig(int old) {
 *   Opens or closes config file specified by fileName.
 *   When opening a file and file was not closed, retry and bail if it fails again.
 *   When called with NULL pointer to filename, return current config file pointer.
+*   When called with open = 2, restore the pointer to previous config file.
 */
 static FILE *configFile(void *file, int open) {
     static FILE *confFilePtr = NULL;
@@ -136,16 +137,20 @@ static FILE *configFile(void *file, int open) {
 }
 
 /**
-*   Read next token from config file. Return false if EOF.
+*   Read next token from config file. Return 0 if EOF.
+*   First parameter is pointer to token and config file buffer.
+*   Second parameter is used to restore the buffer pointer to previous location in buffer.
 */
 static uint16_t nextConfigToken(char *token, uint16_t ptr) {
     static uint16_t bufPtr   = 0,     readSize  = 0,     tokenPtr;
     bool            finished = false, overSized = false, commentFound = false;
     char           *cBuffer  = token + MAX_TOKEN_LENGTH;
 
+    // Restore buffer pointer if specified.
     if (ptr > 0)
         bufPtr = ptr;
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
+
     while (!finished && !(bufPtr == readSize && !(bufPtr = 0) &&
                           (   (readSize > 0 && readSize < READ_BUFFER_SIZE && !(readSize = 0))
                            || (readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
@@ -182,7 +187,7 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
 }
 
 /**
-*   Initializes default configuration.
+*   Initialize default values of configuration parameters.
 */
 static void initCommonConfig(void) {
     // Defaul Query Parameters.
@@ -204,7 +209,7 @@ static void initCommonConfig(void) {
     // Sent leave message upstream on leave messages from downstream.
     commonConfig.fastUpstreamLeave = false;
 
-    // Defaul maximum nr of sources for route. Always a minimum of 64 sources is allowed
+    // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
     commonConfig.maxOrigins = DEFAULT_MAX_ORIGINS;
 
@@ -242,9 +247,12 @@ static void initCommonConfig(void) {
 }
 
 /*
-*   Parsing of filters. If an error is made in a list, the whole list will be ignored.
+*   Parsing of filters. We do not want to bother the user with configuring filters in reverse.
+*   We will dereference the vifConf->filters/rates(->next) pointers several times, so they will be added
+*   in the order they are configured, while using only one assignment. Seems complex, but really isn't.
+*   Configured filters will be split up into two lists, ACL and ratelimits.
 */
-static void parseFilters(char *token, uint16_t * bufPtr, struct filters ***filP, struct filters ***rateP) {
+static void parseFilters(char *token, uint16_t *bufPtr, struct filters ***filP, struct filters ***rateP) {
     int64_t  intToken;
     uint32_t addr, mask;
     char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
@@ -335,7 +343,7 @@ static void parseFilters(char *token, uint16_t * bufPtr, struct filters ***filP,
 }
 
 /**
-*   Internal function to parse phyint config.
+*   Parsing interface configuration. Takes pointer to token buffer and location in buffer, latter is only updated.
 */
 static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
     struct vifConfig *tmpPtr;
@@ -499,25 +507,27 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
 }
 
 /**
-*   Loads the configuration from file, and stores the config in respective holders.
+*   Loads the configuration from specified file.
+*   Recursive function used for processing configuration files as they are encountered by include directive.
+*   Because of this recursion it is important to keep track of configuration file and buffer pointers.
 */
 bool loadConfig(char *cfgFile) {
     char             *token, *buf;
     FILE             *confFilePtr;
     int64_t           intToken;
-    uint16_t          bp = 0, *bufPtr = &bp;
+    uint16_t          bp = 0, *bufPtr = &bp;  // Pointer to satisfy INTTOKEN macro across functions.
     struct vifConfig *tmpPtr;
 
     // Initialize common config
     initCommonConfig();
 
-    // Open config file and read first token.
+    // Allocate buffer and open config file.
     if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE)) || !(buf = token + MAX_TOKEN_LENGTH))  // Freed by self
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
     else if (! (confFilePtr = configFile(cfgFile, 1)))
         return false;
     LOG(LOG_INFO, 0, "loadConfig: Loading config from '%s'.", cfgFile);
-    // Set pointer to pointer to filters list.
+    // Set pointer to pointer to default filters and rates list.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
 
     // Loop until all configuration is read.
@@ -773,8 +783,7 @@ bool loadConfig(char *cfgFile) {
         } else {
             // Unparsable token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s%s' in config file.", token + 1, "\b");
-            if (!STARTUP)
-                return false;
+            return false;
         }
     }
 
