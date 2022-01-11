@@ -718,6 +718,8 @@ bool loadConfig(char *cfgFile) {
             FILE *fp;
             if (strstr(options, token))
                 LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
+            else if (commonConfig.logFilePath && memcmp(commonConfig.logFilePath, token + 1, strlen(token) - 2) == 0)
+                continue;
             else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
