@@ -30,10 +30,12 @@
 **  Leland Stanford Junior University.
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
+**  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
+
 /**
 *   mctable.c
-*   Maintains IGMP group membership and routes.
+*   Maintains IGMP group and source membership state and kernel multicast routes.
 */
 
 #include "igmpv3proxy.h"
