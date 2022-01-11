@@ -355,7 +355,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring interface.", token);
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
-    memcpy(tmpPtr->name, token + 1, strlen(token - 2));
+    memcpy(tmpPtr->name, token + 1, strlen(token) - 2);
     tmpPtr->name[strlen(token) - 2] = '\0';
     if (strlen(token) >= IF_NAMESIZE)
         LOG(LOG_WARNING, 0, "Config (%s): %s larger than system IF_NAMESIZE(%d).", tmpPtr->name, IF_NAMESIZE, token);
