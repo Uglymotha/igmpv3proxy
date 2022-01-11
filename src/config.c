@@ -138,28 +138,24 @@ static FILE *configFile(char *file, int open) {
 *   Read next token from config file. Return false if EOF.
 */
 static uint16_t nextConfigToken(char *token, uint16_t ptr) {
-    static uint16_t bufPtr = 0, readSize = 0, tokenPtr;
+    static uint16_t bufPtr   = 0,     readSize  = 0,     tokenPtr;
     bool            finished = false, overSized = false, commentFound = false;
-    char           *cBuffer = token + MAX_TOKEN_LENGTH;
+    char           *cBuffer  = token + MAX_TOKEN_LENGTH;
 
     if (ptr > 0)
         bufPtr = ptr;
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
     while (!finished) {
-        // Outer loop, If read pointer is at the end of the buffer, we should read next chunk.
-        if (bufPtr == readSize) {
+        // Outer loop, buffer filling, reset bufPtr.
+        if (bufPtr == readSize && !(bufPtr = 0))
             // Fill buffer. If 0 bytes read, or less then BUFFER bytes were read, assume EOF.
-            bufPtr = 0;
             if (   (readSize > 0 && readSize < READ_BUFFER_SIZE)
                 || (readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0) {
                 finished = true;
                 readSize = 0;
             }
-        }
-
-        while (!finished && bufPtr < readSize) {
+        do switch (cBuffer[bufPtr]) {
             // Inner loop, character processing.
-            switch (cBuffer[bufPtr]) {
             case '#':
                 // Found a comment start.
                 commentFound = true;
@@ -172,18 +168,16 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
             case '\t':
             case ' ':
                 // Newline, Null, CR, Tab and space are end of token, or ignored.
-                finished = true;
+                finished = (tokenPtr > 1);
                 break;
 
             default:
-                // Append char to token. When token is oversized do not increase tokenPtr, but keep parsing until whitespace.
+                // Append char to token. When oversized do not increase tokenPtr and keep parsing until EOL.
                 if (!commentFound && !overSized)
                     token[tokenPtr++] = tolower(cBuffer[bufPtr]);
                 if (tokenPtr == MAX_TOKEN_LENGTH - 2)
                     overSized = true;
-            }
-            bufPtr++;
-        }
+        } while (++bufPtr < readSize && !finished);
     }
 
     token[tokenPtr++] = ' ';   // Add trailing whitespace.
@@ -361,8 +355,8 @@ static struct vifConfig *parsePhyintToken(char *token) {
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring interface.", token);
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
-    memcpy(tmpPtr->name, token, IF_NAMESIZE);
-    tmpPtr->name[IF_NAMESIZE - 1] = '\0';
+    memcpy(tmpPtr->name, token + 1, strlen(token - 2));
+    tmpPtr->name[strlen(token -2)] = '\0';
     if (strlen(token) >= IF_NAMESIZE)
         LOG(LOG_WARNING, 0, "Config (%s): %s larger than system IF_NAMESIZE(%d).", tmpPtr->name, IF_NAMESIZE, token);
     // Set pointer to pointer to filters list.
