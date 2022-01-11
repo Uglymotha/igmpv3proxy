@@ -33,9 +33,9 @@
 */
 
 /**
-*   igmpv3proxy.c - The main file for the IGMP proxy application.
-*
-*   February 2005 - Johnny Egeland, September 2020 - Sietse van Zanen
+*   igmpv3proxy.c - The main file for the IGMPv3 Proxy application.
+*                   September 2020 - Sietse van Zanen
+*                   February 2005  - Johnny Egeland (Original IGMPv2 Proxy)
 */
 
 #include "igmpv3proxy.h"
