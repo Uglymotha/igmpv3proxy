@@ -33,6 +33,10 @@
 **  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
 
+/**
+*   timers.c - Functions for IGMP and other timers.
+*/
+
 #include "igmpv3proxy.h"
 
 // Queue definition.
