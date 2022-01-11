@@ -30,12 +30,12 @@
 **  Leland Stanford Junior University.
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
+**  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
 
 /**
 *   igmpv3proxy.c - The main file for the IGMPv3 Proxy application.
-*                   September 2020 - Sietse van Zanen
-*                   February 2005  - Johnny Egeland (Original IGMPv2 Proxy)
+*                   September 2020 - February 2022 - Sietse van Zanen
 */
 
 #include "igmpv3proxy.h"
