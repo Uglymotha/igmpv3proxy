@@ -464,8 +464,8 @@ static struct vifConfig *parsePhyintToken(char *token, uint16_t *bufPtr) {
             tmpPtr->qry.lmCount = intToken;
             LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
 
-        } else if (!strstr(options, token)) {
-            // Unknown token, return error.
+        } else if (!strstr(options, token) && strcmp("  ", token) != 0) {
+            // Unknown token, return error. Token may be "  " if parseFilters() returns without valid token.
             LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s%s', discarding configuration.", tmpPtr->name, token + 1, "\b");
             if (!STARTUP) {
                 // When reloading config, find old vifconf and return that.
@@ -780,8 +780,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: %s.", commonConfig.socketGroup.gr_name);
             }
 
-        } else {
-            // Unparsable token.
+        } else if (strcmp("  ", token) != 0) {
+            // Unparsable token. Token may be "  " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s%s' in config file.", token + 1, "\b");
             return false;
         }
