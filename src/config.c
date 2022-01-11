@@ -145,15 +145,10 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
     if (ptr > 0)
         bufPtr = ptr;
     token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
-    while (!finished) {
-        // Outer loop, buffer filling, reset bufPtr.
-        if (bufPtr == readSize && !(bufPtr = 0))
-            // Fill buffer. If 0 bytes read, or less then BUFFER bytes were read, assume EOF.
-            if (   (readSize > 0 && readSize < READ_BUFFER_SIZE)
-                || (readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0) {
-                finished = true;
-                readSize = 0;
-            }
+    while (!finished && !(bufPtr == readSize && !(bufPtr = 0) &&
+                          (   (readSize > 0 && readSize < READ_BUFFER_SIZE && !(readSize = 0))
+                           || (readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
+        // Outer loop, buffer filling, reset bufPtr on buffer fill and readSize when EOF.
         do switch (cBuffer[bufPtr]) {
             // Inner loop, character processing.
             case '#':
@@ -178,11 +173,11 @@ static uint16_t nextConfigToken(char *token, uint16_t ptr) {
                 if (tokenPtr == MAX_TOKEN_LENGTH - 2)
                     overSized = true;
         } while (++bufPtr < readSize && !finished);
-    }
+
 
     token[tokenPtr++] = ' ';   // Add trailing whitespace.
     token[tokenPtr]   = '\0';  // Make sure token is null terminated string.
-    return bufPtr;
+    return bufPtr;             // When done, bufPtr will be 0.
 }
 
 /**
@@ -266,9 +261,9 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
                 else
                     fil.dir = 3;
             }
-            if ((strcmp("ratelimit", token) == 0 || strcmp(" r ", token) == 0 || strcmp(" rl ", token) || strcmp(" 2 ", token) == 0) && INTTOKEN) {
+            if ((strcmp(" ratelimit ", token) == 0 || strcmp(" r ", token) == 0 || strcmp(" rl ", token) == 0 || strcmp(" 2 ", token) == 0) && INTTOKEN) {
                 if (! commonConfig.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
-                    LOG(LOG_INFO, 0, "Config: FIL: %s Ignoring %s - %s %lld.", ! commonConfig.bwControlInterval ?
+                    LOG(LOG_INFO, 0, "Config: %s Ignoring %s - %s %lld.", ! commonConfig.bwControlInterval ?
                         "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
                          inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), intToken);
                     fil = filNew;
@@ -283,18 +278,19 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
                 LOG(LOG_WARNING, 0, "Config: FIL: %s is not a valid filter action or direction.", token);
                 fil = filErr;
             }
-        } else if (!parseSubnetAddress(token, &addr, &mask)) {
-            // Unknown token. Ignore...
-            LOG(LOG_WARNING, 0, "Config: FIL: Uparsable subnet '%s'.", token, list);
+
+        } else if (!parseSubnetAddress(token + 1, &addr, &mask)) {
+            // Unknown token. Ignore.
+            LOG(LOG_WARNING, 0, "Config: Uparsable subnet '%s'.", token + 1, list);
             fil = filErr;
         } else if ((strcmp(" whitelist ", list) == 0 || (strcmp(" filter ", list) == 0 && fil.src.ip != 0xFFFFFFFF))
                    && !IN_MULTICAST(ntohl(addr))) {
             // Check if valid MC group for whitelist are filter dst.
-            LOG(LOG_WARNING, 0, "Config: FIL: %s is not a valid multicast address.", inetFmt(addr, 1));
+            LOG(LOG_WARNING, 0, "Config: %s is not a valid multicast address.", inetFmt(addr, 1));
             fil = filErr;
         } else if ((addr | mask) != mask) {
             // Check if valid sn/mask pair.
-            LOG(LOG_WARNING, 0, "Config: FIL: %s is not valid subnet/mask pair.", inetFmts(addr, mask, 1));
+            LOG(LOG_WARNING, 0, "Config: %s is not valid subnet/mask pair.", inetFmts(addr, mask, 1));
             fil = filErr;
         } else if (strcmp(" altnet ", list) == 0) {
             // altnet is not usefull or compatible with igmpv3, ignore.
@@ -306,7 +302,7 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
                 fil.src.ip   = addr;
                 fil.src.mask = mask;
             } else {
-                LOG(LOG_WARNING, 0, "Config: FIL: Source address %s cannot be multicast.", inetFmts(addr, mask, 1));
+                LOG(LOG_WARNING, 0, "Config: Source address %s cannot be multicast.", inetFmts(addr, mask, 1));
                 fil = filErr;
             }
         } else if (fil.dst.ip == 0xFFFFFFFF) {
@@ -316,12 +312,12 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
 
         if (fil.src.ip == 0xFFFFFFFF && fil.src.mask == 0) {
             // Error in list detected, go to next.
-            while (nextConfigToken(token, 0) && ! strstr(options, token));
+            while (nextConfigToken(token, 0) && !strstr(options, token));
             break;
         } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
             // Correct filter, add and reset fil to process next entry.
-            LOG(LOG_INFO, 0, "Config: FIL: Adding filter Src: %s, Dst: %s, Dir: %s, Action: %s.",
+            LOG(LOG_INFO, 0, "Config: Adding filter Src: %s, Dst: %s, Dir: %s, Action: %s.",
                                 inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
                                 fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
@@ -352,20 +348,21 @@ static struct vifConfig *parsePhyintToken(char *token) {
         // Allocate and initialize memory for new configuration.
         LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
     *tmpPtr = DEFAULT_VIFCONF;
-    LOG(LOG_NOTICE, 0, "Config (%s): Configuring interface.", token);
+    LOG(LOG_NOTICE, 0, "Config (%s%s): Configuring Interface.", token + 1, "\b");
 
     // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
     memcpy(tmpPtr->name, token + 1, strlen(token) - 2);
     tmpPtr->name[strlen(token) - 2] = '\0';
-    if (strlen(token) >= IF_NAMESIZE)
-        LOG(LOG_WARNING, 0, "Config (%s): %s larger than system IF_NAMESIZE(%d).", tmpPtr->name, IF_NAMESIZE, token);
+    if (strlen(token) >= IF_NAMESIZE + 2)
+        LOG(LOG_WARNING, 0, "Config (%s): %s%s larger than system IF_NAMESIZE(%d).", tmpPtr->name, token + 1, "\b", IF_NAMESIZE);
+
     // Set pointer to pointer to filters list.
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
 
     // Parse the rest of the config.
     while (nextConfigToken(token, 0)) {
         while (strcmp(" filter ", token) == 0 || strcmp(" altnet ", token) == 0 || strcmp(" whitelist ", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Parsing %s.", tmpPtr->name, token);
+            LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s%s'.", tmpPtr->name, token + 1, "\b");
             parseFilters(token, &filP, &rateP);
         }
 
@@ -460,7 +457,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
 
         } else if (!strstr(options, token)) {
             // Unknown token, return error.
-            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s', discarding configuration.", tmpPtr->name, token);
+            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s%s', discarding configuration.", tmpPtr->name, token + 1, "\b");
             if (!STARTUP) {
                 // When reloading config, find old vifconf and return that.
                 char   name[IF_NAMESIZE];
@@ -491,13 +488,12 @@ static struct vifConfig *parsePhyintToken(char *token) {
         else
             tmpPtr->qry.responseInterval = getIgmpExp(tmpPtr->qry.interval * 10, 1);
         float f = (tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs",
-                            tmpPtr->qry.interval, f);
+        LOG(LOG_NOTICE, 0, "Config (%s): Setting default query interval to %ds. Default response interval %.1fs",
+                            tmpPtr->name, tmpPtr->qry.interval, f);
     }
 
     if (!tmpPtr->noDefaultFilter)
         *filP = commonConfig.defaultFilters;
-
     return tmpPtr;
 }
 
@@ -507,7 +503,7 @@ static struct vifConfig *parsePhyintToken(char *token) {
 bool loadConfig(char *cfgFile) {
     char             *token, *buf;
     FILE             *confFilePtr;
-    int64_t           intToken;
+    int64_t           intToken, bufPtr;
     struct vifConfig *tmpPtr;
 
     // Initialize common config
@@ -516,24 +512,39 @@ bool loadConfig(char *cfgFile) {
     // Open config file and read first token.
     if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE)) || !(buf = token + MAX_TOKEN_LENGTH))  // Freed by self
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-    else if (! (confFilePtr = configFile(cfgFile, 1)) || !nextConfigToken(token, 0))
+    else if (! (confFilePtr = configFile(cfgFile, 1)))
         return false;
     LOG(LOG_INFO, 0, "loadConfig: Loading config from %s.", commonConfig.configFilePath);
     // Set pointer to pointer to filters list.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
 
     // Loop until all configuration is read.
-    while (true) {
-        if (strcmp(" phyint ", token) == 0 && (tmpPtr = parsePhyintToken(token))) {
-            // Got a valid interface config.
-            LOG(LOG_NOTICE, 0, "Config: IF: %s, Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p: %p",
-                                tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters);
-            // Insert config, and move temppointer to next location...
-            tmpPtr->next = vifConf;
-            vifConf      = tmpPtr;
-            continue;
+    while ((bufPtr = nextConfigToken(token, 0))) {
+        do {
+            // Process parameters which will result in a next valid config token first.
+            if (strcmp(" phyint ", token) == 0 && (tmpPtr = parsePhyintToken(token))) {
+                // Got a valid interface config, insert.
+                LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p/%p/%p",
+                    tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters, tmpPtr->rates);
+                tmpPtr->next = vifConf;
+                vifConf      = tmpPtr;
+            } else if (strcmp(" defaultfilter ", token) == 0) {
+                // Got a defaultfilterany token...
+                if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
+                    LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
+                    while (nextConfigToken(token, 0) && !strstr(options, token));
+                } else {
+                    LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
+                    strcpy(token, "filter");
+                    parseFilters(token, &filP, &rateP);
+                }
+            } else if (strstr(phyintopt, token)) {
+                LOG(LOG_WARNING, 0, "Config: '%s%s' without phyint. Ignoring.", token + 1, "\b");
+                while (nextConfigToken(token, 0) && !strstr(options, token));
+            }
+        } while (strcmp(" phyint ", token) == 0 || strcmp(" defaultfilter ", token) == 0 || strstr(phyintopt, token));
 
-        } else if (STARTUP && strcmp(" kbufsize ", token) == 0 && INTTOKEN) {
+        if (STARTUP && strcmp(" kbufsize ", token) == 0 && INTTOKEN) {
             // Got a reqqueuesize token....
             commonConfig.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
             LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dKB.", intToken);
@@ -584,7 +595,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" defaultupdown ", token) == 0) {
             // Got a defaultupdown token...
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
@@ -593,7 +604,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" defaultup ", token) == 0) {
             // Got a defaultup token...
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
@@ -602,7 +613,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" defaultdown ", token) == 0) {
             // Got a defaultdown token...
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state can only be specified once. Ignoring %s.", token);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s%s'.", token + 1, "\b");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
@@ -618,18 +629,6 @@ bool loadConfig(char *cfgFile) {
                     LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
                 *commonConfig.defaultFilters = FILTERANY;
             }
-
-        } else if (strcmp(" defaultfilter ", token) == 0) {
-            // Got a defaultfilterany token...
-            if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
-                LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-                while (nextConfigToken(token, 0) && !strstr(options, token));
-            } else {
-                LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
-                strcpy(token, "filter");
-                parseFilters(token, &filP, &rateP);
-            }
-            continue;
 
         } else if (strcmp(" defaultratelimit ", token) == 0 && INTTOKEN) {
             // Default Ratelimit
@@ -734,7 +733,7 @@ bool loadConfig(char *cfgFile) {
             if (strstr(options, token))
                 LOG(LOG_WARNING, 0, "Config: No logfile path specified.");
             else if (!commonConfig.log2Stderr && (! (fp = fopen(token, "w")) || fclose(fp)))
-                LOG(LOG_WARNING, errno, "Config: Cannot open log file %s.", token);
+                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s%s'.", token + 1, "\b");
             else if (!commonConfig.log2Stderr && ! (commonConfig.logFilePath = malloc(strlen(token) + 1)))
                 // Freed by igmpProxyCleanUp() or self
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
@@ -742,7 +741,7 @@ bool loadConfig(char *cfgFile) {
                 strcpy(commonConfig.logFilePath, token);
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
-                LOG(LOG_NOTICE, 0, "Config: Log File: %s", commonConfig.logFilePath);
+                LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
             }
 
         } else if (strcmp(" proxylocalmc ", token) == 0) {
@@ -758,7 +757,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" cligroup ", token) == 0 && nextConfigToken(token, 0)) {
             // Got a cligroup token....
             if (! getgrnam(token))
-                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group %s.", token);
+                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group %s%s.", token + 1, "\b");
             else {
                 commonConfig.socketGroup = *getgrnam(token);
                 if (!STARTUP)
@@ -766,20 +765,12 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: %s.", commonConfig.socketGroup.gr_name);
             }
 
-        } else if (strstr(phyintopt, token)) {
-            LOG(LOG_WARNING, 0, "Config: %s without phyint. Ignoring.", token);
-            while (nextConfigToken(token, 0) && !strstr(options, token));
-            continue;
-
         } else {
             // Unparsable token.
-            LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file.", token);
+            LOG(LOG_WARNING, 0, "Config: Unknown token '%s%s' in config file.", token + 1, "\b");
             if (!STARTUP)
                 return false;
         }
-
-        if (!nextConfigToken(token, 0))
-            break;
     }
 
     // Close the configfile.
