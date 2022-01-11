@@ -30,6 +30,7 @@
 **  Leland Stanford Junior University.
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
+**  igmpproxy     - Copyright (C) 2005 by Johny Egeland et al.
 */
 
 #include "igmpv3proxy.h"
