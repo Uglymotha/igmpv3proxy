@@ -552,7 +552,10 @@ bool loadConfig(char *cfgFile) {
 
         if (strcmp(" include", token) == 0 && nextToken(token, bufPtr) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
             // Load the config from include file and restore current.
-            loadConfig(token + 1);
+            if (loadConfig(token + 1))
+                LOG(LOG_INFO, 0, "loadConfig: Succesfully loaded config from '%s'.", token + 1);
+            else
+                LOG(LOG_WARNING, 0, "loadConfig: Failed to load config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
         } else if (STARTUP && strcmp(" kbufsize", token) == 0 && INTTOKEN) {
