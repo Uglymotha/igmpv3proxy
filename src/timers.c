@@ -41,8 +41,8 @@
 
 // Queue definition.
 static struct timeOutQueue {
-    uint64_t              id;
-    timer_f               func;    // function to call
+    uint64_t                id;
+    void             (*func)();    // function to call
     void                 *data;    // Argument for function.
     struct timespec       time;    // Time for event
     struct timeOutQueue  *next;    // Next event in queue
@@ -76,14 +76,14 @@ struct timespec timer_ageQueue() {
 *   Inserts a timer in queue. Queue is maintained in order ofr execution.
 *   FIFO if timers are scheduled at exactly the same time.
 */
-uint64_t timer_setTimer(struct timespec delay, const char *name, timer_f action, void *data) {
+uint64_t timer_setTimer(struct timespec delay, const char *name, void (*func)(), void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
     uint64_t                i = 1,        n = strlen(name) + 1;
 
     if (! (node = malloc(sizeof(struct timeOutQueue) + n)))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, action, data, {delay.tv_sec, delay.tv_nsec}, NULL };
+    *node = (struct timeOutQueue){ id++, func, data, {delay.tv_sec, delay.tv_nsec}, NULL };
     for (int j = 0; j < n; node->name[j] = name[j], j++);
     if (delay.tv_sec < 0) {
         clock_gettime(CLOCK_REALTIME, &curtime);
