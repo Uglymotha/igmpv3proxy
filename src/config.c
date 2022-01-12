@@ -120,7 +120,6 @@ void freeConfig(int old) {
 
 /**
 *   Opens or closes config file specified by fileName.
-*   When opening a file and file was not closed, retry and bail if it fails again.
 *   When called with NULL pointer to filename, return current config file pointer.
 *   When called with open = 2, restore the pointer to previous config file.
 */
@@ -130,10 +129,10 @@ static FILE *configFile(void *file, int open) {
         confFilePtr = NULL;
     else if (open == 2)
         confFilePtr = (FILE *)file;
-    else if (open && file && confFilePtr && fclose(confFilePtr) != 0)
-        LOG(LOG_ERR, errno, "Failed to close config file %s.", file);
+    else if (open && file)
+        confFilePtr = fopen(file, "r");
 
-    return !open || !(open == 2 || ! file || (confFilePtr = fopen(file, "r"))) ? NULL : confFilePtr;
+    return confFilePtr;
 }
 
 /**
@@ -365,7 +364,8 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
 
     // Parse the rest of the config.
     while (nextToken(token, bufPtr)) {
-        while (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0) {
+        while (   (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)
+               && token[1] != '\0') {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
             parseFilters(token, bufPtr, &filP, &rateP);
         }
@@ -459,7 +459,7 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
             tmpPtr->qry.lmCount = intToken;
             LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
 
-        } else if (!strstr(options, token) && strcmp(" ", token) != 0) {
+        } else if (!strstr(options, token) && token[1] != '\0') {
             // Unknown token, return error. Token may be " " if parseFilters() returns without valid token.
             LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s', discarding configuration.", tmpPtr->name, token + 1);
             if (!STARTUP) {
@@ -480,7 +480,7 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
             }
             return NULL;
 
-        } else if (!strstr(phyintopt, token))
+        } else if (!strstr(phyintopt, token) || token[1] == '\0')
             break;
     }
 
@@ -512,7 +512,7 @@ bool loadConfig(char *cfgFile) {
     FILE             *confFilePtr;
     struct vifConfig *tmpPtr;
 
-    // Initialize common config
+    // Initialize common config when loading main config file.
     if (cfgFile == commonConfig.configFilePath)
         initCommonConfig();
 
@@ -527,7 +527,8 @@ bool loadConfig(char *cfgFile) {
 
     // Loop until all configuration is read.
     while (nextToken(token, bufPtr)) {
-        while (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token)) {
+        while (   (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))
+               && token[1] != '\0') {
             // Process parameters which will result in a next valid config token first.
             if (strcmp(" phyint", token) == 0 && (tmpPtr = parsePhyintToken(token, bufPtr))) {
                 LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p/%p/%p",
@@ -537,7 +538,7 @@ bool loadConfig(char *cfgFile) {
             } else if (strcmp(" defaultfilter", token) == 0) {
                 if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
                     LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-                    while (nextToken(token, bufPtr) && !strstr(options, token));
+                    while (nextToken(token, bufPtr) && token[1] != '\0' && !strstr(options, token));
                 } else {
                     LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                     strcpy(token, "filter");
@@ -545,16 +546,14 @@ bool loadConfig(char *cfgFile) {
                 }
             } else if (strstr(phyintopt, token)) {
                 LOG(LOG_WARNING, 0, "Config: '%s' without phyint. Ignoring.", token + 1);
-                while (nextToken(token, bufPtr) && !strstr(options, token));
+                while (nextToken(token, bufPtr) && token[1] != '\0' && !strstr(options, token));
             }
         }
 
         if (strcmp(" include", token) == 0 && nextToken(token, bufPtr) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
-            LOG(LOG_DEBUG,0,"BLABLA %d", bp);
+            // Load the config from include file and restore current.
             loadConfig(token + 1);
-            LOG(LOG_DEBUG,0,"BLABLA1 %d", bp);
             configFile(confFilePtr, 2);
-            LOG(LOG_DEBUG,0,"BLABLA2 %d", bp);
 
         } else if (STARTUP && strcmp(" kbufsize", token) == 0 && INTTOKEN) {
             commonConfig.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
@@ -750,14 +749,17 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup.gr_name);
             }
 
-        } else if (strcmp(" ", token) != 0)
+        } else if (token[1] != '\0')
             // Token may be "  " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file.", token + 1);
     }
 
-    // Close the configfile.
-    configFile(NULL, 0);
+    // Close the configfile. When including files, we're done.
+    if (configFile(NULL, 0))
+        LOG(LOG_WARNING, errno, "Failed to close config file '%s'.", cfgFile);
     free(token);  // Alloced by self
+    if (cfgFile != commonConfig.configFilePath)
+        return true;
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
