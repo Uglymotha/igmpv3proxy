@@ -42,11 +42,11 @@
 #include "igmpv3proxy.h"
 
 // Local Prototypes.
-static FILE             *configFile(void *file, int open);
-static bool              nextToken(char *token, int64_t *bufPtr);
-static void              initCommonConfig();
-static void              parseFilters(char *token, int64_t *bufPtr, struct filters ***filP, struct filters ***rateP);
-static struct vifConfig *parsePhyintToken(char *token, int64_t *ptr);
+static FILE *configFile(void *file, int open);
+static bool  nextToken(char *token);
+static void  initCommonConfig();
+static void  parseFilters(char *token, struct filters ***filP, struct filters ***rateP);
+static void  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
 static const char *options = " phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
@@ -56,7 +56,7 @@ static const char *phyintopt = " updownstream upstream downstream disabled ratel
 static struct Config commonConfig, oldcommonConfig;
 
 // Structures to keep vif configuration and black/whitelists.
-static struct vifConfig   *vifConf, *ovifConf;
+static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
@@ -67,7 +67,7 @@ static struct timers {
 } timers = { 0, 0, 0 };
 
 // Macro to get a token which should be integer.
-#define INTTOKEN ((nextToken(token, bufPtr)) && ((intToken = atoll(token + 1)) || !intToken))
+#define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
 
 /**
 *   Returns pointer to the configuration.
@@ -137,15 +137,15 @@ static FILE *configFile(void *file, int open) {
 
 /**
 *   Read next token from config file. Return 0 if EOF.
-*   First parameter is pointer to token and config file buffer.
-*   Second parameter is used to restore the buffer pointer to previous location in buffer.
+*   Parameter is pointer to token and config file buffer. loadConfig will allocate the buffer for us.
+*   At the end of the buffer space we have 2 uint32_t for counters.
 */
-static bool nextToken(char *token, int64_t *ptr) {
+static bool nextToken(char *token) {
     char     *cBuffer  = token + MAX_TOKEN_LENGTH;
-    uint16_t *readSize = (uint16_t *)ptr, *bufPtr = (uint16_t *)ptr + 1, tokenPtr;
+    uint32_t *readSize = (uint32_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE), *bufPtr = readSize + 1, tokenPtr = 0;
     bool      finished = false, overSized = false, commentFound = false;
 
-    token[(tokenPtr = 1) - 1] = ' ';  // First char of token is whitespace.
+    token[tokenPtr++] = ' ';  // First char of token is whitespace.
     while (!finished && !(*bufPtr == *readSize && !(*bufPtr = 0) &&
                           (   (*readSize > 0 && *readSize < READ_BUFFER_SIZE && !(*readSize = 0))
                            || (*readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
@@ -245,15 +245,16 @@ static void initCommonConfig(void) {
 *   in the order they are configured, while using only one assignment. Seems complex, but really isn't.
 *   Configured filters will be split up into two lists, ACL and ratelimits.
 */
-static void parseFilters(char *token, int64_t *bufPtr, struct filters ***filP, struct filters ***rateP) {
+static void parseFilters(char *token, struct filters ***filP, struct filters ***rateP) {
     int64_t  intToken;
     uint32_t addr, mask;
     char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
     struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    fil    = filNew;
-    strcpy(list, token);
-    for (;(nextToken(token, bufPtr)) && (strstr(filteropt, token) || !strstr(options, token));) {
+
+   strcpy(list, token);
+    for (;(nextToken(token)) && (strstr(filteropt, token) || !strstr(options, token));) {
         if (strcmp(" filter", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
             if (fil.dir == (uint8_t)-1) {
                 if (strcmp(" up", token) == 0 || strcmp(" 1", token) == 0)
@@ -315,7 +316,7 @@ static void parseFilters(char *token, int64_t *bufPtr, struct filters ***filP, s
 
         if (fil.src.ip == 0xFFFFFFFF && fil.src.mask == 0) {
             // Error in list detected, go to next.
-            while ((nextToken(token, bufPtr)) && !strstr(options, token));
+            while ((nextToken(token)) && !strstr(options, token));
             break;
         } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
@@ -339,17 +340,17 @@ static void parseFilters(char *token, int64_t *bufPtr, struct filters ***filP, s
 /**
 *   Parsing interface configuration. Takes pointer to token buffer and location in buffer, latter is only updated.
 */
-static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
+void parsePhyintToken(char *token) {
     struct vifConfig *tmpPtr;
     int64_t           intToken;
 
-    if (!nextToken(token, bufPtr)) {
+    if (!nextToken(token)) {
         // First token should be the interface name.
         LOG(LOG_WARNING, 0, "Config: You should at least name your interfeces.");
-        return NULL;
+        return;
     } else if (! (tmpPtr = malloc(sizeof(struct vifConfig))))
         // Allocate and initialize memory for new configuration.
-        LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig()
+        LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig or self()
     *tmpPtr = DEFAULT_VIFCONF;
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", token + 1);
 
@@ -363,11 +364,11 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
     struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
 
     // Parse the rest of the config.
-    while (nextToken(token, bufPtr)) {
+    while (nextToken(token)) {
         while (   (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)
                && token[1] != '\0') {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
-            parseFilters(token, bufPtr, &filP, &rateP);
+            parseFilters(token, &filP, &rateP);
         }
 
         if (strcmp(" nodefaultfilter", token) == 0) {
@@ -406,7 +407,7 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpPtr->name, intToken);
             }
 
-        } else if (strcmp(" querierip", token) == 0 && nextToken(token, bufPtr)) {
+        } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
             tmpPtr->qry.ip = inet_addr(token + 1);
             LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 1));
 
@@ -462,23 +463,21 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
         } else if (!strstr(options, token) && token[1] != '\0') {
             // Unknown token, return error. Token may be " " if parseFilters() returns without valid token.
             LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s', discarding configuration.", tmpPtr->name, token + 1);
-            if (!STARTUP) {
-                // When reloading config, find old vifconf and return that.
-                char   name[IF_NAMESIZE];
-                struct filters *fil;
-                strcpy(name, tmpPtr->name);
-                for (tmpPtr = ovifConf; tmpPtr && strcmp(name, tmpPtr->name) != 0; tmpPtr = tmpPtr->next);
-                if (tmpPtr) {
-                    LOG(LOG_WARNING, 0, "Config (%s): Reusing old configuration.", tmpPtr->name);
-                    tmpPtr->state |= 0x80;   // Flag interface, it must not be freed after reload.
-                    if (!tmpPtr->noDefaultFilter) {
-                        for (fil = tmpPtr->filters; fil && fil->next != oldcommonConfig.defaultFilters; fil = fil->next);
-                        fil ? (fil->next = NULL, filP = &fil->next) : (tmpPtr->filters = NULL, filP = &tmpPtr->filters);
-                    }
-                    break;
+            // Find old vifconf and return that.
+            struct filters *fil;
+            strcpy(token, tmpPtr->name);
+            free(tmpPtr);  // Alloced by self.
+            for (tmpPtr = ovifConf; tmpPtr && strcmp(token, tmpPtr->name) != 0; tmpPtr = tmpPtr->next);
+            if (tmpPtr) {
+                LOG(LOG_WARNING, 0, "Config (%s): Reusing old configuration.", tmpPtr->name);
+                tmpPtr->state |= 0x80;   // Flag interface, it must not be freed after reload.
+                if (!tmpPtr->noDefaultFilter) {
+                    for (fil = tmpPtr->filters; fil && fil->next != oldcommonConfig.defaultFilters; fil = fil->next);
+                    fil ? (fil->next = NULL, filP = &fil->next) : (tmpPtr->filters = NULL, filP = &tmpPtr->filters);
                 }
+                break;
             }
-            return NULL;
+            return;
 
         } else if (!strstr(phyintopt, token) || token[1] == '\0')
             break;
@@ -496,9 +495,14 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
                             tmpPtr->name, tmpPtr->qry.interval, f);
     }
 
+    // Insert vifconf in list and set default filters.
+    tmpPtr->next = vifConf;
+    vifConf      = tmpPtr;
     if (!tmpPtr->noDefaultFilter)
         *filP = commonConfig.defaultFilters;
-    return tmpPtr;
+
+    LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p/%p/%p",
+        tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters, tmpPtr->rates);
 }
 
 /**
@@ -507,50 +511,49 @@ static struct vifConfig *parsePhyintToken(char *token, int64_t *bufPtr) {
 *   Because of this recursion it is important to keep track of configuration file and buffer pointers.
 */
 bool loadConfig(char *cfgFile) {
-    int64_t           intToken = 0, bp = 0, *bufPtr = &bp;
-    char             *token;
-    FILE             *confFilePtr;
-    struct vifConfig *tmpPtr;
+    FILE           *confFilePtr;
+    char           *token;
+    static int64_t  intToken = 0, count = 0;
 
-    // Initialize common config when loading main config file.
-    if (cfgFile == commonConfig.configFilePath)
-        initCommonConfig();
+    // Check recursion and return if exceeded.
+    if (count >= MAX_CFGFILE_RECURSION) {
+        LOG(LOG_WARNING, 0, "Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
+        return false;
+    }
 
-    // Allocate buffer and open config file.
-    if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE)))  // Freed by self
+        // Allocate buffer and open config file and initialize common config when loading main config file.
+    if (! (token = calloc(1, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))))  // Freed by self
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
     else if (! (confFilePtr = configFile(cfgFile, 1)))
         return false;
-    LOG(LOG_INFO, 0, "loadConfig: Loading config from '%s'.", cfgFile);
-    // Set pointer to pointer to default filters and rates list.
-    struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
+    else if (cfgFile == commonConfig.configFilePath)
+        initCommonConfig();
+    LOG(LOG_INFO, 0, "loadConfig: Loading config (%d) from '%s'.", ++count, cfgFile);
 
-    // Loop until all configuration is read.
-    while (nextToken(token, bufPtr)) {
+    // Set pointer to pointer to default filters and rates list. Loop until all configuration is read.
+    struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
+    while (nextToken(token)) {
+        // Process parameters which will result in a next valid config token first.
         while (   (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))
                && token[1] != '\0') {
-            // Process parameters which will result in a next valid config token first.
-            if (strcmp(" phyint", token) == 0 && (tmpPtr = parsePhyintToken(token, bufPtr))) {
-                LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p/%p/%p",
-                    tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters, tmpPtr->rates);
-                tmpPtr->next = vifConf;
-                vifConf      = tmpPtr;
+            if (strcmp(" phyint", token) == 0) {
+                parsePhyintToken(token);
             } else if (strcmp(" defaultfilter", token) == 0) {
                 if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
                     LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-                    while (nextToken(token, bufPtr) && token[1] != '\0' && !strstr(options, token));
+                    while (nextToken(token) && token[1] != '\0' && !strstr(options, token));
                 } else {
                     LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                     strcpy(token, "filter");
-                    parseFilters(token, bufPtr, &filP, &rateP);
+                    parseFilters(token, &filP, &rateP);
                 }
             } else if (strstr(phyintopt, token)) {
                 LOG(LOG_WARNING, 0, "Config: '%s' without phyint. Ignoring.", token + 1);
-                while (nextToken(token, bufPtr) && token[1] != '\0' && !strstr(options, token));
+                while (nextToken(token) && token[1] != '\0' && !strstr(options, token));
             }
         }
 
-        if (strcmp(" include", token) == 0 && nextToken(token, bufPtr) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
+        if (strcmp(" include", token) == 0 && nextToken(token) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
             // Load the config from include file and restore current.
             if (loadConfig(token + 1))
                 LOG(LOG_INFO, 0, "loadConfig: Succesfully loaded config from '%s'.", token + 1);
@@ -648,7 +651,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Default threshold %d.", intToken);
             }
 
-        } else if (strcmp(" defaultquerierip", token) == 0 && nextToken(token, bufPtr)) {
+        } else if (strcmp(" defaultquerierip", token) == 0 && nextToken(token)) {
             commonConfig.querierIp = inet_addr(token + 1);
             LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(commonConfig.querierIp, 1));
 
@@ -714,7 +717,7 @@ bool loadConfig(char *cfgFile) {
             commonConfig.logLevel = !commonConfig.log2Stderr && intToken > 0 && intToken < 8 ? intToken : commonConfig.logLevel;
             LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
 
-        } else if (strcmp(" logfile", token) == 0 && nextToken(token, bufPtr)) {
+        } else if (strcmp(" logfile", token) == 0 && nextToken(token)) {
             // Only use log file if not logging to stderr.
             FILE *fp;
             if (commonConfig.log2Stderr || (commonConfig.logFilePath &&
@@ -742,7 +745,7 @@ bool loadConfig(char *cfgFile) {
             commonConfig.querierElection = false;
             LOG(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
 
-        } else if (strcmp(" cligroup", token) == 0 && nextToken(token, bufPtr)) {
+        } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
             if (! getgrnam(token + 1))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
             else {
@@ -753,14 +756,15 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (token[1] != '\0')
-            // Token may be "  " if parsePhyintToken() returns without valid token.
+            // Token may be " " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file.", token + 1);
     }
 
     // Close the configfile. When including files, we're done.
     if (configFile(NULL, 0))
-        LOG(LOG_WARNING, errno, "Failed to close config file '%s'.", cfgFile);
+        LOG(LOG_WARNING, errno, "Failed to close config file (%d) '%s'.", count, cfgFile);
     free(token);  // Alloced by self
+    count--;
     if (cfgFile != commonConfig.configFilePath)
         return true;
 
