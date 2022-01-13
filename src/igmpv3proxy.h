@@ -100,6 +100,7 @@ union cmsgU {
 #define MAX_GROUPNAME_SIZE  32
 
 // Keeps common configuration settings.
+#define MAX_CFGFILE_RECURSION 128
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
     // Daemon parameters.
