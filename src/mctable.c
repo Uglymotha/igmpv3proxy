@@ -453,18 +453,18 @@ static uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp) {
 *   Bandwith control processing for BSD systems.
 */
 void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
-    struct IfDesc  *IfDp;
-    struct mfc     *mfc;
-
     // Process all pending BW_UPCALLS.
     for (int i = 0; i < nr; i++, bwUpc++) {
+        struct IfDesc  *IfDp;
+        struct mfc     *mfc = NULL;
         struct mcTable *mct = findGroup(bwUpc->bu_dst.s_addr, false);
         if (! mct)
-            LOG(LOG_WARNING, 0, "BW_UPCALL: Src %s, Dst %s, but no group found.",
+            LOG(LOG_NOTICE, 0, "BW_UPCALL: Src %s, Dst %s, but no group found.",
                                  inetFmt(bwUpc->bu_dst.s_addr, 1), inetFmt(bwUpc->bu_dst.s_addr, 2));
+        else
+            // Find the source for the upcall and add to counter.
+            for (mfc = mct->mfc; mfc && mfc->src->ip != bwUpc->bu_src.s_addr; mfc = mfc->next);
 
-        // Find the source for the upcall and add to counter.
-        for (mfc = mct->mfc; mfc && mfc->src->ip != bwUpc->bu_src.s_addr; mfc = mfc->next);
         if (mfc) {
             mfc->bytes += bwUpc->bu_measured.b_bytes;
             mfc->rate = bwUpc->bu_measured.b_bytes / CONFIG->bwControlInterval;
