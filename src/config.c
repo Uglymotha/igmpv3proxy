@@ -87,22 +87,20 @@ void freeConfig(int old) {
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
-        if (!old || !(cConf->state & 0x80)) {
-            // Do not remove and free filters, if interface config should be reused.
+        if (!(cConf->state & 0x80)) {
+            // Remove and free filters if interface should not be reused.
             for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
             for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
-        }
-        if (old && (cConf->state & 0x80)) {
+        } else if (old) {
             // If interface was flagged, because of interface config error reset flag.
             cConf->state &= ~0x80;
-        } else if ((cConf->state & 0x80) && !cConf->noDefaultFilter) {
-            // If interface was flagged and config reload failed enterely, reset to old default filters.
+        } else if (!cConf->noDefaultFilter) {
+            // If interface was flagged and config reload failed entirely, reset to old default filters.
             for (fil = cConf->filters; fil && fil->next != dFil; fil = fil->next);
             fil ? (fil->next = oldcommonConfig.defaultFilters) : (cConf->filters = oldcommonConfig.defaultFilters);
-        } else
-            free(cConf);
-
+        }
     }
+
     if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
         for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
