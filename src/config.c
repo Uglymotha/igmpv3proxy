@@ -85,8 +85,7 @@ void freeConfig(int old) {
                            *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
-    for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
-        tConf = cConf->next;
+    for (cConf = old ? ovifConf : vifConf, tConf = cConf ? cConf->next : NULL; cConf; cConf = tConf, tConf = cConf->next) {
         if (!(cConf->state & 0x80)) {
             // Remove and free filters if interface should not be reused.
             for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
@@ -135,15 +134,14 @@ static FILE *configFile(void *file, int open) {
 
 /**
 *   Read next token from config file. Return 0 if EOF.
-*   Parameter is pointer to token and config file buffer. loadConfig will allocate the buffer for us.
+*   Parameter is pointer to token and config file buffer. loadConfig will allocate and initialize the buffer for us.
 *   At the end of the buffer space we have 2 uint32_t for counters.
 */
 static bool nextToken(char *token) {
     char     *cBuffer  = token + MAX_TOKEN_LENGTH;
-    uint32_t *readSize = (uint32_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE), *bufPtr = readSize + 1, tokenPtr = 0;
+    uint32_t *readSize = (uint32_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE), *bufPtr = readSize + 1, tokenPtr = 1;
     bool      finished = false, overSized = false, commentFound = false;
 
-    token[tokenPtr++] = ' ';  // First char of token is whitespace.
     while (!finished && !(*bufPtr == *readSize && !(*bufPtr = 0) &&
                           (   (*readSize > 0 && *readSize < READ_BUFFER_SIZE && !(*readSize = 0))
                            || (*readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
@@ -513,20 +511,23 @@ bool loadConfig(char *cfgFile) {
     char           *token;
     static int64_t  intToken = 0, count = 0;
 
-    // Check recursion and return if exceeded.
     if (count >= MAX_CFGFILE_RECURSION) {
+        // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
         return false;
-    }
-
-        // Allocate buffer and open config file and initialize common config when loading main config file.
-    if (! (token = calloc(1, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))))  // Freed by self
-        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-    else if (! (confFilePtr = configFile(cfgFile, 1)))
+    if (! (confFilePtr = configFile(cfgFile, 1)))
+        // Open config file.
         return false;
+    else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))))  // Freed by self
+        // Allocate buffer and open config file and initialize common config when loading main config file.
+        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
     else if (cfgFile == commonConfig.configFilePath)
+        // Initialize common config whel loading main config file.
         initCommonConfig();
-    LOG(LOG_INFO, 0, "loadConfig: Loading config (%d) from '%s'.", ++count, cfgFile);
+    count++;
+    token[0] = ' ';
+    *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
+    LOG(LOG_INFO, 0, "loadConfig: Loading config (%d) from '%s'.", count, cfgFile);
 
     // Set pointer to pointer to default filters and rates list. Loop until all configuration is read.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
@@ -559,11 +560,15 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "loadConfig: Failed to load config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
-        } else if (STARTUP && strcmp(" kbufsize", token) == 0 && INTTOKEN) {
+        } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
+            commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
+            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
+
+        } else if (strcmp(" kbufsize", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
             LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dKB.", intToken);
 
-        } else if (STARTUP && strcmp(" pbufsize", token) == 0 && INTTOKEN) {
+        } else if (strcmp(" pbufsize", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.pBufsz = intToken > 0 && intToken < 65536 ? intToken : BUF_SIZE;
             LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dB.", intToken);
 
@@ -594,10 +599,6 @@ bool loadConfig(char *cfgFile) {
                 commonConfig.dHostsHTSize = (intToken - intToken % 8) * 8;
                 LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.dHostsHTSize / 8);
             }
-
-        } else if (STARTUP && strcmp(" mctables", token) == 0 && INTTOKEN) {
-            commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
-            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
 
         } else if (strcmp(" defaultupdown", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
@@ -721,15 +722,14 @@ bool loadConfig(char *cfgFile) {
             if (commonConfig.log2Stderr || (commonConfig.logFilePath &&
                                             memcmp(commonConfig.logFilePath, token + 1, strlen(token) - 2) == 0))
                 continue;
+            else if (! (fp = fopen(token + 1, "w")) || fclose(fp))
+                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-            memcpy(commonConfig.logFilePath, token + 1, strlen(token) - 1);
-            commonConfig.logFilePath[strlen(token) - 1] = '\0';
-
-            if (!commonConfig.log2Stderr && (! (fp = fopen(commonConfig.logFilePath, "w")) || fclose(fp)))
-                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
-            else if (!commonConfig.log2Stderr) {
+            else {
+                memcpy(commonConfig.logFilePath, token + 1, strlen(token) - 1);
+                commonConfig.logFilePath[strlen(token) - 1] = '\0';
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
@@ -904,6 +904,7 @@ void configureVifs(void) {
         }
 
         // Link the configuration to the interface. And update the states.
+        oconfPtr = IfDp->conf;
         IfDp->conf = confPtr;
         if (!CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
@@ -929,7 +930,6 @@ void configureVifs(void) {
 
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SSIGHUP)) {
-            for (oconfPtr = ovifConf; oconfPtr && strcmp(IfDp->Name, oconfPtr->name); oconfPtr = oconfPtr->next);
             for (fil = confPtr->filters, ofil = oconfPtr ? oconfPtr->filters : NULL;
                  fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
