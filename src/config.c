@@ -515,15 +515,17 @@ bool loadConfig(char *cfgFile) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
         return false;
-    if (! (confFilePtr = configFile(cfgFile, 1)))
+    } if (! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
         return false;
-    else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))))  // Freed by self
+    } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
         // Allocate buffer and open config file and initialize common config when loading main config file.
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-    else if (cfgFile == commonConfig.configFilePath)
+    } else if (cfgFile == commonConfig.configFilePath)
         // Initialize common config whel loading main config file.
         initCommonConfig();
+
+    // Increase count and initialize buffer. First char of token is ' ', counters to 0.
     count++;
     token[0] = ' ';
     *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
