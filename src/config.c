@@ -42,11 +42,11 @@
 #include "igmpv3proxy.h"
 
 // Local Prototypes.
-static FILE *configFile(void *file, int open);
-static bool  nextToken(char *token);
-static void  initCommonConfig();
-static void  parseFilters(char *token, struct filters ***filP, struct filters ***rateP);
-static void  parsePhyintToken(char *token);
+static inline FILE *configFile(void *file, int open);
+static inline bool  nextToken(char *token);
+static inline void  initCommonConfig();
+static inline void  parseFilters(char *token, struct filters ***filP, struct filters ***rateP);
+static inline void  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
 static const char *options = " phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
@@ -120,8 +120,9 @@ void freeConfig(int old) {
 *   When called with NULL pointer to filename, return current config file pointer.
 *   When called with open = 2, restore the pointer to previous config file.
 */
-static FILE *configFile(void *file, int open) {
+static inline FILE *configFile(void *file, int open) {
     static FILE *confFilePtr = NULL;
+
     if (!open && confFilePtr && fclose(confFilePtr) == 0)
         confFilePtr = NULL;
     else if (open == 2)
@@ -137,14 +138,14 @@ static FILE *configFile(void *file, int open) {
 *   Parameter is pointer to token and config file buffer. loadConfig will allocate and initialize the buffer for us.
 *   At the end of the buffer space we have 2 uint32_t for counters.
 */
-static bool nextToken(char *token) {
+static inline bool nextToken(char *token) {
     char     *cBuffer  = token + MAX_TOKEN_LENGTH;
     uint32_t *readSize = (uint32_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE), *bufPtr = readSize + 1, tokenPtr = 1;
     bool      finished = false, overSized = false, commentFound = false;
 
     while (!finished && !(*bufPtr == *readSize && !(*bufPtr = 0) &&
-                          (   (*readSize > 0 && *readSize < READ_BUFFER_SIZE && !(*readSize = 0))
-                           || (*readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
+                           (    (*readSize > 0 && *readSize < READ_BUFFER_SIZE && !(*readSize = 0))
+                             || (*readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
         // Outer loop, buffer filling, reset bufPtr on buffer fill and readSize when EOF.
         do switch (cBuffer[*bufPtr]) {
             // Inner loop, character processing.
@@ -178,7 +179,7 @@ static bool nextToken(char *token) {
 /**
 *   Initialize default values of configuration parameters.
 */
-static void initCommonConfig(void) {
+static inline void initCommonConfig(void) {
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
     commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
@@ -241,7 +242,7 @@ static void initCommonConfig(void) {
 *   in the order they are configured, while using only one assignment. Seems complex, but really isn't.
 *   Configured filters will be split up into two lists, ACL and ratelimits.
 */
-static void parseFilters(char *token, struct filters ***filP, struct filters ***rateP) {
+static inline void parseFilters(char *token, struct filters ***filP, struct filters ***rateP) {
     int64_t  intToken;
     uint32_t addr, mask;
     char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
@@ -336,7 +337,7 @@ static void parseFilters(char *token, struct filters ***filP, struct filters ***
 /**
 *   Parsing interface configuration. Takes pointer to token buffer and location in buffer, latter is only updated.
 */
-void parsePhyintToken(char *token) {
+void inline parsePhyintToken(char *token) {
     struct vifConfig *tmpPtr;
     int64_t           intToken;
 
@@ -877,7 +878,7 @@ void reloadConfig(uint64_t *tid) {
 *   - Control querier process and do route maintenance on interface transitions.
 *   - Add and remove vifs from the kernel if needed.
 */
-void configureVifs(void) {
+inline void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
     struct vifConfig *confPtr = NULL, *oconfPtr = NULL;
     struct filters   *fil, *ofil;
