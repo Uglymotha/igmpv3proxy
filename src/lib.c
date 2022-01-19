@@ -124,8 +124,10 @@ inline bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t 
     tmpStr = strtok(NULL, "/");
     if (tmpStr) {
         bitcnt = atoi(tmpStr);
-        if (bitcnt < 0 || bitcnt > 32)
+        if (bitcnt < 0 || bitcnt > 32) {
+            *addr = (uint32_t)-1;
             return false;
+        }
     } else
         bitcnt = 32;
     *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
