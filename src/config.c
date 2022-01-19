@@ -515,7 +515,7 @@ bool loadConfig(char *cfgFile) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
         return false;
-    } if (! (confFilePtr = configFile(cfgFile, 1))) {
+    } else if (! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
         return false;
     } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
