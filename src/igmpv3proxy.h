@@ -90,17 +90,17 @@ union cmsgU {
 
 // In / output buffering.
 #define BUF_SIZE   9216                                 // Jumbo MTU
-#define K_BUF_SIZE 512                                  // Default kernel ring buffer size in KB
-#define REQQSZ     16                                   // Default request queue size
-#define TMQSZ      4                                    // Default timer queue size
+#define K_BUF_SIZE  512                                 // Default kernel ring buffer size in KB
+#define REQQSZ       16                                 // Default request queue size
+#define TMQSZ         4                                 // Default timer queue size
 
-// Limit of configuration token.
-#define READ_BUFFER_SIZE    512
-#define MAX_TOKEN_LENGTH    64
-#define MAX_GROUPNAME_SIZE  32
+// Limits of configuration / token.
+#define READ_BUFFER_SIZE      512
+#define MAX_TOKEN_LENGTH      128
+#define MAX_GROUPNAME_SIZE     32
+#define MAX_CFGFILE_RECURSION 128
 
 // Keeps common configuration settings.
-#define MAX_CFGFILE_RECURSION 128
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
     // Daemon parameters.
@@ -250,14 +250,14 @@ struct IfDesc {
 #define DEFAULT_INTERVAL_QUERY_RESPONSE 100
 
 // IGMP Global Values.
-#define MIN_IP_HEADER_LEN	20
-#define MAX_IP_HEADER_LEN	60
-#define IP_HEADER_RAOPT_LEN	24
+#define MIN_IP_HEADER_LEN   20
+#define MAX_IP_HEADER_LEN   60
+#define IP_HEADER_RAOPT_LEN 24
 
 // Route parameters.
-#define DEFAULT_MAX_ORIGINS     64                       // Maximun nr of group sources.
-#define DEFAULT_HASHTABLE_SIZE  32                       // Default host tracking hashtable size.
-#define DEFAULT_ROUTE_TABLES    32                       // Default hash table size for route table.
+#define DEFAULT_MAX_ORIGINS    64                       // Maximun nr of group sources.
+#define DEFAULT_HASHTABLE_SIZE 32                       // Default host tracking hashtable size.
+#define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
 #define GOT_SIGHUP  0x02
@@ -269,8 +269,8 @@ struct IfDesc {
 #define CONFRELOAD (sigstatus & GOT_SIGUSR1)
 #define IFREBUILD  (sigstatus & GOT_SIGUSR2)
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
-#define NOSIG      (sigstatus == 0)
-#define STARTUP    (sigstatus == 1)
+#define NOSIG      (sigstatus ==  0)
+#define STARTUP    (sigstatus ==  1)
 #define SHUTDOWN   (sigstatus == 32)
 
 // CLI Defines.
@@ -318,12 +318,12 @@ struct igmpv3_report {
 };
 
 // IGMP Defines.
-#define IGMPV3_MODE_IS_INCLUDE   1
-#define IGMPV3_MODE_IS_EXCLUDE   2
-#define IGMPV3_CHANGE_TO_INCLUDE 3
-#define IGMPV3_CHANGE_TO_EXCLUDE 4
-#define IGMPV3_ALLOW_NEW_SOURCES 5
-#define IGMPV3_BLOCK_OLD_SOURCES 6
+#define IGMPV3_MODE_IS_INCLUDE    1
+#define IGMPV3_MODE_IS_EXCLUDE    2
+#define IGMPV3_CHANGE_TO_INCLUDE  3
+#define IGMPV3_CHANGE_TO_EXCLUDE  4
+#define IGMPV3_ALLOW_NEW_SOURCES  5
+#define IGMPV3_BLOCK_OLD_SOURCES  6
 #define IGMPV3_MINLEN            12
 #define IGMP_LOCAL(x) ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
 
