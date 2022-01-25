@@ -127,7 +127,7 @@ inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mo
         if (errno == ENOBUFS) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups or sources was exceeded");
 #ifdef __linux__
-            LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships / net.ipv4.igmp_max_msf '");
+            LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships / net.ipv4.igmp_max_msf'.");
 #endif
         }
         return false;
