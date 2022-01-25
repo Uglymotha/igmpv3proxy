@@ -173,7 +173,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
         // Leave group upstream and clear upstream status.
         if (IS_SET(mct, us, IfDp)) {
             LOG(LOG_INFO, 0, "delGroup: Leaving group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
-            k_setSourceFilter(IfDp, mct->group, MCAST_INCLUDE, 0, NULL);
+            k_updateGroup(IfDp, 0, mct->group, 0, (uint32_t)-1);
         }
         BIT_CLR(mct->vifB.u, IfDp->index);
         BIT_CLR(mct->vifB.su, IfDp->index);
