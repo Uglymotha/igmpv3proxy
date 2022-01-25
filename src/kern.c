@@ -113,7 +113,7 @@ inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mo
 #endif
 
     if (setsockopt(mrouterFD, IPPROTO_IP,
-                   source == (uint32_t)-1 ? (mode ?        MCAST_JOIN_GROUP     : MCAST_LEAVE_GROUP)
+                   source == (uint32_t)-1 ? (join ?        MCAST_JOIN_GROUP     : MCAST_LEAVE_GROUP)
                                           : join ? (mode ? MCAST_BLOCK_SOURCE   : MCAST_JOIN_SOURCE_GROUP)
                                                  : (mode ? MCAST_UNBLOCK_SOURCE : MCAST_LEAVE_SOURCE_GROUP),
                    source == (uint32_t)-1 ? (void *)&grpReq : (void *)&grpSReq,
