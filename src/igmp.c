@@ -107,8 +107,7 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
         LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s from %s and proxylocalmc is not set. Ignoring.",
                            IfDp->Name, inetFmt(src, 1));
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
-        LOG(LOG_DEBUG, 0, "checkIgmp: The request from: %s for: %s on: %s is from myself. Ignoring.",
-                            inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
+        LOG(LOG_DEBUG, 0, "checkIgmp: The request from %s on %s is from myself. Ignoring.", inetFmt(src, 1), IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
                               : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
@@ -189,7 +188,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     else if (cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (checkIgmp(IfDp, src, dst, IF_STATE_DOWNSTREAM)) {
+    else if (checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_DOWNSTREAM)) {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
