@@ -140,7 +140,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         if (mct->mode && CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
                                 IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
-        else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 0, (uint32_t)-1)) {
+        else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1)) {
             BIT_SET(mct->vifB.us, IfDp->index);
             LOG(LOG_INFO, 0, "addGroup: Joined group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
         }
@@ -173,7 +173,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
         // Leave group upstream and clear upstream status.
         if (IS_SET(mct, us, IfDp)) {
             LOG(LOG_INFO, 0, "delGroup: Leaving group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
-            k_updateGroup(IfDp, 0, mct->group, 0, (uint32_t)-1);
+            k_updateGroup(IfDp, false, mct->group, 0, (uint32_t)-1);
         }
         BIT_CLR(mct->vifB.u, IfDp->index);
         BIT_CLR(mct->vifB.su, IfDp->index);
