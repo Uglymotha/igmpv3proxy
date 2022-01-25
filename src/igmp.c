@@ -189,7 +189,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     else if (cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else {
+    else if (checkIgmp(IfDp, src, dst, IF_STATE_DOWNSTREAM)) {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
