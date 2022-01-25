@@ -361,9 +361,9 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
 *   Block the souce upstream if it is in exclude mode on all exclude mode interfaces.
 */
 inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
-    struct IfDesc *IfDp;
-    IFGETIFLIF(join && ((src->vifB.ud | src->vifB.us) != uVifs || src->vifB.su != uVifs), IfDp, (! If || (IfDp = If))
-                                                                                                 && IS_UPSTREAM(IfDp->state)) {
+    struct IfDesc *IfDp = If;
+
+    IFGETIFLIF(join && ((src->vifB.ud | src->vifB.us) != uVifs || src->vifB.su != uVifs), IfDp, IS_UPSTREAM(IfDp->state)) {
         // Join or block the source upstream if necessary.
         if (!src->mct->mode && IS_SET(src, us, IfDp) && NOT_SET(src, su, IfDp) && !checkFilters(IfDp, 0, src, src->mct)) {
             // If source was joined upstream and acl changed, leave.
@@ -375,7 +375,8 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
                 activateRoute(src->mfc->IfDp, src, src->ip, src->mct->group, false);
         } else if (NOT_SET(src, us, IfDp) && (!src->mct->mode || src->vifB.d == src->mct->mode)) {
             // Only block exclude mode sources upstream if they are blocked on all downstream interfaces in exclude mode.
-            for (int i = 0; src->mct->mode && i < MAXVIFS && (!BIT_TST(src->vifB.d, i) || src->vifB.age[i] == 0); i++)
+            uint32_t i;
+            for (i = 0; src->mct->mode && i < MAXVIFS && (!BIT_TST(src->vifB.d, i) || src->vifB.age[i] == 0); i++);
             if (!src->mct->mode && (!src->vifB.d || !checkFilters(IfDp, 0, src, src->mct)))
                 LOG(!src->vifB.d ? LOG_INFO : LOG_NOTICE, 0, "%s%s from group %s%s.",
                     !src->vifB.d ? "joinBlockSource: No downstream listeners for source " : "Source ", inetFmt(src->ip, 1),
@@ -391,7 +392,7 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
         if (If)
             return;
     }
-    IFGETIFLIF(!join, IfDp, (! If || (IfDp = If)) && IS_SET(src, us, IfDp)) {
+    IFGETIFLIF(!join, IfDp, IS_SET(src, us, IfDp)) {
         // Source should not be unblocked when upstream mode is exclude and source is not allowed.
         if (src->mct->mode &&!checkFilters(IfDp, 0, src, src->mct)) {
             LOG(LOG_NOTICE, 0, "Not unblocking denied source %s from group %s upstream on %s.", inetFmt(src->ip, 1),
