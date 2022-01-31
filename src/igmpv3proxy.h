@@ -56,6 +56,7 @@
 #include <grp.h>
 #include <ifaddrs.h>
 #include <ctype.h>
+#include <dirent.h>
 
 #include <sys/stat.h>
 #include <sys/socket.h>
