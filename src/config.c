@@ -85,7 +85,8 @@ void freeConfig(int old) {
                            *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
-    for (cConf = old ? ovifConf : vifConf, tConf = cConf ? cConf->next : NULL; cConf; cConf = tConf, tConf = cConf->next) {
+    for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
+        tConf = cConf->next;
         if (!(cConf->state & 0x80)) {
             // Remove and free filters if interface should not be reused.
             for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
