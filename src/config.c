@@ -509,11 +509,28 @@ void inline parsePhyintToken(char *token) {
 *   Because of this recursion it is important to keep track of configuration file and buffer pointers.
 */
 bool loadConfig(char *cfgFile) {
+    struct stat     st;
     FILE           *confFilePtr;
     char           *token;
     static int64_t  intToken = 0, count = 0;
 
-    if (count >= MAX_CFGFILE_RECURSION) {
+    if (stat(cfgFile, &st) != 0) {
+        LOG(LOG_WARNING, errno, "Cannot stat %s.", cfgFile);
+        return false;
+    } else if (S_ISDIR(st.st_mode)) {
+        struct dirent *dirEnt;
+        DIR           *dir;
+        if (! (dir = opendir(cfgFile))) {
+            LOG(LOG_WARNING, errno, "Cannot open include directory %s.", cfgFile);
+            return false;
+        } else while ((dirEnt = readdir(dir))) {
+            char file[256];
+            sprintf(file, "%s/%s", cfgFile, dirEnt->d_name);
+            if (strcmp(&file[strlen(file) - 5], ".conf") == 0 && stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file))
+                return false;
+        }
+        return true;
+    } else if (count >= MAX_CFGFILE_RECURSION) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
         return false;
