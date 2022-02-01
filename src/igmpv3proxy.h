@@ -333,21 +333,21 @@ struct igmpv3_report {
 //############A#####################################################################
 
 // Filename, Help string.
-extern const char *fileName, Usage[];
+extern const char      *fileName, Usage[];
 
 // Timekeeping.
-extern struct   timespec curtime, utcoff;
+extern struct timespec  curtime, utcoff;
 
 // Process Signaling.
-extern uint8_t  sighandled, sigstatus;
+extern uint8_t          sighandled, sigstatus, logwarning;
 
 // Upstream vif mask.
-extern uint32_t uVifs;
+extern uint32_t         uVifs;
 
 // Global IGMP groups.
-extern uint32_t allhosts_group;                        // All hosts addr in net order
-extern uint32_t allrouters_group;                      // All hosts addr in net order
-extern uint32_t alligmp3_group;                        // IGMPv3 addr in net order
+extern uint32_t         allhosts_group;                // All hosts addr in net order
+extern uint32_t         allrouters_group;              // All hosts addr in net order
+extern uint32_t         alligmp3_group;                // IGMPv3 addr in net order
 
 //#################################################################################
 //  Lib function prototypes.
