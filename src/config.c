@@ -524,10 +524,12 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_WARNING, errno, "Cannot open include directory %s.", cfgFile);
             return false;
         } else while ((dirEnt = readdir(dir))) {
-            char file[256];
+            char file[strlen(cfgFile) + strlen(dirEnt->d_name) + 2];
             sprintf(file, "%s/%s", cfgFile, dirEnt->d_name);
-            if (strcmp(&file[strlen(file) - 5], ".conf") == 0 && stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file))
+            if (strcmp(&file[strlen(file) - 5], ".conf") + stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file)) {
+                LOG(LOG_WARNING, 0, "loadConfig: Failed to load config from '%s'.", file);
                 return false;
+            }
         }
         return true;
     } else if (count >= MAX_CFGFILE_RECURSION) {
