@@ -265,7 +265,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
             if ((strcmp(" ratelimit", token) == 0 || strcmp(" r", token) == 0 || strcmp(" rl", token) == 0
                                                   || strcmp(" 2", token) == 0) && INTTOKEN) {
                 if (! commonConfig.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
-                    LOG(LOG_INFO, 0, "Config (%s): %s Ignoring '%s - %s %lld.'", in, !commonConfig.bwControlInterval ?
+                    LOG(LOG_NOTICE, 0, "Config (%s): %s Ignoring '%s - %s %lld.'", in, !commonConfig.bwControlInterval ?
                         "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
                          inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), intToken);
                     fil = filNew;
@@ -319,7 +319,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
         } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
             // Correct filter, add and reset fil to process next entry.
-            LOG(LOG_INFO, 0, "Config (%s): Adding filter Src: %15s, Dst: %15s, Dir: %6s, Action: %5s.", in,
+            LOG(LOG_NOTICE, 0, "Config (%s): Adding filter Src: %15s, Dst: %15s, Dir: %6s, Action: %5s.", in,
                                 inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
                                 fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
