@@ -515,13 +515,14 @@ bool loadConfig(char *cfgFile) {
     static int64_t  intToken = 0, count = 0;
 
     if (stat(cfgFile, &st) != 0) {
-        LOG(LOG_WARNING, errno, "Cannot stat %s.", cfgFile);
+        LOG(LOG_WARNING, errno, "Cannot stat '%s'.", cfgFile);
         return false;
     } else if (S_ISDIR(st.st_mode)) {
+        // Include all .conf files in include directory.
         struct dirent *dirEnt;
         DIR           *dir;
         if (! (dir = opendir(cfgFile))) {
-            LOG(LOG_WARNING, errno, "Cannot open include directory %s.", cfgFile);
+            LOG(LOG_WARNING, errno, "Cannot open include directory '%s'.", cfgFile);
             return false;
         } else while ((dirEnt = readdir(dir))) {
             char file[strlen(cfgFile) + strlen(dirEnt->d_name) + 2];
