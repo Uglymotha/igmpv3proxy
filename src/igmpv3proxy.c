@@ -47,7 +47,7 @@ static void igmpProxyCleanUp(void);
 static void igmpProxyRun(void);
 
 // Global Variables Signal Handling / Timekeeping.
-uint8_t               sighandled, sigstatus;
+uint8_t               sighandled, sigstatus, logwarning;
 struct timespec       curtime, utcoff, starttime;
 const char           *fileName;
 
@@ -164,8 +164,7 @@ int main(int ArgCn, char *ArgVc[]) {
             if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
                 break;
         }
-        if (! path)
-            CONFIG->configFilePath = NULL;
+        CONFIG->configFilePath = NULL;
     }
     if (! CONFIG->configFilePath)
         LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
