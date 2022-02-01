@@ -300,4 +300,5 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
         fclose(lfp);
     if (Severity <= LOG_ERR)
         exit(-1);
+    logwarning |= (Severity == LOG_WARNING);
 }
