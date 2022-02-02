@@ -77,7 +77,7 @@ void rebuildIfVc(uint64_t *tid) {
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
-    LOG(LOG_DEBUG,0,"rebuildIfVc: Configuring vifs. Ptr: %p", IfDescL);
+    LOG(LOG_INFO,0,"rebuildIfVc: Configuring MC vifs.");
     configureVifs();
 
     // Free removed interfaces.
@@ -153,8 +153,8 @@ void buildIfVc(void) {
         }
 
         // Log the result...
-        LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d, Ptr: %p",
-                          IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu, IfDp);
+        LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
+                          IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
     }
 
     // Free the getifadds struct.
