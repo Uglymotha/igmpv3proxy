@@ -87,18 +87,10 @@ void freeConfig(int old) {
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
-        if (!(cConf->state & 0x80)) {
-            // Remove and free filters if interface should not be reused.
-            for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
-            for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
-        } else if (old) {
-            // If interface was flagged, because of interface config error reset flag.
-            cConf->state &= ~0x80;
-        } else if (!cConf->noDefaultFilter) {
-            // If interface was flagged and config reload failed entirely, reset to old default filters.
-            for (fil = cConf->filters; fil && fil->next != dFil; fil = fil->next);
-            fil ? (fil->next = oldcommonConfig.defaultFilters) : (cConf->filters = oldcommonConfig.defaultFilters);
-        }
+        // Remove and free filters and ratelimits.
+        for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
+        for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
+        free(cConf);
     }
 
     if (old || SHUTDOWN) {
@@ -107,6 +99,7 @@ void freeConfig(int old) {
         for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
     }
     if (SHUTDOWN) {
+        // On Shutdown stop any running timers.
         timer_clearTimer(timers.rescanConf);
         timer_clearTimer(timers.rescanVif);
         timer_clearTimer(timers.bwControl);
@@ -363,8 +356,7 @@ static inline bool parsePhyintToken(char *token) {
 
     // Parse the rest of the config.
     while (!logwarning && nextToken(token)) {
-        while (   (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)
-               && token[1] != '\0') {
+        while (token[1] && (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
             parseFilters(tmpPtr->name, token, &filP, &rateP);
         }
@@ -423,7 +415,7 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
-                LOG(LOG_WARNING, 0, "Config (%s): Robustness value mus be between 1 and 7.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Robustness value must be between 1 and 7.", tmpPtr->name);
             else {
                 tmpPtr->qry.robustness = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Settings robustness to %d.", tmpPtr->name, intToken);
@@ -431,7 +423,7 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" queryinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Query interval value should be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Query interval value must be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.interval = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpPtr->name, intToken);
@@ -439,7 +431,7 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" queryresponseinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Query response interval value should be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Query response interval value must be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.responseInterval = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting query response interval to %d.", tmpPtr->name, intToken);
@@ -447,34 +439,23 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" lastmemberinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Last member interval value should be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Last member interval value must be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.lmInterval =  intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query interval to %d.", tmpPtr->name, intToken);
             }
 
         } else if (strcmp(" lastmembercount", token) == 0 && INTTOKEN) {
-            tmpPtr->qry.lmCount = intToken < 1 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
-            tmpPtr->qry.lmCount = intToken;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
+            if (intToken < 1 || intToken > 7)
+                LOG(LOG_WARNING, 0, "Config (%s): Last member count must be between 1 and 7.");
+            else {
+                tmpPtr->qry.lmCount = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
+            }
 
         } else if (!strstr(options, token) && token[1] != '\0') {
             // Unknown token, return error. Token may be " " if parseFilters() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s', discarding configuration.", tmpPtr->name, token + 1);
-            // Find old vifconf and use that if it exists.
-            struct filters *fil;
-            strcpy(token, tmpPtr->name);
-            free(tmpPtr);  // Alloced by self.
-            for (tmpPtr = ovifConf; tmpPtr && strcmp(token, tmpPtr->name) != 0; tmpPtr = tmpPtr->next);
-            if (tmpPtr) {
-                LOG(LOG_WARNING, 0, "Config (%s): Reusing old configuration.", tmpPtr->name);
-                tmpPtr->state |= 0x80;   // Flag interface, it must not be freed after reload.
-                if (!tmpPtr->noDefaultFilter) {
-                    for (fil = tmpPtr->filters; fil && fil->next != oldcommonConfig.defaultFilters; fil = fil->next);
-                    fil ? (fil->next = NULL, filP = &fil->next) : (tmpPtr->filters = NULL, filP = &tmpPtr->filters);
-                }
-                break;
-            }
+            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s'.", tmpPtr->name, token + 1);
 
         } else if (!strstr(phyintopt, token) || token[1] == '\0')
             break;
@@ -504,8 +485,9 @@ static inline bool parsePhyintToken(char *token) {
     if (!tmpPtr->noDefaultFilter)
         *filP = commonConfig.defaultFilters;
 
-    LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %d, Ptrs: %p/%p/%p",
-        tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold, tmpPtr->state, tmpPtr, tmpPtr->filters, tmpPtr->rates);
+    LOG(LOG_INFO, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s", tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
+        tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
+        tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream");
 }
 
 /**
@@ -515,7 +497,7 @@ static inline bool parsePhyintToken(char *token) {
 */
 bool loadConfig(char *cfgFile) {
     struct stat     st;
-    FILE           *confFilePtr;
+    FILE           *confFilePtr, *fp;
     char           *token;
     static int64_t  intToken = 0, count = 0;
     logwarning = 0;
@@ -558,35 +540,32 @@ bool loadConfig(char *cfgFile) {
 
     // Set pointer to pointer to default filters and rates list. Loop until all configuration is read.
     struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
-    while (nextToken(token)) {
+    while (!logwarning && nextToken(token)) {
         // Process parameters which will result in a next valid config token first.
-        while (   (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))
-               && token[1] != '\0') {
+        while (token[1] && (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))) {
             if (strcmp(" phyint", token) == 0) {
                 parsePhyintToken(token);
             } else if (strcmp(" defaultfilter", token) == 0) {
                 if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
                     LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
-                    while (nextToken(token) && token[1] != '\0' && !strstr(options, token));
+                    break;
                 } else {
                     LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                     strcpy(token, "filter");
                     parseFilters("default", token, &filP, &rateP);
                 }
             } else if (strstr(phyintopt, token)) {
-                LOG(LOG_WARNING, 0, "Config: '%s' without phyint. Ignoring.", token + 1);
-                while (nextToken(token) && token[1] != '\0' && !strstr(options, token));
+                LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
+                break;
             }
         }
 
         if (strcmp(" include", token) == 0 && nextToken(token) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
             // Load the config from include file and restore current.
             if (loadConfig(token + 1))
-                LOG(LOG_INFO, 0, "Config: Succesfully loaded config from '%s'.", token + 1);
-            else {
+                LOG(LOG_NOTICE, 0, "Config: Succesfully loaded config from '%s'.", token + 1);
+            else
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", token + 1);
-                return false;
-            }
             configFile(confFilePtr, 2);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
@@ -614,16 +593,18 @@ bool loadConfig(char *cfgFile) {
             commonConfig.fastUpstreamLeave = true;
 
         } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
-            if (intToken >= DEFAULT_MAX_ORIGINS || intToken <= 65535 || intToken == 0)
+            if (intToken < DEFAULT_MAX_ORIGINS || intToken > 65535)
+                LOG(LOG_WARNING, 0, "Config: Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
+            else {
                 commonConfig.maxOrigins = intToken;
-            LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
+                LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
+            }
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
             if (! commonConfig.fastUpstreamLeave)
-                LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled. Ignoring.");
+                LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled.");
             else if (intToken < 8 || intToken > 131072)
-                LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8), using default %d.",
-                                     commonConfig.dHostsHTSize);
+                LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
             else {
                 commonConfig.dHostsHTSize = (intToken - intToken % 8) * 8;
                 LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.dHostsHTSize / 8);
@@ -631,7 +612,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultupdown", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s'.", token + 1);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
@@ -639,7 +620,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultup", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s'.", token + 1);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_UPSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
@@ -647,7 +628,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultdown", token) == 0) {
             if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set. Ignoring '%s'.", token + 1);
+                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
                 commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
@@ -726,8 +707,12 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" defaultlastmembercount", token) == 0 && INTTOKEN) {
-            commonConfig.lastMemberQueryCount = intToken < 1 || intToken > 7 ? DEFAULT_ROBUSTNESS : intToken;
-            LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
+            if (intToken < 1 || intToken > 7)
+                LOG(LOG_WARNING, 0, "Config: Last member count must be between 1 and 7.");
+            else {
+                commonConfig.lastMemberQueryCount = intToken;
+                LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
+            }
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
             commonConfig.bwControlInterval = intToken < 3 ? 3 : intToken;
@@ -742,12 +727,15 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);
 
         } else if (strcmp(" loglevel", token) == 0 && INTTOKEN) {
-            commonConfig.logLevel = !commonConfig.log2Stderr && intToken > 0 && intToken < 8 ? intToken : commonConfig.logLevel;
-            LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
+            if (intToken < 1 || intToken > 7)
+                LOG(LOG_WARNING, 0, "Config: Logleven must be between 1 and 7.");
+            else {
+                commonConfig.logLevel = intToken;
+                LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
+            }
 
         } else if (strcmp(" logfile", token) == 0 && nextToken(token)) {
             // Only use log file if not logging to stderr.
-            FILE *fp;
             if (commonConfig.log2Stderr || (commonConfig.logFilePath &&
                                             memcmp(commonConfig.logFilePath, token + 1, strlen(token) - 2) == 0))
                 continue;
@@ -853,7 +841,7 @@ bool loadConfig(char *cfgFile) {
 
     // Check if quickleave was enabled or disabled due to config change.
     if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
-        LOG(LOG_NOTICE, 0, "Config: Quickleave mode was %s, reinitializing routes.",
+        LOG(LOG_WARNING, 0, "Config: Quickleave mode was %s, reinitializing group tables.",
                             commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
         clearGroups(CONFIG);
     }
@@ -861,7 +849,7 @@ bool loadConfig(char *cfgFile) {
     // Check if hashtable size was changed due to config change.
     if (!STARTUP && commonConfig.fastUpstreamLeave
                  && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
-        LOG(LOG_NOTICE, 0, "Config: Downstream host hashtable size changed from %i to %i, reinitializing routes.",
+        LOG(LOG_WARNING, 0, "Config: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
                             oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
         clearGroups(CONFIG);
     }
@@ -881,7 +869,7 @@ void reloadConfig(uint64_t *tid) {
 
     // Load the new configuration keep reference to the old.
     if (!loadConfig(commonConfig.configFilePath)) {
-        LOG(LOG_WARNING, 0, "Unable to load config file %s, keeping current.", commonConfig.configFilePath);
+        LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", commonConfig.configFilePath);
         if (vifConf)
             freeConfig(0);
         vifConf = ovifConf;
@@ -890,7 +878,7 @@ void reloadConfig(uint64_t *tid) {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
-        LOG(LOG_INFO, 0, "reloadConfig: Config Reloaded. OldConfPtr: %x, NewConfPtr, %x", ovifConf, vifConf);
+        LOG(LOG_WARNING, 0, "Configuration Reloaded.");
     }
     if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
         *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", reloadConfig, tid);
