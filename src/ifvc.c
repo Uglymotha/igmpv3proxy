@@ -43,17 +43,17 @@
 static struct IfDesc *IfDescL = NULL;
 
 /**
-*   Frees the IfDesc table. Paramter specifies cleanup after an interface rebuild.
+*   Frees the IfDesc table and cleans up on interface removal.
 */
 static void freeIfDescL() {
     struct IfDesc *IfDp = IfDescL, *fIfDp;
     while (IfDp) {
-        if ((IfDp == IfDescL && (IfDp->state & 0x80)) || (IfDp->next && (IfDp->next->state & 0x80))) {
+        if ((IfDp->state & 0x80) || (IfDp->next && (IfDp->next->state & 0x80))) {
             // Remove interface marked for deletion.
             if (!SHUTDOWN)
-                LOG(LOG_WARNING, 0, "Interface %s was removed.", IfDp == IfDescL ? IfDp->Name : IfDp->next->Name);
-            fIfDp = IfDp == IfDescL ? IfDescL : IfDp->next;
-            if (IfDp == IfDescL)
+                LOG(LOG_WARNING, 0, "Interface %s was removed.", (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
+            fIfDp = (IfDp->state & 0x80) ? IfDescL : IfDp->next;
+            if (IfDp->state & 0x80L)
                 IfDescL = IfDp = IfDp->next;
             else
                 IfDp->next = IfDp->next->next;
