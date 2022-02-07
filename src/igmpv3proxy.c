@@ -61,10 +61,11 @@ static char          *recv_buf;
 *   pointer to the arguments are received on the line...
 */
 int main(int ArgCn, char *ArgVc[]) {
-    int       c = 0, h = 0, i = 0, j = 0;
-    uint32_t  addr, mask;
-    char     *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL,
-              paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path = NULL, *file;
+    int          c = 0, h = 0, i = 0, j = 0;
+    uint32_t     addr, mask;
+    char        *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL,
+                 paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path = NULL, *file;
+    struct stat  st;
     fileName = basename(ArgVc[0]);
 
     // Initialize configuration, syslog and rng.
@@ -166,7 +167,7 @@ int main(int ArgCn, char *ArgVc[]) {
         }
         CONFIG->configFilePath = NULL;
     }
-    if (! CONFIG->configFilePath)
+    if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || !S_ISREG(st.st_mode))
         LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
 
     do {
