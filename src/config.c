@@ -978,7 +978,6 @@ inline void configureVifs(void) {
             }
         }
 
-        LOG(LOG_DEBUG,0,"BOEBOE: %s %p",IfDp->Name,IfDp->conf);
         // Do maintenance on vifs according to their old and new state.
         if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
         else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
