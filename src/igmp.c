@@ -135,6 +135,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
         if (! (IfDp = getIf(igmpMsg->im_vif, 0)))
             return;
+        LOG(LOG_INFO, 0, "acceptIgmp: Upcall from %s to %s on %s.", inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
             if (checkIgmp(IfDp, src, dst, IF_STATE_UPSTREAM))
@@ -306,8 +307,8 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
             LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
-            k_setSourceFilter(IfDp, allrouters_group, MCAST_INCLUDE, 0, NULL);
-            k_setSourceFilter(IfDp, alligmp3_group,   MCAST_INCLUDE, 0, NULL);
+            k_updateGroup(IfDp, false, allrouters_group, 1, (uint32_t)-1);
+            k_updateGroup(IfDp, false, alligmp3_group, 1, (uint32_t)-1);
         }
         timer_clearTimer(IfDp->querier.Timer);
         timer_clearTimer(IfDp->querier.ageTimer);
