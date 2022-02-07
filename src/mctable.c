@@ -126,11 +126,8 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         LOG(LOG_NOTICE, 0, "Group %s denied %sstream on %s.", inetFmt(mct->group , 1), dir ? "down" : "up", IfDp->Name);
         return false;
     } else if (dir) {
-        setHash(mct->dHostsHT, srcHash);
-        if (NOT_SET(mct, d, IfDp) && IS_EX(mct, IfDp))
-            // Activate any MFC is exclude mode group is requested for the first time.
-            for (struct mfc *mfc = mct->mfc; mfc; activateRoute(mfc->IfDp, mfc->src, 0, 0, true), mfc = mfc->next);
         BIT_SET(mct->vifB.d, IfDp->index);
+        setHash(mct->dHostsHT, srcHash);
         IFGETIFLIF((mct->vifB.us | mct->vifB.ud) != uVifs, IfDp, IS_UPSTREAM(IfDp->state) && NOT_SET(mct, us, IfDp))
             // Check if any upstream interfaces still need to join the group.
             addGroup(mct, IfDp, 0, 1, (uint32_t)-1);
@@ -155,7 +152,8 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
 struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *imc, int dir) {
     struct ifMct *pimc = NULL, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     struct src   *src;
-    LOG(LOG_DEBUG, 0, "delGroup: Removing group entry for %s from %s.", inetFmt(mct->group, 1), IfDp->Name);
+    LOG(LOG_DEBUG, 0, "delGroup: Removing %s group entry for %s from %s.", dir ? "downstream" : "upstream",
+                       inetFmt(mct->group, 1), IfDp->Name);
 
     // Update the interface group list.
     if (! imc)
@@ -179,8 +177,13 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
         BIT_CLR(mct->vifB.su, IfDp->index);
         BIT_CLR(mct->vifB.ud, IfDp->index);
         BIT_CLR(mct->vifB.us, IfDp->index);
-        if (mct->vifB.d)
-            for (src = mct->sources; src; BIT_CLR(src->vifB.ud, IfDp->index), BIT_CLR(src->vifB.su, IfDp->index), src = src->next);
+        for (src = mct->sources; src; src = src->next) {
+            BIT_CLR(src->vifB.ud, IfDp->index);
+            BIT_CLR(src->vifB.su, IfDp->index);
+            BIT_CLR(src->vifB.us, IfDp->index);
+            if (src->mfc && src->mfc->IfDp == IfDp)
+                activateRoute(IfDp, src, src->ip, mct->group, 0);
+        }
     } else {
         // Clear group membership from downstream interface and ckeck if it can be removed completely.
         delQuery(IfDp, NULL, mct, NULL, 0);
@@ -195,7 +198,8 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
             BIT_CLR(mct->v1Bits, IfDp->index);
             BIT_CLR(mct->v2Bits, IfDp->index);
             mct->vifB.age[IfDp->index] = mct->v1Age[IfDp->index] = mct->v2Age[IfDp->index] = 0;
-            for (src = mct->sources; src; BIT_CLR(src->vifB.dd, IfDp->index), BIT_CLR(src->vifB.sd, IfDp->index), src = src->next);
+            for (src = mct->sources; src;
+                 BIT_CLR(src->vifB.dd, IfDp->index), BIT_CLR(src->vifB.sd, IfDp->index), src = delSrc(src, IfDp, 0, (uint32_t)-1));
         } else {
             // Group can be removed from table.
             uint32_t mctHash = murmurhash3(mct->group) % CONFIG->mcTables;
@@ -698,8 +702,6 @@ void clearGroups(void *Dp) {
                 // Transition to disabled / upstream, remove from group.
                 LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer downstream, removing group %s.",
                                   IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
-                delQuery(IfDp, NULL, imc->mct, NULL, 0);
-                for (struct src *src = imc->mct->sources; src; src = delSrc(src, IfDp, imc->mct->mode ? 3 : 0, (uint32_t)-1));
                 imc = delGroup(imc->mct, IfDp, imc, 1);
             } else if (NOT_SET(imc->mct, dd, IfDp) && !checkFilters(IfDp, 1, NULL, imc->mct)) {
                 // Check against bl / wl changes on config reload / sighup.
@@ -717,6 +719,8 @@ void clearGroups(void *Dp) {
             || (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate)))
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct) {
             if (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate) && IS_SET(imc->mct, u, IfDp)) {
+                LOG(LOG_INFO, 0, "clearGroups: Vif %d - %s no longer upstream, removing group %s.",
+                                  IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
                 // Transition from upstream to downstream or disabled. Leave group.
                 imc = delGroup(imc->mct, IfDp, imc, 0);
             } else if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
@@ -940,7 +944,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     struct src      *src = _src;
     struct mcTable  *mct = src ? src->mct : findGroup(group, false);
     if (! mct) {
-        LOG(LOG_DEBUG, 0, "activateRoute: Group %s not found, ignoring activation.", inetFmt(ip, 1), inetFmt(group, 2));
+        LOG(LOG_DEBUG, 0, "activateRoute: Group %s not found, ignoring activation.", inetFmt(group, 1), inetFmt(group, 2));
         return;
     }
 
@@ -1004,6 +1008,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
     uint8_t ttlVc[MAXVIFS] = {0};
     GETIFLIF(IfDp, IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, d, IfDp)) {
+        LOG(LOG_DEBUG,0,"BLABLA: %s %p",IfDp->Name, IfDp->conf);
         if (!checkFilters(IfDp, 1, src, mct))
             LOG(LOG_NOTICE, 0, "Not forwarding denied source %s to group %s on %s.", inetFmt(src->ip,1),
                                 inetFmt(mct->group, 2), IfDp->Name);
