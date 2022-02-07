@@ -1008,7 +1008,6 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
     uint8_t ttlVc[MAXVIFS] = {0};
     GETIFLIF(IfDp, IS_DOWNSTREAM(IfDp->state) && IS_SET(mct, d, IfDp)) {
-        LOG(LOG_DEBUG,0,"BLABLA: %s %p",IfDp->Name, IfDp->conf);
         if (!checkFilters(IfDp, 1, src, mct))
             LOG(LOG_NOTICE, 0, "Not forwarding denied source %s to group %s on %s.", inetFmt(src->ip,1),
                                 inetFmt(mct->group, 2), IfDp->Name);
