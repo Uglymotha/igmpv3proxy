@@ -517,6 +517,7 @@ bool loadConfig(char *cfgFile) {
             if (strcmp(&file[strlen(file) - 5], ".conf") + stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file))
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
         }
+        free(dir);
         return !logwarning;
     } else if (count >= MAX_CFGFILE_RECURSION) {
         // Check recursion and return if exceeded.
@@ -902,8 +903,8 @@ inline void configureVifs(void) {
 
     if (! vifConf)
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
-    // Loop through all interfaces and find matching config.
-    for (uVifs = 0, IFL(IfDp)) {
+    GETIFLIF(IfDp, !IFREBUILD || (!(IfDp->state & 0x40) && (IfDp->state & 0x80))) {
+        // Loop through all (new) interfaces and find matching config.
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name); confPtr = confPtr->next);
         if (confPtr) {
             LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
@@ -921,10 +922,13 @@ inline void configureVifs(void) {
             confPtr->next = vifConf;
             vifConf = confPtr;
         }
-
         // Link the configuration to the interface. And update the states.
         oconfPtr = IfDp->conf;
         IfDp->conf = confPtr;
+    }
+
+    for (uVifs = 0, IFL(IfDp)) {
+        // Loop through all interface and configure corresponding MC vifs.
         if (!CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
             if (!(IfDp->state & 0x80))
@@ -940,12 +944,12 @@ inline void configureVifs(void) {
 
         // Set configured querier ip to interface address if not configured
         // and set version to 3 for disabled/upstream only interface.
-        if (confPtr->qry.ip == (uint32_t)-1)
-            confPtr->qry.ip = IfDp->InAdr.s_addr;
+        if (IfDp->conf->qry.ip == (uint32_t)-1)
+            IfDp->conf->qry.ip = IfDp->InAdr.s_addr;
         if (!IS_DOWNSTREAM(IfDp->state))
-            confPtr->qry.ver = 3;
-        if (confPtr->qry.ver == 1)
-            confPtr->qry.interval = 10, confPtr->qry.responseInterval = 10;
+            IfDp->conf->qry.ver = 3;
+        if (IfDp->conf->qry.ver == 1)
+            IfDp->conf->qry.interval = 10, IfDp->conf->qry.responseInterval = 10;
 
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SSIGHUP)) {
@@ -974,6 +978,7 @@ inline void configureVifs(void) {
             }
         }
 
+        LOG(LOG_DEBUG,0,"BOEBOE: %s %p",IfDp->Name,IfDp->conf);
         // Do maintenance on vifs according to their old and new state.
         if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
         else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
