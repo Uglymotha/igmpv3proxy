@@ -356,7 +356,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
                 timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10) + 1;
                 IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
-                                                        strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
+                                                        strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name),
                                                         ageGroups, IfDp);
             }
             // Determine timeout for other querier, in case of gsq, use configured values.
@@ -416,7 +416,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         // Set timer for route aging.
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
         IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
-                                                strcat(strcpy(msg, "Age Active Routes: "), IfDp->Name),
+                                                strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name),
                                                 ageGroups, IfDp);
         LOG(LOG_INFO, 0, "sendGeneralMemberQuery: From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
                            inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
