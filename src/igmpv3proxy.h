@@ -148,7 +148,7 @@ struct Config {
     // Set if must not participate in IGMP querier election.
     bool                querierElection;
     // Group for CLI access.
-    struct group        socketGroup;
+    struct group       *socketGroup;
 };
 
 // Linked list of filters.
@@ -367,7 +367,7 @@ void           configureVifs(void);
 *   cli.c
 */
 int  openCliSock(void);
-int  cliSetGroup(int gid);
+int  cliSetGroup(struct group *gid);
 void processCliCon(int fd);
 void cliCmd(char *cmd);
 
