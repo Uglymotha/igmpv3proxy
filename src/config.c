@@ -227,7 +227,8 @@ static inline void initCommonConfig(void) {
     commonConfig.querierElection = true;
 
     // Default no group for socket (use root's).
-    commonConfig.socketGroup = *getgrgid(0);
+    if (! (commonConfig.socketGroup = getgrgid(0)))
+        LOG(LOG_WARNING, errno, "Failed to get grgid for root/wheel.", errno);
 }
 
 /*
@@ -496,29 +497,38 @@ static inline bool parsePhyintToken(char *token) {
 *   Because of this recursion it is important to keep track of configuration file and buffer pointers.
 */
 bool loadConfig(char *cfgFile) {
-    struct stat     st;
-    FILE           *confFilePtr, *fp;
-    char           *token;
-    static int64_t  intToken = 0, count = 0;
+    static struct filters  **filP, **rateP;
+    static int64_t           intToken    = 0,     count = 0;
+    FILE                    *confFilePtr = NULL, *fp;
+    char                    *token       = NULL;
+    struct stat              st;
+    uint32_t                 st_mode;
     logwarning = 0;
 
-    if (stat(cfgFile, &st) != 0) {
+    if (count == 0) {
+        // Initialize common config on first entry.
+        initCommonConfig();
+        filP  = &commonConfig.defaultFilters;
+        rateP = &commonConfig.defaultRates;
+    }
+
+    if (stat(cfgFile, &st) != 0 || !(st_mode = st.st_mode)) {
         LOG(LOG_WARNING, errno, "Config: Cannot stat '%s'.", cfgFile);
         return false;
-    } else if (S_ISDIR(st.st_mode)) {
+    } else if (S_ISDIR(st_mode)) {
         // Include all .conf files in include directory.
         struct dirent *dirEnt;
         DIR           *dir;
-        if (! (dir = opendir(cfgFile))) {
+        LOG(LOG_NOTICE, 0, "Config: Searching for config files in '%s'.", cfgFile);
+        if (! (dir = opendir(cfgFile)))
             LOG(LOG_WARNING, errno, "Config: Cannot open include directory '%s'.", cfgFile);
-        } else while (!logwarning && (dirEnt = readdir(dir))) {
+        else while (!logwarning && (dirEnt = readdir(dir))) {
             char file[strlen(cfgFile) + strlen(dirEnt->d_name) + 2];
             sprintf(file, "%s/%s", cfgFile, dirEnt->d_name);
             if (strcmp(&file[strlen(file) - 5], ".conf") + stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file))
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
         }
         free(dir);
-        return !logwarning;
     } else if (count >= MAX_CFGFILE_RECURSION) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
@@ -529,19 +539,16 @@ bool loadConfig(char *cfgFile) {
     } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
         // Allocate buffer and open config file and initialize common config when loading main config file.
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-    } else if (cfgFile == commonConfig.configFilePath)
-        // Initialize common config whel loading main config file.
-        initCommonConfig();
+    } else {
+        // Increase count and initialize buffer. First char of token is ' ', counters to 0.
+        count++;
+        token[0] = ' ';
+        *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
+        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", count, cfgFile);
+    }
 
-    // Increase count and initialize buffer. First char of token is ' ', counters to 0.
-    count++;
-    token[0] = ' ';
-    *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
-    LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", count, cfgFile);
-
-    // Set pointer to pointer to default filters and rates list. Loop until all configuration is read.
-    struct filters **filP = &commonConfig.defaultFilters, **rateP = &commonConfig.defaultRates;
-    while (!logwarning && nextToken(token)) {
+    // Loop until all configuration is read.
+    if (S_ISREG(st_mode)) while (!logwarning && nextToken(token)) {
         // Process parameters which will result in a next valid config token first.
         while (token[1] && (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))) {
             if (strcmp(" phyint", token) == 0) {
@@ -764,11 +771,12 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
             if (! getgrnam(token + 1))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
+            else if (! (commonConfig.socketGroup = getgrnam(token + 1)))
+                LOG(LOG_WARNING, errno, "Failed to get grgid for '%s'.", token + 1, errno);
             else {
-                commonConfig.socketGroup = *getgrnam(token + 1);
                 if (!STARTUP)
-                    cliSetGroup(commonConfig.socketGroup.gr_gid);
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup.gr_name);
+                    cliSetGroup(commonConfig.socketGroup);
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup->gr_name);
             }
 
         } else if (token[1] != '\0')
@@ -777,13 +785,11 @@ bool loadConfig(char *cfgFile) {
     }
 
     // Close the configfile. When including files, we're done.
-    if (configFile(NULL, 0))
+    if (confFilePtr && configFile(NULL, 0))
         LOG(LOG_WARNING, errno, "Failed to close config file (%d) '%s'.", count, cfgFile);
     free(token);  // Alloced by self
     count--;
-    if (logwarning)
-        return false;
-    else if (cfgFile != commonConfig.configFilePath)
+    if (count > 0 || S_ISDIR(st_mode))
         return true;
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
@@ -806,7 +812,6 @@ bool loadConfig(char *cfgFile) {
     } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
-
     }
 
     // Check rescanconf status and start or clear timers if necessary.
@@ -855,7 +860,7 @@ bool loadConfig(char *cfgFile) {
         clearGroups(CONFIG);
     }
 
-    return true;
+    return !logwarning;
 }
 
 /**
