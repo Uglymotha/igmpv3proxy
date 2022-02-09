@@ -69,7 +69,7 @@ int openCliSock(void) {
     // Open the socket after directory exists / created etc.
     if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770)
         || chmod(cliSockAddr.sun_path, S_ISVTX | S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH)))
-        || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)
+        || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup->gr_gid)
         || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -77,7 +77,7 @@ int openCliSock(void) {
 #else
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
-        || (chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup.gr_gid)) || chmod(cliSockAddr.sun_path, 0660)) {
+        || (chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup->gr_gid)) || chmod(cliSockAddr.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
         cliSock = -1;
     }
@@ -95,12 +95,12 @@ int openCliSock(void) {
 /**
 *   Sets access for specified path and group to configured cligroup.
 */
-int cliSetGroup(int gid) {
+int cliSetGroup(struct group *gid) {
     char path[128];
     strcpy(path, cliSockAddr.sun_path);
-    int x = chown(path, 0, gid);
+    int x = chown(path, 0, gid->gr_gid);
     memset(path + strlen(path) - 9, 0, 9);
-    x = chown(path, 0, gid);
+    x = chown(path, 0, gid->gr_gid);
     return x;
 }
 
