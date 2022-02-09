@@ -145,7 +145,7 @@ int main(int ArgCn, char *ArgVc[]) {
 
     if (geteuid() != 0) {
         // Check that we are root.
-        fprintf(stderr, "%s: must be root.\n", fileName);
+        fprintf(stderr, "%s: Must be root.\n", fileName);
         exit(-1);
     } else if (! (CONFIG->configFilePath = calloc(1, sizeof(CFG_PATHS) + strlen(ArgVc[optind - !(optind == ArgCn - 1)])))) {
         // Freed by igmpProxyCleanup().
@@ -167,7 +167,7 @@ int main(int ArgCn, char *ArgVc[]) {
         }
         CONFIG->configFilePath = NULL;
     }
-    if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || !S_ISREG(st.st_mode))
+    if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
         LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
 
     do {
