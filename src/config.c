@@ -174,6 +174,7 @@ static inline bool nextToken(char *token) {
 *   Initialize default values of configuration parameters.
 */
 static inline void initCommonConfig(void) {
+    commonConfig.set = true;
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
     commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
@@ -503,10 +504,10 @@ bool loadConfig(char *cfgFile) {
     char                    *token       = NULL;
     struct stat              st;
     uint32_t                 st_mode;
-    logwarning = 0;
 
-    if (count == 0) {
-        // Initialize common config on first entry.
+    // Initialize common config on first entry.
+    if (!commonConfig.set) {
+        logwarning = 0;
         initCommonConfig();
         filP  = &commonConfig.defaultFilters;
         rateP = &commonConfig.defaultRates;
@@ -531,7 +532,7 @@ bool loadConfig(char *cfgFile) {
         free(dir);
     } else if (count >= MAX_CFGFILE_RECURSION) {
         // Check recursion and return if exceeded.
-        LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, token + 1);
+        LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, cfgFile);
         return false;
     } else if (! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
@@ -547,7 +548,7 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", count, cfgFile);
     }
 
-    // Loop until all configuration is read.
+    // Loop though file tokens until all configuration is read or error encounterd.
     if (S_ISREG(st_mode)) while (!logwarning && nextToken(token)) {
         // Process parameters which will result in a next valid config token first.
         while (token[1] && (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))) {
@@ -769,14 +770,12 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
 
         } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
-            if (! getgrnam(token + 1))
+            if (! (commonConfig.socketGroup = getgrnam(token + 1)))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
-            else if (! (commonConfig.socketGroup = getgrnam(token + 1)))
-                LOG(LOG_WARNING, errno, "Failed to get grgid for '%s'.", token + 1, errno);
             else {
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup->gr_name);
                 if (!STARTUP)
                     cliSetGroup(commonConfig.socketGroup);
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup->gr_name);
             }
 
         } else if (token[1] != '\0')
@@ -784,13 +783,13 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file.", token + 1);
     }
 
-    // Close the configfile. When including files, we're done.
+    // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
+    free(token);  // Alloced by self
     if (confFilePtr && configFile(NULL, 0))
         LOG(LOG_WARNING, errno, "Failed to close config file (%d) '%s'.", count, cfgFile);
-    free(token);  // Alloced by self
-    count--;
-    if (count > 0 || S_ISDIR(st_mode))
-        return true;
+    if (S_ISDIR(st_mode) || --count > 0 || confFilePtr)
+        return !logwarning;
+    commonConfig.set = false;
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
