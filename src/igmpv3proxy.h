@@ -104,6 +104,7 @@ union cmsgU {
 // Keeps common configuration settings.
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
+    bool                set;
     // Daemon parameters.
     bool                notAsDaemon;
     char               *configFilePath;
