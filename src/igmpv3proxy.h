@@ -383,7 +383,7 @@ void cliCmd(char *cmd);
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
-struct IfDesc *getIf(unsigned int ix, int sys);
+struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
 void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 
@@ -403,6 +403,7 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
+int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
 uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
 bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask);
