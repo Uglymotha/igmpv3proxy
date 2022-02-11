@@ -334,29 +334,36 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
 *   Parsing interface configuration. Takes pointer to token buffer and location in buffer, latter is only updated.
 */
 static inline bool parsePhyintToken(char *token) {
-    struct vifConfig *tmpPtr;
-    int64_t           intToken;
+    struct vifConfig  *tmpPtr;
+    struct filters   **filP, **rateP;
+    int64_t            intToken;
 
     if (!nextToken(token)) {
         // First token should be the interface name.
         LOG(LOG_WARNING, 0, "Config: You should at least name your interfeces.");
         return false;
-    } else if (! (tmpPtr = malloc(sizeof(struct vifConfig))))
-        // Allocate and initialize memory for new configuration.
-        LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");  // Freed by freeConfig or self()
-    *tmpPtr = DEFAULT_VIFCONF;
-    LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", token + 1);
+    }
 
-    // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
-    memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
-    tmpPtr->name[IF_NAMESIZE - 1] = '\0';
-    if (strlen(token) >= IF_NAMESIZE)
-        LOG(LOG_NOTICE, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
-
-    // Set pointer to pointer to filters list.
-    struct filters **filP = &tmpPtr->filters, **rateP = &tmpPtr->rates;
+    // Find existing or create new vifConf.
+    for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
+    if (! tmpPtr) {
+        if (! (tmpPtr = malloc(sizeof(struct vifConfig))))  // Freed by freeConfig or self()
+            LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");
+        *tmpPtr = DEFAULT_VIFCONF;
+        // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
+        memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
+        tmpPtr->name[IF_NAMESIZE - 1] = '\0';
+        if (strlen(token + 1) >= IF_NAMESIZE)
+            LOG(LOG_NOTICE, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
+        filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
+    } else {
+        // If any (default) filters have already been set find the end of the list.
+        for (filP = &tmpPtr->filters; *filP && *filP != commonConfig.defaultFilters; filP = &(*filP)->next);
+        for (rateP = &tmpPtr->rates; *rateP && *rateP != commonConfig.defaultRates; rateP = &(*rateP)->next);
+    }
 
     // Parse the rest of the config.
+    LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpPtr->name);
     while (!logwarning && nextToken(token)) {
         while (token[1] && (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
@@ -503,7 +510,7 @@ bool loadConfig(char *cfgFile) {
     FILE                    *confFilePtr = NULL, *fp;
     char                    *token       = NULL;
     struct stat              st;
-    uint32_t                 st_mode;
+    uint32_t                 st_mode, n;
 
     // Initialize common config on first entry.
     if (!commonConfig.set) {
@@ -518,23 +525,19 @@ bool loadConfig(char *cfgFile) {
         return false;
     } else if (S_ISDIR(st_mode)) {
         // Include all .conf files in include directory.
-        struct dirent *dirEnt;
-        DIR           *dir;
+        struct dirent **d;
         LOG(LOG_NOTICE, 0, "Config: Searching for config files in '%s'.", cfgFile);
-        if (! (dir = opendir(cfgFile)))
-            LOG(LOG_WARNING, errno, "Config: Cannot open include directory '%s'.", cfgFile);
-        else while (!logwarning && (dirEnt = readdir(dir))) {
-            char file[strlen(cfgFile) + strlen(dirEnt->d_name) + 2];
-            sprintf(file, "%s/%s", cfgFile, dirEnt->d_name);
-            if (strcmp(&file[strlen(file) - 5], ".conf") + stat(file, &st) == 0 && S_ISREG(st.st_mode) && !loadConfig(file))
+        if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (!logwarning && n--) {
+            char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
+            if (sprintf(file, "%s/%s", cfgFile, d[n]->d_name) && !loadConfig(file))
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
         }
-        free(dir);
+        free(d);
     } else if (count >= MAX_CFGFILE_RECURSION) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, cfgFile);
         return false;
-    } else if (! (confFilePtr = configFile(cfgFile, 1))) {
+    } else if (!S_ISREG(st_mode) || ! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
         return false;
     } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
@@ -785,8 +788,8 @@ bool loadConfig(char *cfgFile) {
 
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     free(token);  // Alloced by self
-    if (confFilePtr && configFile(NULL, 0))
-        LOG(LOG_WARNING, errno, "Failed to close config file (%d) '%s'.", count, cfgFile);
+    if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
+        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", count, cfgFile);
     if (S_ISDIR(st_mode) || --count > 0 || confFilePtr)
         return !logwarning;
     commonConfig.set = false;
