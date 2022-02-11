@@ -357,7 +357,7 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
         filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
     } else {
-        // If any (default) filters have already been set find the end of the list.
+        // If any (default) filters have already been set, find the end of the list.
         for (filP = &tmpPtr->filters; *filP && *filP != commonConfig.defaultFilters; filP = &(*filP)->next);
         for (rateP = &tmpPtr->rates; *rateP && *rateP != commonConfig.defaultRates; rateP = &(*rateP)->next);
     }
@@ -529,7 +529,7 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_NOTICE, 0, "Config: Searching for config files in '%s'.", cfgFile);
         if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (!logwarning && n--) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
-            if (sprintf(file, "%s/%s", cfgFile, d[n]->d_name) && !loadConfig(file))
+            if (sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file))
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
         }
         free(d);
