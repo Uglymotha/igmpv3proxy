@@ -133,7 +133,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
-        if (! (IfDp = getIf(igmpMsg->im_vif, 0)))
+        if (! (IfDp = getIf(igmpMsg->im_vif, NULL, 0)))
             return;
         LOG(LOG_INFO, 0, "acceptIgmp: Upcall from %s to %s on %s.", inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
         switch (igmpMsg->im_msgtype) {
@@ -168,7 +168,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
             ifindex = sdl->sdl_index;
 #endif
-            if (! (IfDp = getIf(ifindex, 1))) {
+            if (! (IfDp = getIf(ifindex, NULL, 1))) {
                 char ifName[IF_NAMESIZE];
                 LOG(LOG_INFO, 0, "acceptIgmp: No valid interface found for src: %s dst: %s on %s.",
                                   inetFmt(src, 1), inetFmt(dst, 2), ifindex ? if_indextoname(ifindex, ifName) : "unk");
