@@ -349,6 +349,9 @@ static inline bool parsePhyintToken(char *token) {
     if (! tmpPtr) {
         if (! (tmpPtr = malloc(sizeof(struct vifConfig))))  // Freed by freeConfig or self()
             LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");
+        // Insert vifconf in list and set default config and filters pointers.
+        tmpPtr->next = vifConf;
+        vifConf      = tmpPtr;
         *tmpPtr = DEFAULT_VIFCONF;
         // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
         memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
@@ -472,6 +475,7 @@ static inline bool parsePhyintToken(char *token) {
 
     // Return false if error in interface config was detected.
     if (logwarning) {
+        vifConf = tmpPtr->next;
         free(tmpPtr);  // Alloced by self.
         return false;
     }
@@ -488,9 +492,6 @@ static inline bool parsePhyintToken(char *token) {
                             tmpPtr->name, tmpPtr->qry.interval, f);
     }
 
-    // Insert vifconf in list and set default filters.
-    tmpPtr->next = vifConf;
-    vifConf      = tmpPtr;
     if (!tmpPtr->noDefaultFilter)
         *filP = commonConfig.defaultFilters;
 
