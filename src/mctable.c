@@ -623,7 +623,7 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
                 for (i = 0; i < MAXVIFS && (!BIT_TST(src->vifB.d, i) || src->vifB.age[i] == 0); i++ );
                 if (i < MAXVIFS) {
                     LOG(LOG_INFO, 0, "updateSourceFilter: Source %s active in include mode for %s on %s.",
-                                      inetFmt(src->ip, 1), inetFmt(mct->group, 2), getIf(i, 0)->Name);
+                                      inetFmt(src->ip, 1), inetFmt(mct->group, 2), getIf(i, NULL, 0)->Name);
                     continue;
                 }
             }
