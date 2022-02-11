@@ -532,6 +532,7 @@ bool loadConfig(char *cfgFile) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
             if (sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file))
                 LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
+            free(d[n]);
         }
         free(d);
     } else if (count >= MAX_CFGFILE_RECURSION) {
