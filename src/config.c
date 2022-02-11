@@ -790,7 +790,7 @@ bool loadConfig(char *cfgFile) {
     free(token);  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", count, cfgFile);
-    if (S_ISDIR(st_mode) || --count > 0 || confFilePtr)
+    if (S_ISDIR(st_mode) || --count > 0 || confFilePtr || logwarning)
         return !logwarning;
     commonConfig.set = false;
 
