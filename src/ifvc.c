@@ -109,7 +109,7 @@ void buildIfVc(void) {
 #ifdef IFF_CANTCONFIG
             || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || ((IfDp = getIf(ix, 1)) && ! IfDp->conf))
+            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0)))
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
             continue;
 
@@ -168,11 +168,12 @@ inline struct IfDesc *getIfL(void) {
 }
 
 /**
-*   Returns pointer to interface based on given sys or vif index or NULL if not found.
+*   Returns pointer to interface based on given name, sys- or vif-index or NULL if not found.
 */
-inline struct IfDesc *getIf(unsigned int ix, int sys) {
-    struct IfDesc *IfDp;
-    for (IfDp = IfDescL; IfDp && !((sys ? IfDp->sysidx : IfDp->index) == ix); IfDp = IfDp->next);
+inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
+    struct IfDesc *IfDp = IfDescL;
+    while (IfDp && !(mode == 2 ? strcmp(name, IfDp->Name) == 0 : (mode == 1 ? IfDp->sysidx : IfDp->index) == ix))
+         IfDp = IfDp->next;
     return IfDp;
 }
 
