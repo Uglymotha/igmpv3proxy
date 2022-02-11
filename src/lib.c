@@ -92,6 +92,13 @@ inline const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
 }
 
 /**
+*   Filters *.conf files from dirent.
+*/
+int confFilter(const struct dirent *d) {
+    return !strcmp(&d->d_name[strlen(d->d_name) - 5], ".conf");
+}
+
+/**
 *   Calculate time difference between two timespecs. Return 0,-1 if t1 is already past t2.
 */
 inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
