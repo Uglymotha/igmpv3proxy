@@ -473,12 +473,9 @@ static inline bool parsePhyintToken(char *token) {
             break;
     }
 
-    // Return false if error in interface config was detected.
-    if (logwarning) {
-        vifConf = tmpPtr->next;
-        free(tmpPtr);  // Alloced by self.
+    // Return false if error in interface config was detected. freeConfig will cleanup.
+    if (logwarning)
         return false;
-    }
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10
