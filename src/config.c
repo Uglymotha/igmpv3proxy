@@ -49,7 +49,7 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
+static const char *options = " include phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount noquerierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
 static const char *phyintopt = " updownstream upstream downstream disabled ratelimit threshold noquerierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
@@ -174,7 +174,6 @@ static inline bool nextToken(char *token) {
 *   Initialize default values of configuration parameters.
 */
 static inline void initCommonConfig(void) {
-    commonConfig.set = true;
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
     commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
@@ -350,9 +349,8 @@ static inline bool parsePhyintToken(char *token) {
         if (! (tmpPtr = malloc(sizeof(struct vifConfig))))  // Freed by freeConfig or self()
             LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");
         // Insert vifconf in list and set default config and filters pointers.
-        tmpPtr->next = vifConf;
-        vifConf      = tmpPtr;
         *tmpPtr = DEFAULT_VIFCONF;
+        vifConf = tmpPtr;
         // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
         memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
         tmpPtr->name[IF_NAMESIZE - 1] = '\0';
@@ -504,50 +502,47 @@ static inline bool parsePhyintToken(char *token) {
 */
 bool loadConfig(char *cfgFile) {
     static struct filters  **filP, **rateP;
-    static int64_t           intToken    = 0,     count = 0;
+    int64_t                  intToken    = 0, st_mode, n;
     FILE                    *confFilePtr = NULL, *fp;
     char                    *token       = NULL;
     struct stat              st;
-    uint32_t                 st_mode, n;
 
     // Initialize common config on first entry.
-    if (!commonConfig.set) {
+    if (commonConfig.cnt++ == 0) {
         logwarning = 0;
         initCommonConfig();
         filP  = &commonConfig.defaultFilters;
         rateP = &commonConfig.defaultRates;
     }
 
-    if (stat(cfgFile, &st) != 0 || !(st_mode = st.st_mode)) {
+    if (commonConfig.cnt == 0xFF) {
+        // Check recursion and return if exceeded.
+        LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", 0xFF, cfgFile);
+    } else if (stat(cfgFile, &st) != 0 || !(st_mode = st.st_mode)) {
         LOG(LOG_WARNING, errno, "Config: Cannot stat '%s'.", cfgFile);
-        return false;
     } else if (S_ISDIR(st_mode)) {
         // Include all .conf files in include directory.
         struct dirent **d;
         LOG(LOG_NOTICE, 0, "Config: Searching for config files in '%s'.", cfgFile);
-        if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (!logwarning && n--) {
+        if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (n--) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
-            if (sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file))
-                LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", file);
+            if ((sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file)) && !logwarning)
+                LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s' %d.", file, logwarning);
             free(d[n]);
         }
         free(d);
-    } else if (count >= MAX_CFGFILE_RECURSION) {
-        // Check recursion and return if exceeded.
-        LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", MAX_CFGFILE_RECURSION, cfgFile);
-        return false;
+        //return !logwarning;
     } else if (!S_ISREG(st_mode) || ! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
-        return false;
+        LOG(LOG_WARNING, errno, "Config: Failed to open config file '%s'.", cfgFile);
     } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
         // Allocate buffer and open config file and initialize common config when loading main config file.
         LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
     } else {
         // Increase count and initialize buffer. First char of token is ' ', counters to 0.
-        count++;
         token[0] = ' ';
         *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
-        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", count, cfgFile);
+        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", commonConfig.cnt, cfgFile);
     }
 
     // Loop though file tokens until all configuration is read or error encounterd.
@@ -574,9 +569,9 @@ bool loadConfig(char *cfgFile) {
         if (strcmp(" include", token) == 0 && nextToken(token) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
             // Load the config from include file and restore current.
             if (loadConfig(token + 1))
-                LOG(LOG_NOTICE, 0, "Config: Succesfully loaded config from '%s'.", token + 1);
-            else
-                LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s'.", token + 1);
+                LOG(LOG_NOTICE, 0, "Config: Succesfully included config from '%s'.", token + 1);
+            else if (!logwarning)
+                LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
@@ -589,7 +584,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" pbufsize", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.pBufsz = intToken > 0 && intToken < 65536 ? intToken : BUF_SIZE;
-            LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dB.", intToken);
+            LOG(LOG_NOTICE, 0, "Config: Setting packet buffer to %dB.", intToken);
 
         } else if (strcmp(" reqqueuesize", token) == 0 && INTTOKEN) {
             commonConfig.reqQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
@@ -782,16 +777,15 @@ bool loadConfig(char *cfgFile) {
 
         } else if (token[1] != '\0')
             // Token may be " " if parsePhyintToken() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file.", token + 1);
+            LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
     }
 
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     free(token);  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
-        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", count, cfgFile);
-    if (S_ISDIR(st_mode) || --count > 0 || confFilePtr || logwarning)
+        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", commonConfig.cnt, cfgFile);
+    if (--commonConfig.cnt > 0 || logwarning)
         return !logwarning;
-    commonConfig.set = false;
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
@@ -810,16 +804,16 @@ bool loadConfig(char *cfgFile) {
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
         timers.rescanVif = timer_setTimer(TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces",
                                           rebuildIfVc, &timers.rescanVif);
-    } else if (! commonConfig.rescanVif && timers.rescanVif != 0) {
+    } else if (!commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
     }
 
     // Check rescanconf status and start or clear timers if necessary.
-    if (commonConfig.rescanConf && timers.rescanConf == 0)
+    if (commonConfig.rescanConf && timers.rescanConf == 0) {
         timers.rescanConf = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration",
                                            reloadConfig, &timers.rescanConf);
-    else if (! commonConfig.rescanConf && timers.rescanConf != 0) {
+    } else if (!commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
@@ -875,6 +869,7 @@ void reloadConfig(uint64_t *tid) {
     oldcommonConfig = commonConfig;
 
     // Load the new configuration keep reference to the old.
+    commonConfig.cnt = 0;
     if (!loadConfig(commonConfig.configFilePath)) {
         LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", commonConfig.configFilePath);
         if (vifConf)
@@ -885,7 +880,7 @@ void reloadConfig(uint64_t *tid) {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
-        LOG(LOG_WARNING, 0, "Configuration Reloaded.");
+        LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", commonConfig.configFilePath);
     }
     if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
         *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", reloadConfig, tid);
@@ -923,10 +918,9 @@ inline void configureVifs(void) {
             if (! (confPtr = malloc(sizeof(struct vifConfig))))
                 LOG(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
             *confPtr = DEFAULT_VIFCONF;
-            confPtr->filters = commonConfig.defaultFilters;
+            vifConf  = confPtr;
             strcpy(confPtr->name, IfDp->Name);
-            confPtr->next = vifConf;
-            vifConf = confPtr;
+            confPtr->filters = commonConfig.defaultFilters;
         }
         // Link the configuration to the interface. And update the states.
         oconfPtr = IfDp->conf;

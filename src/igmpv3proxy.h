@@ -99,12 +99,11 @@ union cmsgU {
 #define READ_BUFFER_SIZE      512
 #define MAX_TOKEN_LENGTH      128
 #define MAX_GROUPNAME_SIZE     32
-#define MAX_CFGFILE_RECURSION 128
 
 // Keeps common configuration settings.
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
-    bool                set;
+    uint8_t             cnt;
     // Daemon parameters.
     bool                notAsDaemon;
     char               *configFilePath;
@@ -195,7 +194,7 @@ struct vifConfig {
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, NULL, NULL, NULL }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface

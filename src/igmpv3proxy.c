@@ -218,7 +218,8 @@ static void igmpProxyInit(void) {
 
     // Load the config file.
     if (!loadConfig(CONFIG->configFilePath))
-        LOG(LOG_ERR, 0, "Failed to load configuration file '%s'.", CONFIG->configFilePath);
+        LOG(LOG_ERR, 0, "Failed to load configuration from '%s'.", CONFIG->configFilePath);
+    LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Enable mroute api open cli socket and set pollFD.
