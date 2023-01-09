@@ -38,7 +38,7 @@
 */
 
 #include "igmpv3proxy.h"
-
+    extern bool bla;
 const char Usage[] =
 "Usage: %s [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"

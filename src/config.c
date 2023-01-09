@@ -221,10 +221,11 @@ static inline void initCommonConfig(void) {
     // Do not proxy local mc by default.
     commonConfig.proxyLocalMc = false;
 
-    // Default igmpv3 and participate in querier election by default.
+    // Default igmpv3, validate checksums and participate in querier election by default.
     commonConfig.querierIp = (uint32_t)-1;
     commonConfig.querierVer = 3;
     commonConfig.querierElection = true;
+    commonConfig.cksumVerify = true;
 
     // Default no group for socket (use root's).
     if (! (commonConfig.socketGroup = getgrgid(0)))
@@ -422,6 +423,10 @@ static inline bool parsePhyintToken(char *token) {
         } else if (strcmp(" noquerierelection", token) == 0) {
             tmpPtr->qry.election = false;
             LOG(LOG_NOTICE, 0, "Config (%s): Will not participate in IGMP querier election.", tmpPtr->name);
+
+        } else if (strcmp(" nocksumverify", token) == 0) {
+            tmpPtr->cksumVerify = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not verify IGMP checksums.", tmpPtr->name);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -765,6 +770,10 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" defaultnoquerierelection", token) == 0) {
             commonConfig.querierElection = false;
             LOG(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
+
+        } else if (strcmp(" defaultnocksumverify", token) == 0) {
+            commonConfig.cksumVerify = false;
+            LOG(LOG_NOTICE, 0, "Config: Will not verify IGMP checksums by default.");
 
         } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
             if (! (commonConfig.socketGroup = getgrnam(token + 1)))

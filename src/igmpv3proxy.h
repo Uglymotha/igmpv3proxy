@@ -147,6 +147,8 @@ struct Config {
     bool                proxyLocalMc;
     // Set if must not participate in IGMP querier election.
     bool                querierElection;
+    // Set if must not validate igmp checksum.
+    bool                cksumVerify;
     // Group for CLI access.
     struct group       *socketGroup;
 };
@@ -190,11 +192,12 @@ struct vifConfig {
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
     bool                noDefaultFilter;                // Do not add default filters to interface
+    bool                cksumVerify;                    // Do not validate igmp checksums on interface
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, true, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
