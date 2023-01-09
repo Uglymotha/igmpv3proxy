@@ -3,7 +3,6 @@ AC_INIT([igmpv3proxy], [0.9.0])
 AM_INIT_AUTOMAKE
 AC_CONFIG_SRCDIR([src/igmpv3proxy.c])
 AC_CONFIG_HEADERS([config.h])
-AC_PROG_CC_C99
 
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([Your C compiler does not support ISO C99.])])
 
