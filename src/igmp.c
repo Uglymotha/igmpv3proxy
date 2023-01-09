@@ -186,10 +186,13 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     else if ((ipdatalen < IGMP_MINLEN) || (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN))
         LOG(LOG_NOTICE, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s.",
                              ipdatalen, inetFmt(src, 1));
-    else if (cksum != inetChksum((uint16_t *)igmp, ipdatalen))
+    else if (IfDp->conf->cksumVerify && cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (!IfDp->conf->cksumVerify || checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_DOWNSTREAM)) {
+    else if (IfDp->conf->cksumVerify)
+        LOG(LOG_DEBUG, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum correct.",
+                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
+    else if (checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_DOWNSTREAM)) {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
@@ -294,43 +297,6 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
         else
             LOG(LOG_DEBUG, 0, msg);
     } while (i < nsrcs);
-}
-
-/**
-*   Function to control the IGMP querier process on interfaces.
-*/
-void ctrlQuerier(int start, struct IfDesc *IfDp) {
-    if (start == 0 || start == 2) {
-        // Remove all queries, timers and reset all IGMP status for interface.
-        LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
-        delQuery(IfDp, NULL, NULL, NULL, 0);
-        if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
-             (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
-            LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
-            k_updateGroup(IfDp, false, allrouters_group, 1, (uint32_t)-1);
-            k_updateGroup(IfDp, false, alligmp3_group, 1, (uint32_t)-1);
-        }
-        timer_clearTimer(IfDp->querier.Timer);
-        timer_clearTimer(IfDp->querier.ageTimer);
-        memset(&IfDp->querier, 0, sizeof(struct querier));
-        IfDp->querier.ip = (uint32_t)-1;
-        if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
-            IfDp->conf->qry.ver = 3;
-    }
-    if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
-        // Join all routers groups and start querier process on new downstream interfaces.
-        LOG(LOG_INFO, 0, "ctrlQuerier: Starting querier and joining all routers and all igmp groups on %s", IfDp->Name);
-        k_updateGroup(IfDp, true, allrouters_group, 1, (uint32_t)-1);
-        k_updateGroup(IfDp, true, alligmp3_group, 1, (uint32_t)-1);
-        uint16_t interval = IfDp->conf->qry.ver == 3 ? getIgmpExp(IfDp->conf->qry.interval, 0)
-                                                     : IfDp->conf->qry.ver == 2 ? IfDp->conf->qry.interval
-                                                     : 10;
-        IfDp->conf->qry.startupQueryInterval = interval > 4 ? (IfDp->conf->qry.ver == 3 ? getIgmpExp(interval / 4, 1)
-                                                                                        : interval / 4)
-                                                            : 1;
-        IfDp->conf->qry.startupQueryCount = IfDp->conf->qry.robustness;
-        sendGeneralMemberQuery(IfDp);
-    }
 }
 
 /**

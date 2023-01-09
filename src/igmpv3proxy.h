@@ -197,7 +197,7 @@ struct vifConfig {
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, true, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, commonConfig.querierElection, commonConfig.cksumVerify, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -394,7 +394,6 @@ void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
 */
 char *initIgmp(void);
 void  acceptIgmp(int recvlen, struct msghdr msgHdr);
-void  ctrlQuerier(int start, struct IfDesc *IfDp);
 void  sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 
@@ -464,6 +463,7 @@ void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 /**
 *   querier.c
 */
+void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver);
 void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 

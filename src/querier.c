@@ -44,6 +44,43 @@ static struct qlst *qL = NULL;    // List of running GSQ
 static uint32_t     qC = 0;       // Querier count.
 
 /**
+*   Function to control the IGMP querier process on interfaces.
+*/
+void ctrlQuerier(int start, struct IfDesc *IfDp) {
+    if (start == 0 || start == 2) {
+        // Remove all queries, timers and reset all IGMP status for interface.
+        LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);
+        delQuery(IfDp, NULL, NULL, NULL, 0);
+        if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
+             (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
+            LOG(LOG_INFO, 0, "ctrlQuerier: Leaving all routers and all igmp groups on %s", IfDp->Name);
+            k_updateGroup(IfDp, false, allrouters_group, 1, (uint32_t)-1);
+            k_updateGroup(IfDp, false, alligmp3_group, 1, (uint32_t)-1);
+        }
+        timer_clearTimer(IfDp->querier.Timer);
+        timer_clearTimer(IfDp->querier.ageTimer);
+        memset(&IfDp->querier, 0, sizeof(struct querier));
+        IfDp->querier.ip = (uint32_t)-1;
+        if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
+            IfDp->conf->qry.ver = 3;
+    }
+    if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
+        // Join all routers groups and start querier process on new downstream interfaces.
+        LOG(LOG_INFO, 0, "ctrlQuerier: Starting querier and joining all routers and all igmp groups on %s", IfDp->Name);
+        k_updateGroup(IfDp, true, allrouters_group, 1, (uint32_t)-1);
+        k_updateGroup(IfDp, true, alligmp3_group, 1, (uint32_t)-1);
+        uint16_t interval = IfDp->conf->qry.ver == 3 ? getIgmpExp(IfDp->conf->qry.interval, 0)
+                                                     : IfDp->conf->qry.ver == 2 ? IfDp->conf->qry.interval
+                                                     : 10;
+        IfDp->conf->qry.startupQueryInterval = interval > 4 ? (IfDp->conf->qry.ver == 3 ? getIgmpExp(interval / 4, 1)
+                                                                                        : interval / 4)
+                                                            : 1;
+        IfDp->conf->qry.startupQueryCount = IfDp->conf->qry.robustness;
+        sendGeneralMemberQuery(IfDp);
+    }
+}
+
+/**
 *   Adds a source to list of sources to query. Toggles appropriate flags and adds to qlst array.
 */
 inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash) {
