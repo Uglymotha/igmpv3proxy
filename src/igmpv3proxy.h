@@ -193,12 +193,12 @@ struct vifConfig {
     struct queryParam   qry;                            // Configured query parameters
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
-/*    bool                quickleave;                     // Fast upstream leave*/
+    bool                quickLeave;                     // Fast upstream leave
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, commonConfig.querierElection, commonConfig.cksumVerify, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, commonConfig.querierElection, commonConfig.cksumVerify, commonConfig.quickLeave, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -451,6 +451,9 @@ void k_deleteUpcalls(uint32_t src, uint32_t group);
 #define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
 #define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
 #define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
+#define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
+#define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
+#define NO_HASH(x)        (IfDp->conf->quickLeave && noHash(x))
 void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);

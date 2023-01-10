@@ -45,8 +45,9 @@ static inline bool        addGroup(struct mcTable* mct, struct IfDesc *IfDp, int
 static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint32_t ip, bool check, bool set,
                                  struct src *src, uint32_t srcHash);
 static uint64_t           getGroupBw(struct subnet group, struct IfDesc *IfDp);
-static inline void        quickLeave(struct mcTable *mct, uint32_t ip, uint32_t srcHash);
+static inline void        quickLeave(struct mcTable *mct, uint32_t ip);
 static void               updateSourceFilter(struct mcTable *mct, int mode);
+#define QUICKLEAVE(x,y)   if (IfDp->conf->quickLeave) quickLeave(x,y)
 
 // Multicast group membership tables.
 static struct mcTable **MCT = NULL;
@@ -127,7 +128,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         return false;
     } else if (dir) {
         BIT_SET(mct->vifB.d, IfDp->index);
-        setHash(mct->dHostsHT, srcHash);
+        SET_HASH(mct->dHostsHT, srcHash);
         IFGETIFLIF((mct->vifB.us | mct->vifB.ud) != uVifs, IfDp, IS_UPSTREAM(IfDp->state) && NOT_SET(mct, us, IfDp))
             // Check if any upstream interfaces still need to join the group.
             addGroup(mct, IfDp, 0, 1, (uint32_t)-1);
@@ -284,7 +285,7 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint3
             // Source requested in exclude mode.
             BIT_CLR(src->vifB.lm, IfDp->index);
             src->vifB.age[IfDp->index] = IfDp->querier.qrv;
-            setHash(src->dHostsHT, srcHash);
+            SET_HASH(src->dHostsHT, srcHash);
         }
         if (NOT_SET(src, d, IfDp) && BIT_SET(src->vifB.d, IfDp->index) && src->mfc)
             // Activate route will check ACL for source on downstream interfaces.
@@ -318,7 +319,7 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
                            IfDp ? IfDp->Name : "all interfaces");
         if (IfDp) {
             // Remove source from hosts hash table, and clear vifbits.
-            clearHash(src->dHostsHT, srcHash);
+            CLR_HASH(src->dHostsHT, srcHash);
             BIT_CLR(src->vifB.d, IfDp->index);
             BIT_CLR(src->vifB.lm, IfDp->index);
             src->vifB.age[IfDp->index] = 0;
@@ -418,16 +419,13 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
 /**
 *   Check if a group can be left upstream, because no more listeners downstream.
 */
-static inline void quickLeave(struct mcTable *mct, uint32_t ip, uint32_t srcHash) {
-    if (CONFIG->quickLeave) {
-        struct IfDesc * IfDp;
-        clearHash(mct->dHostsHT, srcHash);
-        IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IS_SET(mct, us, IfDp)) {
-            // Quickleave group upstream is last downstream host was detected.
-            LOG(LOG_INFO, 0, "QuickLeave: Group %s on %s. Last downstream host %s.",
-                              inetFmt(mct->group, 1), inetFmt(ip, 2), IfDp->Name);
-            delGroup(mct, IfDp, NULL, 0);
-        }
+static inline void quickLeave(struct mcTable *mct, uint32_t ip) {
+    struct IfDesc * IfDp;
+    IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IfDp->conf->quickLeave && IS_SET(mct, us, IfDp)) {
+        // Quickleave group upstream is last downstream host was detected.
+        LOG(LOG_INFO, 0, "QuickLeave: Group %s on %s. Last downstream host %s.",
+                          inetFmt(mct->group, 1), inetFmt(ip, 2), IfDp->Name);
+        delGroup(mct, IfDp, NULL, 0);
     }
 }
 
@@ -598,7 +596,7 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
         for (nsrcs = 0, src = mct->sources; src; src = src->next) {
             BIT_CLR(src->vifB.us, IfDp->index);
             if (mode == MCAST_INCLUDE) {
-                if (!src->vifB.d || noHash(src->dHostsHT)) {
+                if (!src->vifB.d || NO_HASH(src->dHostsHT)) {
                     // IN: Do not add sources with no listeners.
                     LOG(LOG_INFO, 0, "updateSourceFilter: No downstream hosts %s:%s on %s, not adding to source list.",
                                       inetFmt(src->ip, 1), inetFmt(mct->group, 2), IfDp->Name);
@@ -761,7 +759,7 @@ void clearGroups(void *Dp) {
 void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
     uint32_t         group   = grec->grec_mca.s_addr,
-                     srcHash  = CONFIG->quickLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
+                     srcHash  = IfDp->conf->quickLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
     struct src      *src     = NULL, *tsrc  = NULL;
     struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
@@ -833,9 +831,11 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
             LOG(LOG_INFO, 0, "updateGroup: Ignoring TO_IN for %s on %s, v1 host/querier present.", inetFmt(group, 1), IfDp->Name);
             break;
         }
-        if (nsrcs == 0)
+        if (nsrcs == 0) {
             // Leave message, check for quicleave.
-            quickLeave(mct, ip, srcHash);
+            CLR_HASH(mct->dHostsHT, srcHash);
+            QUICKLEAVE(mct, ip);
+        }
         if (IS_EX(mct, IfDp) && NOT_SET(mct, lm, IfDp))
             // EX: Send Q(G).
             startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, IfDp, 0, 2, IfDp->conf->qry.lmInterval,
@@ -869,7 +869,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 
         i       = 0;
         src     = mct->sources;
-        bool nH = CONFIG->quickLeave;
+        bool nH = IfDp->conf->quickLeave;
         while (i < nsrcs && (IS_EX(mct, IfDp) || src)) {
             // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y), (A - X - Y) = Group Timer?
             if (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr) {
@@ -894,7 +894,8 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
                 LOG(LOG_DEBUG, 0, "updateGroup: Last source %s in group %s for client %s on %s.",
                                    inetFmt(grec->grec_src[i - (i >= nsrcs ? 1 : 0)].s_addr, 1), inetFmt(mct->group, 2),
                                    inetFmt(ip, 3), IfDp->Name);
-                quickLeave(mct, ip, srcHash);
+                CLR_HASH(mct->dHostsHT, srcHash);
+                QUICKLEAVE(mct, ip);
             }
         }
     }
@@ -1011,8 +1012,8 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         if (!checkFilters(IfDp, 1, src, mct))
             LOG(LOG_NOTICE, 0, "Not forwarding denied source %s to group %s on %s.", inetFmt(src->ip,1),
                                 inetFmt(mct->group, 2), IfDp->Name);
-        else if ((   (IS_IN(mct, IfDp) && !noHash(src->dHostsHT) && IS_SET(src, d, IfDp) && src->vifB.age[IfDp->index] > 0)
-                  || (IS_EX(mct, IfDp) && !noHash(mct->dHostsHT) && (NOT_SET(src, d, IfDp) || src->vifB.age[IfDp->index] > 0))))
+        else if ((   (IS_IN(mct, IfDp) && !NO_HASH(src->dHostsHT) && IS_SET(src, d, IfDp) && src->vifB.age[IfDp->index] > 0)
+                  || (IS_EX(mct, IfDp) && !NO_HASH(mct->dHostsHT) && (NOT_SET(src, d, IfDp) || src->vifB.age[IfDp->index] > 0))))
             ttlVc[IfDp->index] = IfDp->conf->threshold;
         LOG(LOG_DEBUG, 0, "activateRoute: Setting TTL for Vif %s (%d) to %d", IfDp->Name, IfDp->index, ttlVc[IfDp->index]);
     }
@@ -1108,9 +1109,9 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
                 strcpy(msg, "%d %s %s %s %08x %s %ld %ld");
             }
             if (! cliSockAddr) {
-                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->quickLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! mfc || !IfDp->conf->quickLeave ? "not tracked" : NO_HASH(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
             } else {
-                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->quickLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! mfc || !IfDp->conf->quickLeave ? "not tracked" : NO_HASH(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
                 sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
             }
             mfc = mfc ? mfc->next : NULL;

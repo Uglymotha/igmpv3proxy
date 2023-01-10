@@ -104,8 +104,8 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         BIT_SET(src->vifB.lm, IfDp->index);
         src->vifB.age[IfDp->index] = qlst->misc;
         qlst->src[qlst->nsrcs++] = src;
-        clearHash(src->dHostsHT, srcHash);
-        if (srcHash != (uint32_t)-1 && src->vifB.us && noHash(src->dHostsHT)) {
+        CLR_HASH(src->dHostsHT, srcHash);
+        if (srcHash != (uint32_t)-1 && src->vifB.us && NO_HASH(src->dHostsHT)) {
             LOG(LOG_INFO, 0, "addSrcToQlst: Last downstream host, quickleave source %s in group %s on %s.",
                               inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
             joinBlockSrc(src, NULL, false);

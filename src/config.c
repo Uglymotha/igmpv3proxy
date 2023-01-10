@@ -50,7 +50,7 @@ static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
 static const char *options = " include phyint defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
-static const char *phyintopt = " updownstream upstream downstream disabled quickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *phyintopt = " updownstream upstream downstream disabled quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
 static struct Config commonConfig, oldcommonConfig;
@@ -246,7 +246,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
                    filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    fil    = filNew;
 
-   strcpy(list, token);
+    strcpy(list, token);
     for (;(nextToken(token)) && (strstr(filteropt, token) || !strstr(options, token));) {
         if (strcmp(" filter", list) == 0 && fil.dst.ip != 0xFFFFFFFF && fil.action == (uint64_t)-1) {
             if (fil.dir == (uint8_t)-1) {
@@ -407,6 +407,14 @@ static inline bool parsePhyintToken(char *token) {
                 tmpPtr->threshold = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpPtr->name, intToken);
             }
+
+        } else if (strcmp(" quickleave", token) == 0) {
+            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode enabled.", tmpPtr->name);
+            tmpPtr->quickLeave = true;
+
+        } else if (strcmp(" noquickleave", token) == 0) {
+            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpPtr->name);
+            tmpPtr->quickLeave = false;
 
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
             tmpPtr->qry.ip = inet_addr(token + 1);
@@ -620,9 +628,7 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
-            if (! commonConfig.quickLeave)
-                LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled.");
-            else if (intToken < 8 || intToken > 131072)
+            if (intToken < 8 || intToken > 131072)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
             else {
                 commonConfig.dHostsHTSize = (intToken - intToken % 8) * 8;
@@ -853,25 +859,6 @@ bool loadConfig(char *cfgFile) {
                                               bwControl, &timers.bwControl);
     }
 
-    // Set hashtable size to 0 when quickleave is disabled.
-    if (!commonConfig.quickLeave)
-        commonConfig.dHostsHTSize = 0;
-
-    // Check if quickleave was enabled or disabled due to config change.
-    if (!STARTUP && oldcommonConfig.quickLeave != commonConfig.quickLeave) {
-        LOG(LOG_WARNING, 0, "Config: Quickleave mode was %s, reinitializing group tables.",
-                            commonConfig.quickLeave ? "disabled" : "enabled");
-        clearGroups(CONFIG);
-    }
-
-    // Check if hashtable size was changed due to config change.
-    if (!STARTUP && commonConfig.quickLeave
-                 && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
-        LOG(LOG_WARNING, 0, "Config: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
-                            oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
-        clearGroups(CONFIG);
-    }
-
     return !logwarning;
 }
 
@@ -917,10 +904,12 @@ inline void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
     struct vifConfig *confPtr = NULL, *oconfPtr = NULL;
     struct filters   *fil, *ofil;
+    bool              quickLeave = false;
     uint32_t          vifcount = 0, upsvifcount = 0, downvifcount = 0;
 
     if (! vifConf)
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
+
     GETIFLIF(IfDp, !IFREBUILD || (!(IfDp->state & 0x40) && (IfDp->state & 0x80))) {
         // Loop through all (new) interfaces and find matching config.
         for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name); confPtr = confPtr->next);
@@ -958,6 +947,7 @@ inline void configureVifs(void) {
             // Existing interface, oldstate is current state, newstate is configured state.
             IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
+        quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
 
         // Set configured querier ip to interface address if not configured
         // and set version to 3 for disabled/upstream only interface.
@@ -1012,6 +1002,26 @@ inline void configureVifs(void) {
                 downvifcount--;
             if (IS_UPSTREAM(oldstate)   && upsvifcount)
                 upsvifcount--;
+        }
+    }
+
+    // Set hashtable size to 0 when quickleave is not enabled on any interface.
+    if (!quickLeave) {
+        commonConfig.quickLeave = false;
+        commonConfig.dHostsHTSize = 0;
+    }
+
+    if ((CONFRELOAD || SIGHUP)) {
+        // Check if quickleave was enabled or disabled due to config change.
+        if (oldcommonConfig.quickLeave != commonConfig.quickLeave) {
+            LOG(LOG_WARNING, 0, "Config: Quickleave mode was %s, reinitializing group tables.",
+                                 commonConfig.quickLeave ? "disabled" : "enabled");
+            clearGroups(CONFIG);
+        // Check if hashtable size was changed due to config change.
+        } else if (commonConfig.quickLeave && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
+            LOG(LOG_WARNING, 0, "Config: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
+                                 oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
+            clearGroups(CONFIG);
         }
     }
 
