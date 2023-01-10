@@ -123,7 +123,7 @@ struct Config {
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
     // Set if upstream leave messages should be sent instantly..
-    bool                fastUpstreamLeave;
+    bool                quickLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
     uint32_t            dHostsHTSize;
     uint32_t            hashSeed;
@@ -193,6 +193,7 @@ struct vifConfig {
     struct queryParam   qry;                            // Configured query parameters
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
+/*    bool                quickleave;                     // Fast upstream leave*/
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;

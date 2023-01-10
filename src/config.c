@@ -49,8 +49,8 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
-static const char *phyintopt = " updownstream upstream downstream disabled ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *options = " include phyint defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
+static const char *phyintopt = " updownstream upstream downstream disabled quickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
 static struct Config commonConfig, oldcommonConfig;
@@ -191,7 +191,7 @@ static inline void initCommonConfig(void) {
     commonConfig.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
 
     // Sent leave message upstream on leave messages from downstream.
-    commonConfig.fastUpstreamLeave = false;
+    commonConfig.quickLeave = false;
 
     // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
@@ -607,9 +607,9 @@ bool loadConfig(char *cfgFile) {
             commonConfig.tmQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
             LOG(LOG_NOTICE, 0, "Config: Setting timer queue size to %d.", intToken);
 
-        } else if (strcmp(" quickleave", token) == 0) {
+        } else if (strcmp(" quickleave", token) == 0 || strcmp(" defaultquickleave", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config: Quick leave mode enabled.");
-            commonConfig.fastUpstreamLeave = true;
+            commonConfig.quickLeave = true;
 
         } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
             if (intToken < DEFAULT_MAX_ORIGINS || intToken > 65535)
@@ -620,7 +620,7 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
-            if (! commonConfig.fastUpstreamLeave)
+            if (! commonConfig.quickLeave)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize is specified but quickleave not enabled.");
             else if (intToken < 8 || intToken > 131072)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
@@ -854,18 +854,18 @@ bool loadConfig(char *cfgFile) {
     }
 
     // Set hashtable size to 0 when quickleave is disabled.
-    if (!commonConfig.fastUpstreamLeave)
+    if (!commonConfig.quickLeave)
         commonConfig.dHostsHTSize = 0;
 
     // Check if quickleave was enabled or disabled due to config change.
-    if (!STARTUP && oldcommonConfig.fastUpstreamLeave != commonConfig.fastUpstreamLeave) {
+    if (!STARTUP && oldcommonConfig.quickLeave != commonConfig.quickLeave) {
         LOG(LOG_WARNING, 0, "Config: Quickleave mode was %s, reinitializing group tables.",
-                            commonConfig.fastUpstreamLeave ? "disabled" : "enabled");
+                            commonConfig.quickLeave ? "disabled" : "enabled");
         clearGroups(CONFIG);
     }
 
     // Check if hashtable size was changed due to config change.
-    if (!STARTUP && commonConfig.fastUpstreamLeave
+    if (!STARTUP && commonConfig.quickLeave
                  && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
         LOG(LOG_WARNING, 0, "Config: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
                             oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);

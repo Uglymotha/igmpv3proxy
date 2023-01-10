@@ -223,7 +223,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         }
 
         case IGMP_MEMBERSHIP_QUERY:
-            if (IN_MULTICAST(ntohl(dst)) && CONFIG->querierElection && IfDp->conf->qry.election && !IS_DISABLED(IfDp->state))
+            if (IN_MULTICAST(ntohl(dst)) && IfDp->conf->qry.election && !IS_DISABLED(IfDp->state))
                 acceptMemberQuery(IfDp, src, dst, igmpv3, ipdatalen);
             return;
 

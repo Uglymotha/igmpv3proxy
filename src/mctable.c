@@ -419,7 +419,7 @@ inline void joinBlockSrc(struct src *src, struct IfDesc *If, bool join) {
 *   Check if a group can be left upstream, because no more listeners downstream.
 */
 static inline void quickLeave(struct mcTable *mct, uint32_t ip, uint32_t srcHash) {
-    if (CONFIG->fastUpstreamLeave) {
+    if (CONFIG->quickLeave) {
         struct IfDesc * IfDp;
         clearHash(mct->dHostsHT, srcHash);
         IFGETIFLIF(mct->vifB.us && noHash(mct->dHostsHT), IfDp, IS_SET(mct, us, IfDp)) {
@@ -665,12 +665,12 @@ void clearGroups(void *Dp) {
                 for (src = &(mct->sources); *src; src = &(*src)->next) {
                     if (! (*src = realloc(*src, sizeof(struct src) + CONFIG->dHostsHTSize)))
                         LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                    if (CONFIG->fastUpstreamLeave)
+                    if (CONFIG->quickLeave)
                         memset((*src)->dHostsHT, 0, CONFIG->dHostsHTSize);
                 }
                 if (! (mct = realloc(mct, sizeof(struct mcTable) + CONFIG->dHostsHTSize)))
                     LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                if (CONFIG->fastUpstreamLeave)
+                if (CONFIG->quickLeave)
                     memset(mct->dHostsHT, 0, CONFIG->dHostsHTSize);
                 if (! mct->prev)
                     MCT[iz] = mct;
@@ -761,7 +761,7 @@ void clearGroups(void *Dp) {
 void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
     uint32_t         group   = grec->grec_mca.s_addr,
-                     srcHash  = CONFIG->fastUpstreamLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
+                     srcHash  = CONFIG->quickLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
     struct src      *src     = NULL, *tsrc  = NULL;
     struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
@@ -869,7 +869,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 
         i       = 0;
         src     = mct->sources;
-        bool nH = CONFIG->fastUpstreamLeave;
+        bool nH = CONFIG->quickLeave;
         while (i < nsrcs && (IS_EX(mct, IfDp) || src)) {
             // IN: Send Q(G, A * B) / EX: Send Q(G, A - Y), (A - X - Y) = Group Timer?
             if (! (tsrc = src) || src->ip >= grec->grec_src[i].s_addr) {
@@ -1108,9 +1108,9 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
                 strcpy(msg, "%d %s %s %s %08x %s %ld %ld");
             }
             if (! cliSockAddr) {
-                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->quickLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
             } else {
-                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->fastUpstreamLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, ! CONFIG->quickLeave ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
                 sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
             }
             mfc = mfc ? mfc->next : NULL;
