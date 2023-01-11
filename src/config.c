@@ -609,12 +609,11 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
-        } else if (strcmp(" user", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
+        } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (commonConfig.user = getpwnam(token + 1)))
                 LOG(LOG_WARNING, 0, "Config: User %s does not exist.", token + 1);
-            else if (commonConfig.logFilePath && chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
-                LOG(LOG_WARNING, errno, "Config: KUT.");
-            LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", commonConfig.user->pw_name, commonConfig.user->pw_uid);
+            else
+                LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", commonConfig.user->pw_name, commonConfig.user->pw_uid);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
@@ -795,9 +794,6 @@ bool loadConfig(char *cfgFile) {
                 commonConfig.logFilePath[strlen(token) - 1] = '\0';
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
-                if (commonConfig.user && chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
-                    LOG(LOG_WARNING, 0, "Config: Cannot chown log file %s to %s.",
-                                         commonConfig.logFilePath, commonConfig.user->pw_name);
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
             }
 
@@ -833,6 +829,12 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", commonConfig.cnt, cfgFile);
     if (--commonConfig.cnt > 0 || logwarning)
         return !logwarning;
+
+    // On startup make sure logfile is owned by user.
+    if (STARTUP && commonConfig.logFilePath && commonConfig.user &&
+                                    chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
+        LOG(LOG_WARNING, 0, "Config: Cannot chown log file %s to %s.",
+                             commonConfig.logFilePath, commonConfig.user->pw_name);
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
