@@ -102,10 +102,10 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
     else if (src == 0xFFFFFFFF)
         LOG(LOG_INFO, 0, "checkIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
                             inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
-    else if (! CONFIG->proxyLocalMc && IGMP_LOCAL(group))
+    else if (! IfDp->conf->proxyLocalMc && IGMP_LOCAL(group))
         /* filter local multicast 224.0.0.0/24 */
-        LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast on %s from %s and proxylocalmc is not set. Ignoring.",
-                           IfDp->Name, inetFmt(src, 1));
+        LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast (%s) on %s from %s and proxylocalmc is not set. Ignoring.",
+                           inetFmt(group,1), IfDp->Name, inetFmt(src, 2));
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_DEBUG, 0, "checkIgmp: The request from %s on %s is from myself. Ignoring.", inetFmt(src, 1), IfDp->Name);
     else if ((IfDp->state & ifstate) == 0) {
@@ -189,15 +189,12 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     else if (IfDp->conf->cksumVerify && cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (IfDp->conf->cksumVerify)
-        LOG(LOG_DEBUG, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum correct.",
-                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else if (checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_DOWNSTREAM)) {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
-        LOG(LOG_DEBUG, 0, "acceptIgmp: RECV %s from %-15s to %s", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
-                           inetFmt(src, 1), inetFmt(dst, 2) );
+        LOG(LOG_DEBUG, 0, "acceptIgmp: RECV %s from %-15s to %s on %s%s.", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
+                           inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name, IfDp->conf->cksumVerify ? " (checksum correct)" : "");
 
         switch (igmp->igmp_type) {
         case IGMP_V1_MEMBERSHIP_REPORT:

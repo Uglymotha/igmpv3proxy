@@ -191,23 +191,23 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
     }              total = { 0, 0, 0 };
 
     if (h) {
-        sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
+        sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
     for (IFL(IfDp), i++) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
-            strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
+            strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
         } else {
-            strcpy(msg, "%d %s %d %d %s %s %s %lld %lld %lld\n");
+            strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
         }
-        sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
+        sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }
 
     if (h) {
-        strcpy(msg, "Total|---------------|---|---|---------------|------------|---------------|%14lld B | %10lld B/s | %10lld B/s\n");
+        strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B | %10lld B/s | %10lld B/s\n");
         sprintf(buf, msg, total.bytes, total.rate, total.ratelimit);
         sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
     }

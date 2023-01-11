@@ -49,8 +49,8 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile proxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
-static const char *phyintopt = " updownstream upstream downstream disabled quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *options = " include phyint defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
+static const char *phyintopt = " updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
 static struct Config commonConfig, oldcommonConfig;
@@ -161,7 +161,7 @@ static inline bool nextToken(char *token) {
             default:
                 // Append char to token. When oversized do not increase tokenPtr and keep parsing until EOL.
                 if (!commentFound && !overSized)
-                    token[tokenPtr++] = tolower(cBuffer[*bufPtr]);
+                    token[tokenPtr++] = cBuffer[*bufPtr];
                 if (tokenPtr == MAX_TOKEN_LENGTH - 1)
                     overSized = true;
         } while (++*bufPtr < *readSize && !finished);
@@ -416,6 +416,14 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpPtr->name);
             tmpPtr->quickLeave = false;
 
+        } else if (strcmp(" proxylocalmc", token) == 0) {
+            LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicase.", tmpPtr->name);
+            tmpPtr->proxyLocalMc = true;
+
+        } else if (strcmp(" noproxylocalmc", token) == 0) {
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicase.", tmpPtr->name);
+            tmpPtr->proxyLocalMc = false;
+
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
             tmpPtr->qry.ip = inet_addr(token + 1);
             LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 1));
@@ -511,9 +519,11 @@ static inline bool parsePhyintToken(char *token) {
     if (!tmpPtr->noDefaultFilter)
         *filP = commonConfig.defaultFilters;
 
-    LOG(LOG_INFO, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s", tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
+    LOG(LOG_INFO, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
+        tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
         tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
-        tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream");
+        tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
+        tmpPtr->cksumVerify ? "Enabled" : "Disabled", tmpPtr->quickLeave ? "Enabled" : "Disabled");
 }
 
 /**
@@ -582,7 +592,8 @@ bool loadConfig(char *cfgFile) {
                     parseFilters("default", token, &filP, &rateP);
                 }
             } else if (strstr(phyintopt, token)) {
-                LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
+                if (strcmp(" quickleave", token) != 0)
+                    LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
                 break;
             }
         }
@@ -777,7 +788,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
             }
 
-        } else if (strcmp(" proxylocalmc", token) == 0) {
+        } else if (strcmp(" defaultproxylocalmc", token) == 0) {
             commonConfig.proxyLocalMc = true;
             LOG(LOG_NOTICE, 0, "Config: Will proxy local multicast range 224.0.0.0/8.");
 
@@ -990,7 +1001,7 @@ inline void configureVifs(void) {
         else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
         else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
         else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    {                       clearGroups(IfDp); }
+        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    { if (!IFREBUILD)       clearGroups(IfDp); }
         IfDp->filCh = false;
 
         // Check if vif needs to be removed.
@@ -1007,19 +1018,20 @@ inline void configureVifs(void) {
 
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
     if (!quickLeave) {
+        LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
         commonConfig.quickLeave = false;
         commonConfig.dHostsHTSize = 0;
     }
 
-    if ((CONFRELOAD || SIGHUP)) {
+    if (CONFRELOAD || SSIGHUP) {
         // Check if quickleave was enabled or disabled due to config change.
         if (oldcommonConfig.quickLeave != commonConfig.quickLeave) {
-            LOG(LOG_WARNING, 0, "Config: Quickleave mode was %s, reinitializing group tables.",
-                                 commonConfig.quickLeave ? "disabled" : "enabled");
+            LOG(LOG_WARNING, 0, "configureVifs: Quickleave mode was %s, reinitializing group tables.",
+                                 commonConfig.quickLeave ? "enabled" : "disabled");
             clearGroups(CONFIG);
         // Check if hashtable size was changed due to config change.
         } else if (commonConfig.quickLeave && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
-            LOG(LOG_WARNING, 0, "Config: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
+            LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
                                  oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
             clearGroups(CONFIG);
         }
