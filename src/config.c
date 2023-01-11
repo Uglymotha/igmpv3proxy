@@ -49,7 +49,7 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
+static const char *options = " include phyint user defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
 static const char *phyintopt = " updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
@@ -174,6 +174,9 @@ static inline bool nextToken(char *token) {
 *   Initialize default values of configuration parameters.
 */
 static inline void initCommonConfig(void) {
+    // User to run daemon process.
+    commonConfig.user = NULL;
+
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
     commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
@@ -606,6 +609,13 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
+        } else if (strcmp(" user", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
+            if (! (commonConfig.user = getpwnam(token + 1)))
+                LOG(LOG_WARNING, 0, "Config: User %s does not exist.", token + 1);
+            else if (commonConfig.logFilePath && chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
+                LOG(LOG_WARNING, errno, "Config: KUT.");
+            LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", commonConfig.user->pw_name, commonConfig.user->pw_uid);
+
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
             LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
@@ -785,6 +795,9 @@ bool loadConfig(char *cfgFile) {
                 commonConfig.logFilePath[strlen(token) - 1] = '\0';
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
+                if (commonConfig.user && chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
+                    LOG(LOG_WARNING, 0, "Config: Cannot chown log file %s to %s.",
+                                         commonConfig.logFilePath, commonConfig.user->pw_name);
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
             }
 

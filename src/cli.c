@@ -67,8 +67,7 @@ int openCliSock(void) {
     }
 
     // Open the socket after directory exists / created etc.
-    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770)
-        || chmod(cliSockAddr.sun_path, S_ISVTX | S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH)))
+    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770)))
         || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup->gr_gid)
         || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
@@ -77,7 +76,8 @@ int openCliSock(void) {
 #else
         || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
-        || (chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup->gr_gid)) || chmod(cliSockAddr.sun_path, 0660)) {
+        || (chown(cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, CONFIG->socketGroup->gr_gid))
+        || chmod(cliSockAddr.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
         cliSock = -1;
     }
@@ -85,10 +85,16 @@ int openCliSock(void) {
     // Write PID.
     char  pidFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
     sprintf(pidFile, "%s/%s.pid", CONFIG->runPath, fileName);
+    remove(pidFile);
     FILE *pidFilePtr = fopen(pidFile, "w");
     fprintf(pidFilePtr, "%d\n", getpid());
     fclose(pidFilePtr);
-
+    if (CONFIG->user) {
+        if (chown(pidFile, CONFIG->user->pw_uid, CONFIG->socketGroup->gr_gid))
+            LOG(LOG_WARNING, 0, "Config: Cannot chown pid file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
+        if (chown(CONFIG->runPath, CONFIG->user->pw_uid, CONFIG->socketGroup->gr_gid))
+            LOG(LOG_WARNING, 0, "Config: Cannot chown %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
+    }
     return cliSock;
 } 
 
@@ -98,9 +104,9 @@ int openCliSock(void) {
 int cliSetGroup(struct group *gid) {
     char path[128];
     strcpy(path, cliSockAddr.sun_path);
-    int x = chown(path, 0, gid->gr_gid);
+    int x = chown(path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid);
     memset(path + strlen(path) - 9, 0, 9);
-    x = chown(path, 0, gid->gr_gid);
+    x = chown(path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid);
     return x;
 }
 

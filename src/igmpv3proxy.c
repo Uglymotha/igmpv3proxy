@@ -222,7 +222,7 @@ static void igmpProxyInit(void) {
     LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
-    // Enable mroute api open cli socket and set pollFD.
+     // Enable mroute api open cli socket and set pollFD.
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };
     pollFD[1] = (struct pollfd){ openCliSock(), POLLIN, 0 };
 
@@ -244,16 +244,6 @@ static void igmpProxyCleanUp(void) {
     k_disableMRouter();
     if (pollFD[1].fd > 0)
         close(pollFD[1].fd);
-    if (CONFIG->runPath) {
-        // Remove socket and PID file.
-        char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
-        sprintf(rFile, "%s/%s.pid", CONFIG->runPath, fileName);
-        remove(rFile);
-        sprintf(rFile, "%s/cli.sock", CONFIG->runPath);
-        remove(rFile);
-        rmdir(CONFIG->runPath);
-    }
-    freeConfig(0);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -261,12 +251,24 @@ static void igmpProxyCleanUp(void) {
     t = asctime(localtime(&endtime.tv_sec));
     memcpy(tE, t, strlen(t) - 1);
     tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
-    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
+
+    if (CONFIG->runPath) {
+        // Remove socket and PID file.
+        char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
+        sprintf(rFile, "%s%s.pid", CONFIG->runPath, fileName);
+        remove(rFile);
+        sprintf(rFile, "%scli.sock", CONFIG->runPath);
+        remove(rFile);
+        if (rmdir(CONFIG->runPath))
+            LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONFIG->runPath);
+    }
 
     free(recv_buf);                // Alloced by initIgmp()
     free(CONFIG->logFilePath);     // Alloced by loadConfig()
     free(CONFIG->runPath);         // Alloced by openCliSock()
     free(CONFIG->configFilePath);  // Alloced by main()
+    freeConfig(0);
+    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 }
 
 /**
@@ -276,6 +278,12 @@ static void igmpProxyRun(void) {
     struct timespec timeout;
     int    i = 0, Rt = 0;
     sigstatus = 0;
+
+    // Switch effective user id if configured.
+    if (CONFIG->user && (setgroups(1, &CONFIG->user->pw_gid) != 0                        ||
+        setresgid(CONFIG->user->pw_gid, CONFIG->user->pw_gid, CONFIG->user->pw_gid) != 0 ||
+        setresuid(CONFIG->user->pw_uid, CONFIG->user->pw_uid, CONFIG->user->pw_uid) != 0))
+        LOG(LOG_ERR, 0, "User %s does not exist.", "uglymotha");
 
     while (!(sighandled & GOT_SIGURG)) {
         // Process signaling...

@@ -54,6 +54,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <grp.h>
+#include <pwd.h>
 #include <ifaddrs.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -108,6 +109,7 @@ struct Config {
     bool                notAsDaemon;
     char               *configFilePath;
     char               *runPath;
+    struct passwd      *user;
     uint16_t            reqQsz;
     uint16_t            tmQsz;
     uint32_t            kBufsz;
