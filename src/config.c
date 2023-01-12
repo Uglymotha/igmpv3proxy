@@ -175,7 +175,9 @@ static inline bool nextToken(char *token) {
 */
 static inline void initCommonConfig(void) {
     // User to run daemon process.
-    commonConfig.user = NULL;
+    commonConfig.user = STARTUP ? NULL : commonConfig.user;
+    // Default no group for socket (use root's).
+    commonConfig.socketGroup = NULL;
 
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
@@ -229,10 +231,6 @@ static inline void initCommonConfig(void) {
     commonConfig.querierVer = 3;
     commonConfig.querierElection = true;
     commonConfig.cksumVerify = true;
-
-    // Default no group for socket (use root's).
-    if (! (commonConfig.socketGroup = getgrgid(0)))
-        LOG(LOG_WARNING, errno, "Failed to get grgid for root/wheel.", errno);
 }
 
 /*
@@ -812,11 +810,8 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
             if (! (commonConfig.socketGroup = getgrnam(token + 1)))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
-            else {
+            else
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup->gr_name);
-                if (!STARTUP)
-                    cliSetGroup(commonConfig.socketGroup);
-            }
 
         } else if (token[1] != '\0')
             // Token may be " " if parsePhyintToken() returns without valid token.
@@ -830,11 +825,11 @@ bool loadConfig(char *cfgFile) {
     if (--commonConfig.cnt > 0 || logwarning)
         return !logwarning;
 
-    // On startup make sure logfile is owned by user.
-    if (STARTUP && commonConfig.logFilePath && commonConfig.user &&
-                                    chown(commonConfig.logFilePath, commonConfig.user->pw_uid, commonConfig.user->pw_gid))
-        LOG(LOG_WARNING, 0, "Config: Cannot chown log file %s to %s.",
-                             commonConfig.logFilePath, commonConfig.user->pw_name);
+    // If no socket group was configured set it to configured users's group or root.
+    if (! commonConfig.socketGroup && ! (commonConfig.socketGroup = getgrgid(commonConfig.user ? commonConfig.user->pw_gid : 0)))
+        LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", commonConfig.user ? commonConfig.user->pw_gid : 0);
+    if (!STARTUP)
+        cliSetGroup(commonConfig.socketGroup);
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval

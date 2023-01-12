@@ -55,29 +55,17 @@ int openCliSock(void) {
     memset(&cliSockAddr, 0, sizeof(struct sockaddr_un));
     cliSockAddr.sun_family = AF_UNIX;
 
-    // Check for valid location to place socket and PID file.
-    char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
-    for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
-        if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = malloc(strlen(path) + strlen(fileName) + 3)))
-                LOG(LOG_ERR, 0, "openCliSock: Out of memory.");   // Freed by igmpProxyCleanup()
-            sprintf(CONFIG->runPath, "%s/%s/", path, fileName);
-            break;
-        }
-    }
-
-    // Open the socket after directory exists / created etc.
-    if ((stat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), &st) == -1 && (mkdir(cliSockAddr.sun_path, 0770)))
-        || chown(cliSockAddr.sun_path, 0, CONFIG->socketGroup->gr_gid)
-        || ! strcat(cliSockAddr.sun_path, "cli.sock") || (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
+    // Open the socket, set permissions and mode.
+    if (   ! strcat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), "cli.sock")
+        ||   (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
         || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
 #else
-        || bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
+        ||    bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
-        || (chown(cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, CONFIG->socketGroup->gr_gid))
-        || chmod(cliSockAddr.sun_path, 0660)) {
+        ||    (   chown(cliSockAddr.sun_path, -1, CONFIG->socketGroup->gr_gid))
+               || chmod(cliSockAddr.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
         cliSock = -1;
     }
@@ -101,13 +89,13 @@ int openCliSock(void) {
 /**
 *   Sets access for specified path and group to configured cligroup.
 */
-int cliSetGroup(struct group *gid) {
-    char path[128];
-    strcpy(path, cliSockAddr.sun_path);
-    int x = chown(path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid);
-    memset(path + strlen(path) - 9, 0, 9);
-    x = chown(path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid);
-    return x;
+void cliSetGroup(struct group *gid) {
+    if (chown(cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
+        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.",
+                             cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_name : "root");
+    if (chown(CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
+        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.",
+                             CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_name : "root");
 }
 
 /**

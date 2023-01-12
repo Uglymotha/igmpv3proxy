@@ -374,7 +374,7 @@ void           configureVifs(void);
 *   cli.c
 */
 int  openCliSock(void);
-int  cliSetGroup(struct group *gid);
+void cliSetGroup(struct group *gid);
 void processCliCon(int fd);
 void cliCmd(char *cmd);
 

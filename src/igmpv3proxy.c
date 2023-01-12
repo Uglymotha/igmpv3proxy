@@ -210,20 +210,48 @@ static void igmpProxyInit(void) {
     sigaction(SIGURG,  &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
 
-    // Detach daemon from stdin/out/err, and fork.
-    int f = -1;
-    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
-         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
-        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.\n") : exit(0);
-
     // Load the config file.
     if (!loadConfig(CONFIG->configFilePath))
         LOG(LOG_ERR, 0, "Failed to load configuration from '%s'.", CONFIG->configFilePath);
     LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
-     // Enable mroute api open cli socket and set pollFD.
+    // Check for valid location to place socket and PID file.
+    unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->socketGroup->gr_gid;
+    char   paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
+    struct stat st;
+    for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
+        if (stat(path, &st) != -1) {
+            if (! (CONFIG->runPath = malloc(strlen(path) + strlen(fileName) + 3)))
+                LOG(LOG_ERR, 0, "Out of memory.");   // Freed by igmpProxyCleanup()
+            sprintf(CONFIG->runPath, "%s/%s/", path, fileName);
+            break;
+        }
+    }
+    if ((stat(CONFIG->runPath, &st) == -1 && mkdir(CONFIG->runPath, 0770)) || chown(CONFIG->runPath, uid, gid))
+        LOG(LOG_ERR, errno, "Failed to create run ndirectory %s.", CONFIG->runPath);
+
+    // Detach daemon from stdin/out/err, and fork.
+    int f = -1;
+    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
+         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
+        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.") : exit(0);
+
+    // Enable mroute while still running as root.
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };
+
+    // Make sure logfile is owned by configured user and switch ids.
+    if (CONFIG->user) {
+        if (CONFIG->logFilePath && (chown(CONFIG->logFilePath, uid, gid) || chmod(CONFIG->logFilePath, 0660)))
+            LOG(LOG_ERR, errno, "Failed to chown log file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
+
+        if (setgroups(1, (gid_t *)&gid) != 0 ||
+            setresgid(CONFIG->user->pw_gid, CONFIG->user->pw_gid, CONFIG->user->pw_gid) != 0 ||
+            setresuid(uid, uid, uid) != 0)
+            LOG(LOG_ERR, errno, "Failed to switch to user %s.", CONFIG->user->pw_name);
+    }
+
+    // Open CLI Socket
     pollFD[1] = (struct pollfd){ openCliSock(), POLLIN, 0 };
 
     // Initialize IGMP.
@@ -260,15 +288,15 @@ static void igmpProxyCleanUp(void) {
         sprintf(rFile, "%scli.sock", CONFIG->runPath);
         remove(rFile);
         if (rmdir(CONFIG->runPath))
-            LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONFIG->runPath);
+            LOG(LOG_DEBUG, errno, "Cannot remove run dir %s.", CONFIG->runPath);
     }
 
     free(recv_buf);                // Alloced by initIgmp()
+    freeConfig(0);
+    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
     free(CONFIG->logFilePath);     // Alloced by loadConfig()
     free(CONFIG->runPath);         // Alloced by openCliSock()
     free(CONFIG->configFilePath);  // Alloced by main()
-    freeConfig(0);
-    LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
 }
 
 /**
@@ -278,12 +306,6 @@ static void igmpProxyRun(void) {
     struct timespec timeout;
     int    i = 0, Rt = 0;
     sigstatus = 0;
-
-    // Switch effective user id if configured.
-    if (CONFIG->user && (setgroups(1, &CONFIG->user->pw_gid) != 0                        ||
-        setresgid(CONFIG->user->pw_gid, CONFIG->user->pw_gid, CONFIG->user->pw_gid) != 0 ||
-        setresuid(CONFIG->user->pw_uid, CONFIG->user->pw_uid, CONFIG->user->pw_uid) != 0))
-        LOG(LOG_ERR, 0, "User %s does not exist.", "uglymotha");
 
     while (!(sighandled & GOT_SIGURG)) {
         // Process signaling...
