@@ -328,7 +328,8 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
                                                 || ( mct->mode && src->vifB.d != mct->mode)))
             // Source should not be left / unblocked when switching upstream filter mode.
             // Leave Source if not active on any interfaces in include mode.
-            // Unblock source if it is no longer excluded on all exclude mode interfaces, or included on any include mode interface.
+            // Unblock source if it is no longer excluded on all exclude mode interfaces
+            // or included on any include mode interface.
             joinBlockSrc(src, NULL, false);
         if (! IfDp || !src->vifB.d) {
             if (src->mfc && (! IfDp || !mct->mode || IS_IN(mct, IfDp)))

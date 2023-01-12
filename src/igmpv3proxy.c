@@ -231,6 +231,14 @@ static void igmpProxyInit(void) {
     if ((stat(CONFIG->runPath, &st) == -1 && mkdir(CONFIG->runPath, 0770)) || chown(CONFIG->runPath, uid, gid))
         LOG(LOG_ERR, errno, "Failed to create run ndirectory %s.", CONFIG->runPath);
 
+    // Write PID.
+    char  pidFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
+    sprintf(pidFile, "%s/%s.pid", CONFIG->runPath, fileName);
+    remove(pidFile);
+    FILE *pidFilePtr = fopen(pidFile, "w");
+    fprintf(pidFilePtr, "%d\n", getpid());
+    fclose(pidFilePtr);
+
     // Detach daemon from stdin/out/err, and fork.
     int f = -1;
     if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0

@@ -60,7 +60,8 @@ int openCliSock(void) {
         ||   (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
         || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-        || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr)) || bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
+        || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr))
+        ||    bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
 #else
         ||    bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
 #endif
@@ -70,19 +71,6 @@ int openCliSock(void) {
         cliSock = -1;
     }
 
-    // Write PID.
-    char  pidFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
-    sprintf(pidFile, "%s/%s.pid", CONFIG->runPath, fileName);
-    remove(pidFile);
-    FILE *pidFilePtr = fopen(pidFile, "w");
-    fprintf(pidFilePtr, "%d\n", getpid());
-    fclose(pidFilePtr);
-    if (CONFIG->user) {
-        if (chown(pidFile, CONFIG->user->pw_uid, CONFIG->socketGroup->gr_gid))
-            LOG(LOG_WARNING, 0, "Config: Cannot chown pid file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
-        if (chown(CONFIG->runPath, CONFIG->user->pw_uid, CONFIG->socketGroup->gr_gid))
-            LOG(LOG_WARNING, 0, "Config: Cannot chown %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
-    }
     return cliSock;
 } 
 
@@ -183,8 +171,9 @@ void cliCmd(char *cmd) {
 
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1
-               || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))) {
-        fprintf(stdout, "Cannot open socket %s. %s\n", srvSockAddr.sun_path, strerror(errno));
+               || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))
+               || chmod(ownSockAddr.sun_path, 0622)) {
+        fprintf(stdout, "Cannot open sockets %s - %s. %s\n", ownSockAddr.sun_path, srvSockAddr.sun_path, strerror(errno));
         exit(-1);
     }
 

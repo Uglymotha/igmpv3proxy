@@ -1036,18 +1036,11 @@ inline void configureVifs(void) {
         commonConfig.dHostsHTSize = 0;
     }
 
-    if (CONFRELOAD || SSIGHUP) {
-        // Check if quickleave was enabled or disabled due to config change.
-        if (oldcommonConfig.quickLeave != commonConfig.quickLeave) {
-            LOG(LOG_WARNING, 0, "configureVifs: Quickleave mode was %s, reinitializing group tables.",
-                                 commonConfig.quickLeave ? "enabled" : "disabled");
-            clearGroups(CONFIG);
-        // Check if hashtable size was changed due to config change.
-        } else if (commonConfig.quickLeave && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
-            LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
-                                 oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
-            clearGroups(CONFIG);
-        }
+    // Check if quickleave was enabled or disabled due to config change.
+    if ((CONFRELOAD || SSIGHUP) && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
+        LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
+                             oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
+        clearGroups(CONFIG);
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
