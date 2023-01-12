@@ -608,11 +608,14 @@ bool loadConfig(char *cfgFile) {
             configFile(confFilePtr, 2);
 
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
+#ifdef __linux__
             if (! (commonConfig.user = getpwnam(token + 1)))
                 LOG(LOG_WARNING, 0, "Config: User %s does not exist.", token + 1);
             else
                 LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", commonConfig.user->pw_name, commonConfig.user->pw_uid);
-
+#else
+            LOG(LOG_NOTICE, 0, "Config: Run as user %s is only valid for linux.", token + 1);
+#endif
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
             LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
