@@ -175,7 +175,8 @@ static inline bool nextToken(char *token) {
 */
 static inline void initCommonConfig(void) {
     // User to run daemon process.
-    commonConfig.user = STARTUP ? NULL : commonConfig.user;
+    commonConfig.user   = STARTUP ? NULL : commonConfig.user;
+    commonConfig.chroot = STARTUP ? NULL : commonConfig.chroot;
     // Default no group for socket (use root's).
     commonConfig.socketGroup = NULL;
 
@@ -593,7 +594,7 @@ bool loadConfig(char *cfgFile) {
                     parseFilters("default", token, &filP, &rateP);
                 }
             } else if (strstr(phyintopt, token)) {
-                if (strcmp(" quickleave", token) != 0)
+                if (strcmp(" quickleave", token) != 0) // Quickleave is valid for both config and phyint.
                     LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
                 break;
             }
@@ -606,6 +607,17 @@ bool loadConfig(char *cfgFile) {
             else if (!logwarning)
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
+
+        } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
+            if (! (commonConfig.chroot = malloc(strlen(token))))
+                LOG(LOG_ERR, errno, "Config: Out of Memory.");
+            memcpy(commonConfig.chroot, token + 1, strlen(token));   // Freed by igmpProxyCleanup() or Self.
+            if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(commonConfig.chroot, 0770) == 0)) {
+                LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", commonConfig.chroot);
+                free(commonConfig.chroot);
+                commonConfig.chroot = NULL;
+            } else
+                LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", commonConfig.chroot);
 
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
 #ifdef __linux__

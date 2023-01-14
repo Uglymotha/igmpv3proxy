@@ -112,7 +112,6 @@ inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
 */
 inline struct timespec timeDelay(int delay) {
     clock_gettime(CLOCK_REALTIME, &curtime);
-    LOG(LOG_DEBUG,0,"KANKERDEKANKERDEKANER %d %d %d %d", delay, delay % 10, curtime.tv_nsec, curtime.tv_nsec + ((delay % 10) * 100000000));
     return curtime.tv_nsec + ((delay % 10) * 100000000) >= 1000000000 ?
            (struct timespec){ curtime.tv_sec + delay / 10 + 1, curtime.tv_nsec + ((delay % 10) * 100000000) - 1000000000 } :
            (struct timespec){ curtime.tv_sec + delay / 10,     curtime.tv_nsec + ((delay % 10) * 100000000) };

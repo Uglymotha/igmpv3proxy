@@ -58,6 +58,7 @@
 #include <ifaddrs.h>
 #include <ctype.h>
 #include <dirent.h>
+#include <libgen.h>
 
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -110,6 +111,7 @@ struct Config {
     char               *configFilePath;
     char               *runPath;
     struct passwd      *user;
+    char               *chroot;
     uint16_t            reqQsz;
     uint16_t            tmQsz;
     uint32_t            kBufsz;

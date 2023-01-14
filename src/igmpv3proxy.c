@@ -202,6 +202,7 @@ static void igmpProxyInit(void) {
     struct sigaction sa;
     sigstatus = 1;  // STARTUP
 
+    umask(S_IROTH | S_IWOTH | S_IXOTH);
     clock_gettime(CLOCK_REALTIME, &starttime);
     char tS[32] = "", *t = asctime(localtime(&starttime.tv_sec));
     memcpy(tS, t, strlen(t) - 1);
@@ -254,10 +255,23 @@ static void igmpProxyInit(void) {
     // Open CLI Socket
     pollFD[1] = (struct pollfd){ openCliFd(), POLLIN, 0 };
 
-    // Make sure logfile is owned by configured user and switch ids.
+    // Switch root if chroot is configured.
+    if (CONFIG->chroot) {
+        LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
+        if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
+            LOG(LOG_ERR, errno, "Failed to switch root to %s.",CONFIG->chroot);
+        if (CONFIG->logFilePath)
+            CONFIG->logFilePath = basename(CONFIG->logFilePath);
+    }
+
+    // Make sure logfile and chroot directoryis owned by configured user and switch ids.
     if (CONFIG->user) {
+        LOG(LOG_WARNING, 0, "Switching user to %s.", CONFIG->user->pw_name);
+        if (CONFIG->chroot && chown("/", uid, gid) != 0)
+            LOG(LOG_WARNING, errno, "Failed to chown chroot diretory to %s.", CONFIG->user->pw_name);
+
         if (CONFIG->logFilePath && (chown(CONFIG->logFilePath, uid, gid) || chmod(CONFIG->logFilePath, 0660)))
-            LOG(LOG_ERR, errno, "Failed to chown log file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
+            LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
 
         if (setgroups(1, (gid_t *)&gid) != 0 ||
             setresgid(CONFIG->user->pw_gid, CONFIG->user->pw_gid, CONFIG->user->pw_gid) != 0 ||
@@ -282,7 +296,7 @@ static void igmpProxyCleanUp(void) {
     rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
     k_disableMRouter();
     if (pollFD[1].fd > 0)
-        close(pollFD[1].fd);
+        shutdown(pollFD[1].fd, SHUT_RDWR);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -307,6 +321,7 @@ static void igmpProxyCleanUp(void) {
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
     free(CONFIG->logFilePath);     // Alloced by loadConfig()
     free(CONFIG->runPath);         // Alloced by openCliSock()
+    free(CONFIG->chroot);          // Alloced by loadConfig()
     free(CONFIG->configFilePath);  // Alloced by main()
 }
 

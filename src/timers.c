@@ -97,7 +97,7 @@ uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data)
         node->next = ptr->next;
         ptr->next = node;
     }
-LOG(LOG_DEBUG, 0, "KANKER %d %d", node->time.tv_sec, node->time.tv_nsec);
+
     LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay / 10, delay % 10);
     DEBUGQUEUE("Set Timer", 1, -1);
     return node->id;
