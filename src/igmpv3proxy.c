@@ -91,6 +91,7 @@ int main(int ArgCn, char *ArgVc[]) {
                 switch (c) {
                 case 'b':
                 case 'c':
+                    h = getopt(ArgCn, ArgVc, "cbr::ifth");
                     cliCmd((char *)&c);
                     break;
                 case 'f':
@@ -122,6 +123,7 @@ int main(int ArgCn, char *ArgVc[]) {
                     cliCmd(cmd);
                     memset(cmd, 0, 20);
                 }
+                fprintf(stdout, c == 'c' || c == 'b' || c == -1 ? "" : "\n");
                 c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
                 if (c == -1 && i == 1) {
                     free(opts[1]);  // Alloced by self.
@@ -143,6 +145,7 @@ int main(int ArgCn, char *ArgVc[]) {
         }
     }
 
+    // Going to run as daemon.
     if (geteuid() != 0) {
         // Check that we are root.
         fprintf(stderr, "%s: Must be root.\n", fileName);
@@ -154,8 +157,8 @@ int main(int ArgCn, char *ArgVc[]) {
         // Config file specified as last argument.
        strcpy(CONFIG->configFilePath, ArgVc[optind]);
     } else {
+        // Search for config in default locations.
         for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
-            // Search for config in default locations.
             struct stat st;
             strcpy(CONFIG->configFilePath, path);
             if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
@@ -169,6 +172,12 @@ int main(int ArgCn, char *ArgVc[]) {
     }
     if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
         LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
+
+    // Detach daemon from stdin/out/err, and fork.
+    int f = -1;
+    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
+         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
+        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.") : exit(0);
 
     do {
         sighandled = sigstatus = 0;
@@ -228,7 +237,8 @@ static void igmpProxyInit(void) {
             break;
         }
     }
-    if ((stat(CONFIG->runPath, &st) == -1 && mkdir(CONFIG->runPath, 0770)) || chown(CONFIG->runPath, uid, gid))
+    if (  (stat(CONFIG->runPath, &st) == -1 && mkdir(CONFIG->runPath, 0770))
+        || chown(CONFIG->runPath, uid, gid) || chmod (CONFIG->runPath, 01770))
         LOG(LOG_ERR, errno, "Failed to create run ndirectory %s.", CONFIG->runPath);
 
     // Write PID.
@@ -239,14 +249,10 @@ static void igmpProxyInit(void) {
     fprintf(pidFilePtr, "%d\n", getpid());
     fclose(pidFilePtr);
 
-    // Detach daemon from stdin/out/err, and fork.
-    int f = -1;
-    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
-         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
-        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.") : exit(0);
-
     // Enable mroute while still running as root.
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };
+    // Open CLI Socket
+    pollFD[1] = (struct pollfd){ openCliFd(), POLLIN, 0 };
 
     // Make sure logfile is owned by configured user and switch ids.
     if (CONFIG->user) {
@@ -258,9 +264,6 @@ static void igmpProxyInit(void) {
             setresuid(uid, uid, uid) != 0)
             LOG(LOG_ERR, errno, "Failed to switch to user %s.", CONFIG->user->pw_name);
     }
-
-    // Open CLI Socket
-    pollFD[1] = (struct pollfd){ openCliSock(), POLLIN, 0 };
 
     // Initialize IGMP.
     recv_buf = initIgmp();
@@ -366,8 +369,8 @@ static void igmpProxyRun(void) {
 
             // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Cli Connection %d.", i+1);
-                processCliCon(pollFD[1].fd);
+                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV cli Connection %d.", i+1);
+                acceptCli(pollFD[1].fd);
             }
         } while (i++ < CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &nto, NULL)) > 0 && !sighandled);
     }

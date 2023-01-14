@@ -85,7 +85,7 @@ void rebuildIfVc(uint64_t *tid) {
 
     // Restart timer when doing timed reload.
     if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif)
-        *tid = timer_setTimer(TDELAY(CONFIG->rescanVif * 10), "Rebuild Interfaces", rebuildIfVc, tid);
+        *tid = timer_setTimer(timeDelay(CONFIG->rescanVif * 10), "Rebuild Interfaces", rebuildIfVc, tid);
 
     sigstatus = IFREBUILD ? 0 : sigstatus;
 }
@@ -180,7 +180,7 @@ inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
 /**
 *   Outputs interface statistics to socket specified in arguments.
 */
-void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
+void getIfStats(int h, int fd) {
     struct IfDesc *IfDp;
     char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "";
     int            i = 1;
@@ -192,7 +192,7 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
 
     if (h) {
         sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
     for (IFL(IfDp), i++) {
@@ -203,27 +203,27 @@ void getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd) {
             strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
         }
         sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
     if (h) {
         strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B | %10lld B/s | %10lld B/s\n");
         sprintf(buf, msg, total.bytes, total.rate, total.ratelimit);
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }
 
 /**
 *   Outputs configured filters to socket specified in arguments.
 */
-void getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd) {
+void getIfFilters(int h, int fd) {
     struct IfDesc *IfDp;
     char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "";
     int            i = 1;
 
     if (h) {
         sprintf(buf, "Current Active Filters:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
     for (IFL(IfDp), i++) {
@@ -240,12 +240,12 @@ void getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd) {
             else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
             sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both", filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
-            sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+            send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }
 
     if (h) {
         sprintf(buf, "-------------------------------------------------------------------------------------------------------\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }

@@ -271,7 +271,7 @@ void groupSpecificQuery(struct qlst *qlst) {
                          :  qlst->IfDp->querier.ver == 3      ? getIgmpExp(qlst->IfDp->conf->qry.lmInterval, 0)
                          :  qlst->IfDp->conf->qry.lmInterval) + 1;
         sprintf(msg, "GSQ (%s): %15s/%u", qlst->IfDp->Name, inetFmt(qlst->mct->group, 1), qlst->nsrcs);
-        qlst->tid = timer_setTimer(TDELAY(timeout), msg, groupSpecificQuery, qlst);
+        qlst->tid = timer_setTimer(timeDelay(timeout), msg, groupSpecificQuery, qlst);
     } else if (qlst->cnt >= qlst->misc && (   (BIT_TST(qlst->type, 2) && !qlst->mct->mode && qlst->mct->nsrcs == 0)
                                            || (BIT_TST(qlst->type, 1) && qlst->mct->vifB.age[qlst->IfDp->index] == 0
                                               && IS_SET(qlst->mct, lm, qlst->IfDp) && !BIT_TST(qlst->mct->v1Bits, qlst->IfDp->index)

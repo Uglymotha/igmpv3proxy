@@ -67,7 +67,7 @@ struct timespec timer_ageQueue() {
         free(node);     // Alloced by timer_setTimer()
     }
     if (i > 1)
-        DEBUGQUEUE("Age Queue", 1, NULL, 0);
+        DEBUGQUEUE("Age Queue", 1, -1);
 
     return queue ? timeDiff(curtime, queue->time) : (struct timespec){-1, -1};
 }
@@ -85,15 +85,6 @@ uint64_t timer_setTimer(struct timespec delay, const char *name, void (*func)(),
 
     *node = (struct timeOutQueue){ id++, func, data, {delay.tv_sec, delay.tv_nsec}, NULL };
     for (int j = 0; j < n; node->name[j] = name[j], j++);
-    if (delay.tv_sec < 0) {
-        clock_gettime(CLOCK_REALTIME, &curtime);
-        if (curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 > 1000000000)
-            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10 + 1,
-                                            curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 - 1000000000 };
-        else
-            node->time = (struct timespec){ curtime.tv_sec + delay.tv_nsec / 10,
-                                            curtime.tv_nsec + (delay.tv_nsec % 10) * 100000000 };
-    }
 
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
@@ -106,10 +97,9 @@ uint64_t timer_setTimer(struct timespec delay, const char *name, void (*func)(),
         ptr->next = node;
     }
 
-    delay = timeDiff(curtime, node->time);
     LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name,
                       delay.tv_sec, delay.tv_nsec / 100000000);
-    DEBUGQUEUE("Set Timer", 1, NULL, 0);
+    DEBUGQUEUE("Set Timer", 1, -1);
     return node->id;
 }
 
@@ -128,7 +118,7 @@ void *timer_clearTimer(uint64_t tid) {
             pnode->next = node->next;
         else
             queue = node->next;
-        DEBUGQUEUE("Clear Timer", 1, NULL, 0);
+        DEBUGQUEUE("Clear Timer", 1, -1);
         pnode = (void *)node->data;
         LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", node->id, i, node->name);
         free(node);        // Alloced by timer_setTimer()
@@ -141,21 +131,21 @@ void *timer_clearTimer(uint64_t tid) {
 /**
 *   Debugging utility
 */
-void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd) {
+void debugQueue(const char *header, int h, int fd) {
     char                  msg[CLI_CMD_BUF] = "", buf[CLI_CMD_BUF] = "";
     struct timeOutQueue  *node;
     uint64_t              i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    if (! cliSockAddr)
+    if (fd < 0)
         LOG(LOG_DEBUG, 0, "----------------------%s-----------------------", header);
     else if (h) {
         sprintf(buf, "Active Timers:\n_Nr_|____In____|___ID___|________________Name_______________\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     for (i = 1, node = queue; node; node = node->next, i++) {
         struct timespec delay = timeDiff(curtime, node->time);
-        if (! cliSockAddr)
+        if (fd < 0)
             LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
         else {
             if (h)
@@ -163,13 +153,13 @@ void debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr
             else
                 strcpy(msg, "%d %d.%d %d %s");
             sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
-            sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+            send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }
-    if(! cliSockAddr)
+    if(fd < 0)
         LOG(LOG_DEBUG, 0, "------------------------------------------------------");
     else if (h) {
         sprintf(buf, "------------------------------------------------------------\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }

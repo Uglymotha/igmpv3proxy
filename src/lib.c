@@ -108,6 +108,14 @@ inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
 }
 
 /**
+*   Return struct timespec offest by delay (in .1s) from current time.
+*/
+inline struct timespec timeDelay(int delay) {
+    clock_gettime(CLOCK_REALTIME, &curtime);
+    return (struct timespec){ curtime.tv_sec + delay / 10, curtime.tv_nsec };
+}
+
+/**
 *   Copies s_addr from struct sockaddr to struct sockaddr_in.
 */
 inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {

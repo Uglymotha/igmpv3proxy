@@ -231,7 +231,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
     }
 
     if (MCT)
-        logRouteTable("Remove Group", 1, NULL, 0);
+        logRouteTable("Remove Group", 1, -1);
     else
         LOG(LOG_DEBUG, 0, "delGroup: Multicast table is empty.");
     return pimc;
@@ -541,7 +541,7 @@ void bwControl(uint64_t *tid) {
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(TDELAY(CONFIG->bwControlInterval * 10), "Bandwidth Control", bwControl, tid);
+    *tid = timer_setTimer(timeDelay(CONFIG->bwControlInterval * 10), "Bandwidth Control", bwControl, tid);
 }
 
 /**
@@ -738,7 +738,7 @@ void clearGroups(void *Dp) {
     if (! MCT)
         LOG(LOG_INFO, 0, "clearGroups: Multicast table is empty.");
     else
-        logRouteTable("Clear Groups", 1, NULL, 0);
+        logRouteTable("Clear Groups", 1, -1);
 }
 
 /**
@@ -904,7 +904,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     startQuery(IfDp, qlst);
 
     LOG(LOG_DEBUG, 0, "Updated group entry for %s on VIF #%d", inetFmt(group, 1), IfDp->index);
-    logRouteTable("Update Group", 1, NULL, 0);
+    logRouteTable("Update Group", 1, -1);
 }
 
 /**
@@ -1020,7 +1020,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     }
     k_addMRoute(src->ip, mct->group, src->mfc->IfDp->index, ttlVc);
 
-    logRouteTable("Activate Route", 1, NULL, 0);
+    logRouteTable("Activate Route", 1, -1);
 }
 
 /**
@@ -1073,7 +1073,7 @@ void ageGroups(struct IfDesc *IfDp) {
     }
 
     if (MCT)
-        logRouteTable("Age Groups", 1, NULL, 0);
+        logRouteTable("Age Groups", 1, -1);
     else
         LOG(LOG_DEBUG, 0, "ageGroups: Multicast table is empty.");
 }
@@ -1081,7 +1081,7 @@ void ageGroups(struct IfDesc *IfDp) {
 /**
 *   Debug function that writes the routing table entries to the log or sends them to the cli socket specified in arguments.
 */
-void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd) {
+void logRouteTable(const char *header, int h, int fd) {
     struct mcTable  *mct;
     struct mfc      *mfc;
     struct IfDesc   *IfDp = NULL;
@@ -1089,12 +1089,12 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
     unsigned int     rcount = 1;
     uint64_t         totalb = 0, totalr = 0;
 
-    if (! cliSockAddr) {
+    if (fd < 0) {
         LOG(LOG_DEBUG, 0, "Current multicast table (%s):", header);
         LOG(LOG_DEBUG, 0, "_____|______SRC______|______DST______|_______In_______|_____Out____|____dHost____|_______Data_______|______Rate_____");
     } else if (h) {
         sprintf(buf, "Current Multicast Table:\n_____|______SRC______|______DST______|_______In_______|_____Out____|____dHost____|_______Data_______|______Rate_____\n");
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     GETMRT(mct) {
         mfc = mct->mfc;
@@ -1109,22 +1109,22 @@ void logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockA
             } else {
                 strcpy(msg, "%d %s %s %s %08x %s %ld %ld");
             }
-            if (! cliSockAddr) {
+            if (fd < 0) {
                 LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONFIG->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
             } else {
                 sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONFIG->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
-                sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+                send(fd, buf, strlen(buf), MSG_DONTWAIT);
             }
             mfc = mfc ? mfc->next : NULL;
             rcount++;
         } while (mfc);
     }
 
-    if (! cliSockAddr) {
+    if (fd < 0) {
         LOG(LOG_DEBUG, 0, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s", totalb, totalr);
     } else if (h) {
         strcpy(msg, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s\n");
         sprintf(buf, msg, totalb, totalr);
-        sendto(fd, buf, strlen(buf), MSG_DONTWAIT, (struct sockaddr *)cliSockAddr, sizeof(struct sockaddr_un));
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }

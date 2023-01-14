@@ -849,7 +849,7 @@ bool loadConfig(char *cfgFile) {
 
     // Check rescanvif status and start or clear timers if necessary.
     if (commonConfig.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(TDELAY(commonConfig.rescanVif * 10), "Rebuild Interfaces",
+        timers.rescanVif = timer_setTimer(timeDelay(commonConfig.rescanVif * 10), "Rebuild Interfaces",
                                           rebuildIfVc, &timers.rescanVif);
     } else if (!commonConfig.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
@@ -858,7 +858,7 @@ bool loadConfig(char *cfgFile) {
 
     // Check rescanconf status and start or clear timers if necessary.
     if (commonConfig.rescanConf && timers.rescanConf == 0) {
-        timers.rescanConf = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration",
+        timers.rescanConf = timer_setTimer(timeDelay(commonConfig.rescanConf * 10), "Reload Configuration",
                                            reloadConfig, &timers.rescanConf);
     } else if (!commonConfig.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
@@ -879,7 +879,7 @@ bool loadConfig(char *cfgFile) {
             clearGroups(getConfig);
 #endif
         if (commonConfig.bwControlInterval)
-            timers.bwControl = timer_setTimer(TDELAY(commonConfig.bwControlInterval * 10), "Bandwidth Control",
+            timers.bwControl = timer_setTimer(timeDelay(commonConfig.bwControlInterval * 10), "Bandwidth Control",
                                               bwControl, &timers.bwControl);
     }
 
@@ -911,7 +911,7 @@ void reloadConfig(uint64_t *tid) {
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", commonConfig.configFilePath);
     }
     if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
-        *tid = timer_setTimer(TDELAY(commonConfig.rescanConf * 10), "Reload Configuration", reloadConfig, tid);
+        *tid = timer_setTimer(timeDelay(commonConfig.rescanConf * 10), "Reload Configuration", reloadConfig, tid);
 
     sigstatus = 0;
 }

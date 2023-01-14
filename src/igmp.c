@@ -318,7 +318,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             // For downstream interface and general query set the age timer.
             if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
                 timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10) + 1;
-                IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
+                IfDp->querier.ageTimer = timer_setTimer(timeDelay(timeout),
                                                         strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name),
                                                         ageGroups, IfDp);
             }
@@ -337,7 +337,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                 timeout = (100 * IfDp->conf->qry.robustness) + 5;
             // Set timeout for other querier.
             sprintf(msg, "%sv%1d Querier Timer: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
-            IfDp->querier.Timer = timer_setTimer(TDELAY(timeout), strcat(msg, IfDp->Name), expireQuerierTimer, IfDp);
+            IfDp->querier.Timer = timer_setTimer(timeDelay(timeout), strcat(msg, IfDp->Name), expireQuerierTimer, IfDp);
 
             LOG(LOG_INFO, 0, "acceptMemberQuery: %sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
                     IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, inetFmt(src, 1),
@@ -373,12 +373,12 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
                                                                        : IfDp->querier.qqi, 0);
         else
             timeout = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi;
-        IfDp->querier.Timer = timer_setTimer(TDELAY((timeout * 10) + ((uint8_t)IfDp->Name[0] % 4)),
+        IfDp->querier.Timer = timer_setTimer(timeDelay((timeout * 10) + ((uint8_t)IfDp->Name[0] % 4)),
                                              strcat(strcpy(msg, "General Query: "), IfDp->Name),
                                              sendGeneralMemberQuery, IfDp);
         // Set timer for route aging.
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
-        IfDp->querier.ageTimer = timer_setTimer(TDELAY(timeout),
+        IfDp->querier.ageTimer = timer_setTimer(timeDelay(timeout),
                                                 strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name),
                                                 ageGroups, IfDp);
         LOG(LOG_INFO, 0, "sendGeneralMemberQuery: From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),

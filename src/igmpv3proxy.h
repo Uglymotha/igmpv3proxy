@@ -373,9 +373,9 @@ void           configureVifs(void);
 /**
 *   cli.c
 */
-int  openCliSock(void);
+int  openCliFd(void);
 void cliSetGroup(struct group *gid);
-void processCliCon(int fd);
+void acceptCli(int fd);
 void cliCmd(char *cmd);
 
 /**
@@ -390,8 +390,8 @@ void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
-void           getIfStats(int h, struct sockaddr_un *cliSockAddr, int fd);
-void           getIfFilters(int h, struct sockaddr_un *cliSockAddr, int fd);
+void           getIfStats(int h, int fd);
+void           getIfFilters(int h, int fd);
 
 /**
 *   igmp.c
@@ -410,6 +410,7 @@ const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
 int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
+struct timespec timeDelay(int delay);
 uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
 bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
@@ -462,7 +463,7 @@ void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
-void     logRouteTable(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+void     logRouteTable(const char *header, int h, int fd);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
@@ -478,11 +479,10 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 *   timers.c
 */
 #define TMNAMESZ 48
-#define TDELAY(x) (struct timespec){ -1, x }
 #define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(struct timespec delay, const char *name, void (*func)(), void *);
 void           *timer_clearTimer(uint64_t timer_id);
-void            debugQueue(const char *header, int h, const struct sockaddr_un *cliSockAddr, int fd);
+void            debugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

@@ -43,152 +43,149 @@
 static void signalHandler(int sig);
 
 // Daemon Cli socket address.
-static struct sockaddr_un cliSockAddr;
+static struct sockaddr_un cli_sa;
 
 /**
 *   Opens and binds a socket for cli connections.
 */
-int openCliSock(void) {
+int openCliFd(void) {
     struct stat st;
-    int         cliSock;
+    int         cli_fd;
 
-    memset(&cliSockAddr, 0, sizeof(struct sockaddr_un));
-    cliSockAddr.sun_family = AF_UNIX;
+    memset(&cli_sa, 0, sizeof(struct sockaddr_un));
+    cli_sa.sun_family = AF_UNIX;
 
     // Open the socket, set permissions and mode.
-    if (   ! strcat(strcpy(cliSockAddr.sun_path, CONFIG->runPath), "cli.sock")
-        ||   (stat(cliSockAddr.sun_path, &st) == 0 && unlink(cliSockAddr.sun_path) != 0)
-        || ! (cliSock = socket(AF_UNIX, SOCK_DGRAM, 0)) || fcntl(cliSock, F_SETFD, O_NONBLOCK) < 0
+    if (   ! strcat(strcpy(cli_sa.sun_path, CONFIG->runPath), "cli.sock")
+        ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
+        || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
         || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr))
-        ||    bind(cliSock, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) != 0
+        ||    bind(cli_fd, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) < 0
 #else
-        ||    bind(cliSock, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un)) != 0
+        ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
-        ||    (   chown(cliSockAddr.sun_path, -1, CONFIG->socketGroup->gr_gid))
-               || chmod(cliSockAddr.sun_path, 0660)) {
-        LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cliSockAddr.sun_path);
-        cliSock = -1;
+        ||    listen(cli_fd, CONFIG->reqQsz) < 0
+        ||  (     chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : -1, CONFIG->socketGroup->gr_gid))
+               || chmod(cli_sa.sun_path, 0660)) {
+        LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
+        cli_fd = -1;
     }
 
-    return cliSock;
+    return cli_fd;
 } 
 
 /**
 *   Sets access for specified path and group to configured cligroup.
 */
 void cliSetGroup(struct group *gid) {
-    if (chown(cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
-        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.",
-                             cliSockAddr.sun_path, CONFIG->user ? CONFIG->user->pw_name : "root");
+    if (chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
+        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_name : "root");
     if (chown(CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
-        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.",
-                             CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_name : "root");
+        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_name : "root");
 }
 
 /**
 *   Processes an incoming cli connection. Requires the fd of the cli socket.
 */
-void processCliCon(int fd) {
-    char buf[CLI_CMD_BUF] = {0};
-    struct sockaddr_un cliSockAddr;
-    memset(&cliSockAddr, 0, sizeof(struct sockaddr_un));
-    cliSockAddr.sun_family = AF_UNIX;
+void acceptCli(int fd) {
+    int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr_un);
+    uint32_t            addr, mask;
+    char                buf[CLI_CMD_BUF] = {0};
+    struct sockaddr_un  cli_sa;
+
+    memset(&cli_sa, 0, sizeof(struct sockaddr_un));
+    cli_sa.sun_family = AF_UNIX;
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-    cliSockAddr.sun_len = SUN_LEN(&cliSockAddr);
+    cli_sa.sun_len = SUN_LEN(&cli_sa);
 #endif
 
     // Receive and answer the cli request.
-    unsigned int s = sizeof(cliSockAddr);
-    int len = recvfrom(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, &s);
-    uint32_t addr, mask;
-    if (len <= 0 || len > CLI_CMD_BUF)
+    cli_fd = accept(fd, &cli_sa, (socklen_t *)&s);
+    len = recv(cli_fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT);
+
+    if (len <= 0 || len > CLI_CMD_BUF) {
+        close(cli_fd);
         return;
-    if (buf[0] == 'r') {
+    } else if (buf[0] == 'r') {
         if (len > 2 && parseSubnetAddress(buf[1] == 'h'? &buf[2] : &buf[1], &addr, &mask))
-            sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+            send(cli_fd, "GO AWAY\n\0", 9, MSG_DONTWAIT);
         else
-            logRouteTable("", buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
-    } else if (buf[0] == 'i')
-        getIfStats(buf[1] == 'h' ?  0 : 1, &cliSockAddr, fd);
-    else if (buf[0] == 'f')
-        getIfFilters(buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
-    else if (buf[0] == 't')
-        debugQueue("", buf[1] == 'h' ? 0 : 1, &cliSockAddr, fd);
-    else if (buf[0] == 'c') {
+            logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd);
+    } else if (buf[0] == 'i') {
+        getIfStats(buf[1] == 'h' ?  0 : 1, cli_fd);
+    } else if (buf[0] == 'f') {
+        getIfFilters(buf[1] == 'h' ? 0 : 1, cli_fd);
+    } else if (buf[0] == 't') {
+        debugQueue("", buf[1] == 'h' ? 0 : 1, cli_fd);
+    } else if (buf[0] == 'c') {
         sighandled |= GOT_SIGUSR1;
-        sendto(fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+        send(cli_fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT);
     } else if (buf[0] == 'b') {
         sighandled |= GOT_SIGUSR2;
-        sendto(fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+        send(cli_fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT);
     } else
-        sendto(fd, "GO AWAY\n\0", 9, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+        send(cli_fd, "GO AWAY\n\0", 9, MSG_DONTWAIT);
 
-    // Close connection by sending 1 byte.
-    sendto(fd, ".", 1, MSG_DONTWAIT, (struct sockaddr *)&cliSockAddr, sizeof(struct sockaddr_un));
+    // Close connection.
+    close(cli_fd);
     LOG(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
 }
 
 // Below are functions and definitions for client connections.
-static int                srvSock = -1;
-static struct sockaddr_un ownSockAddr;
+static int                srv_fd = -1, cli_fd = -1;
 
 /**
 *   Sends command to daemon and writes response to stdout. Error exit if socket cannot be connected.
 */
 void cliCmd(char *cmd) {
-    struct stat        st;
-    struct sockaddr_un srvSockAddr;
     struct sigaction   sa;
+    struct stat        st;
+    struct sockaddr_un srv_sa;
     bool               cli = strcmp(cmd, "cli") == 0 ? true : false;
-    char               buf[CLI_CMD_BUF] = "";
+    char               buf[CLI_CMD_BUF] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGPIPE, &sa, NULL);
+    sigaction(SIGURG, &sa, NULL);
 
-    memset(&srvSockAddr, 0, sizeof(struct sockaddr_un));
-    memset(&ownSockAddr, 0, sizeof(struct sockaddr_un));
-    srvSockAddr.sun_family = ownSockAddr.sun_family = AF_UNIX;
+    memset(&srv_sa, 0, sizeof(struct sockaddr_un));
+    srv_sa.sun_family = AF_UNIX;
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-    srvSockAddr.sun_len = ownSockAddr.sun_len = SUN_LEN(&srvSockAddr);
+    srv_sa.sun_len = SUN_LEN(&srv_sa);
 #endif
 
     // Check for daemon socket.
-    char paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
     path = strtok(paths, " ");
     while (path) {
         sprintf(tpath, "%s/%s/cli.sock", path, fileName);
         if (stat(tpath, &st) != -1) {
-            strcpy(srvSockAddr.sun_path, tpath);
-            sprintf(ownSockAddr.sun_path, "%s.%d", tpath, getpid());
+            strcpy(srv_sa.sun_path, tpath);
             break;
         }
         path = strtok(NULL, " ");
     }
 
     // Open and bind socket for receiving answers from daemon.
-    if (strcmp(srvSockAddr.sun_path, "") == 0 || (srvSock = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1
-               || bind(srvSock, (struct sockaddr*)&ownSockAddr, sizeof(struct sockaddr_un))
-               || chmod(ownSockAddr.sun_path, 0622)) {
-        fprintf(stdout, "Cannot open sockets %s - %s. %s\n", ownSockAddr.sun_path, srvSockAddr.sun_path, strerror(errno));
+    if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1
+           || (cli_fd = connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un))) < 0) {
+        fprintf(stdout, "Cannot open socket %s. %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
 
     for (cmd = cli ? fgets(buf, CLI_CMD_BUF, stdin) : strcpy(buf, cmd); cmd && strcmp("done\n", buf) != 0
                    && strcmp(".\n", buf) != 0 && strlen(buf) < CLI_CMD_BUF; cmd = fgets(buf, CLI_CMD_BUF, stdin)) {
-        if (sendto(srvSock, buf, cli ? strlen(buf) - 1 : strlen(buf), 0, (struct sockaddr *)&srvSockAddr,
-                                                                          sizeof(srvSockAddr)) == -1) {
+        if (send(srv_fd, buf, cli ? strlen(buf) - 1 : strlen(buf), 0) < 0) {
             fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
             exit(-1);
         }
 
         // Receive the daemon's answer. It will be closed by one single byte.
-        unsigned int s = sizeof(srvSockAddr);
-        for (int len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s);
-                 len > 1; len = recvfrom(srvSock, &buf, sizeof(buf), 0, (struct sockaddr *)&srvSockAddr, &s)) {
+        for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; len = recv(srv_fd, &buf, sizeof(buf), 0)) {
             fprintf(stdout, "%s", buf);
             memset(buf, 0, len);
         }
@@ -196,18 +193,17 @@ void cliCmd(char *cmd) {
             break;
     }
 
-    unlink(ownSockAddr.sun_path);
-    close(srvSock);
+    close(cli_fd);
 }
 
 static void signalHandler(int sig) {
     switch (sig) {
     case SIGINT:
     case SIGTERM:
-        if (srvSock != -1) {
-            unlink(ownSockAddr.sun_path);
-            close(srvSock);
-        }
+    case SIGURG:
+    case SIGPIPE:
+        if (cli_fd != -1)
+            close(cli_fd);
         fprintf(stdout, "Terminated.\n");
         exit(1);
     }
