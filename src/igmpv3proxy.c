@@ -123,7 +123,6 @@ int main(int ArgCn, char *ArgVc[]) {
                     cliCmd(cmd);
                     memset(cmd, 0, 20);
                 }
-                fprintf(stdout, c == 'c' || c == 'b' || c == -1 ? "" : "\n");
                 c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
                 if (c == -1 && i == 1) {
                     free(opts[1]);  // Alloced by self.
@@ -133,6 +132,8 @@ int main(int ArgCn, char *ArgVc[]) {
                 }
                 if (c == -1)
                     exit(0);
+                else
+                    fprintf(stdout, h == 'c' || h == 'b' ? "" : "\n");
             }
             cliCmd("cli");
             exit(0);
@@ -151,7 +152,7 @@ int main(int ArgCn, char *ArgVc[]) {
         fprintf(stderr, "%s: Must be root.\n", fileName);
         exit(-1);
     } else if (! (CONFIG->configFilePath = calloc(1, sizeof(CFG_PATHS) + strlen(ArgVc[optind - !(optind == ArgCn - 1)])))) {
-        // Freed by igmpProxyCleanup().
+        // Freed by igmpProxyInit or igmpProxyCleanup().
         exit(-1);
     } else if (optind == ArgCn - 1) {
         // Config file specified as last argument.
@@ -257,11 +258,27 @@ static void igmpProxyInit(void) {
 
     // Switch root if chroot is configured.
     if (CONFIG->chroot) {
-        LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
+        char *p = CONFIG->configFilePath, *b = basename(CONFIG->configFilePath);
+        LOG(LOG_WARNING, 0, "Switching root to %s %p %p.", CONFIG->chroot, p, CONFIG->configFilePath);
+
+        // Truncate config file path.
+        if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
+            LOG(LOG_ERR, 0, "Out of Memory");
+        memcpy(CONFIG->configFilePath, p, strlen(b) + 1);
+        free(p);    // Alloced by main()
+
         if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
             LOG(LOG_ERR, errno, "Failed to switch root to %s.",CONFIG->chroot);
-        if (CONFIG->logFilePath)
-            CONFIG->logFilePath = basename(CONFIG->logFilePath);
+
+        // Truncate log file path if congigured.
+        if (CONFIG->logFilePath) {
+            p = CONFIG->logFilePath, b = basename(CONFIG->logFilePath);
+            if (! (CONFIG->logFilePath = malloc(strlen(b) + 1)))
+                LOG(LOG_ERR, 0, "Out of Memory");
+            strcpy(CONFIG->logFilePath, b);
+            LOG(LOG_DEBUG,0,"BLABLA %s",CONFIG->logFilePath);
+            free(p);    // Alloced by loadConfig()
+        }
     }
 
     // Make sure logfile and chroot directoryis owned by configured user and switch ids.
@@ -296,7 +313,7 @@ static void igmpProxyCleanUp(void) {
     rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
     k_disableMRouter();
     if (pollFD[1].fd > 0)
-        shutdown(pollFD[1].fd, SHUT_RDWR);
+        closeCliFd(pollFD[1].fd);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
     char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
@@ -319,10 +336,10 @@ static void igmpProxyCleanUp(void) {
     free(recv_buf);                // Alloced by initIgmp()
     freeConfig(0);
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
-    free(CONFIG->logFilePath);     // Alloced by loadConfig()
+    free(CONFIG->logFilePath);     // Alloced by loadConfig() or igmpProxyInit()
     free(CONFIG->runPath);         // Alloced by openCliSock()
     free(CONFIG->chroot);          // Alloced by loadConfig()
-    free(CONFIG->configFilePath);  // Alloced by main()
+    free(CONFIG->configFilePath);  // Alloced by main() or igmpProxyInit()
 }
 
 /**

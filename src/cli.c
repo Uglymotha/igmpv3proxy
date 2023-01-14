@@ -73,7 +73,7 @@ int openCliFd(void) {
     }
 
     return cli_fd;
-} 
+}
 
 /**
 *   Sets access for specified path and group to configured cligroup.
@@ -83,6 +83,15 @@ void cliSetGroup(struct group *gid) {
         LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_name : "root");
     if (chown(CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
         LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_name : "root");
+}
+
+/**
+*   Close and unlink CLI socket.
+*/
+void closeCliFd(int fd) {
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+    unlink(cli_sa.sun_path);
 }
 
 /**

@@ -611,7 +611,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (commonConfig.chroot = malloc(strlen(token))))
                 LOG(LOG_ERR, errno, "Config: Out of Memory.");
-            memcpy(commonConfig.chroot, token + 1, strlen(token));   // Freed by igmpProxyCleanup() or Self.
+            memcpy(commonConfig.chroot, token + 1, strlen(token));   // Freed by igmpProxyInit(), igmpProxyCleanup() or Self.
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(commonConfig.chroot, 0770) == 0)) {
                 LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", commonConfig.chroot);
                 free(commonConfig.chroot);
