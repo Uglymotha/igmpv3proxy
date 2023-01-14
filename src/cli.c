@@ -185,10 +185,8 @@ void cliCmd(char *cmd) {
         }
 
         // Receive the daemon's answer. It will be closed by one single byte.
-        for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; len = recv(srv_fd, &buf, sizeof(buf), 0)) {
+        for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, sizeof(buf), 0))
             fprintf(stdout, "%s", buf);
-            memset(buf, 0, len);
-        }
         if (! cli)
             break;
     }
