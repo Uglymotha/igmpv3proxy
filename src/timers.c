@@ -73,17 +73,18 @@ struct timespec timer_ageQueue() {
 }
 
 /**
-*   Inserts a timer in queue. Queue is maintained in order ofr execution.
+*   Inserts a timer in queue. Queue is maintained in order of execution.
 *   FIFO if timers are scheduled at exactly the same time.
+*   Delay in multiples of .1s
 */
-uint64_t timer_setTimer(struct timespec delay, const char *name, void (*func)(), void *data) {
+uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
     uint64_t                i = 1,        n = strlen(name) + 1;
 
     if (! (node = malloc(sizeof(struct timeOutQueue) + n)))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, 0, "timer_setTimer: Out of memory.");
 
-    *node = (struct timeOutQueue){ id++, func, data, {delay.tv_sec, delay.tv_nsec}, NULL };
+    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL };
     for (int j = 0; j < n; node->name[j] = name[j], j++);
 
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
@@ -97,8 +98,7 @@ uint64_t timer_setTimer(struct timespec delay, const char *name, void (*func)(),
         ptr->next = node;
     }
 
-    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name,
-                      delay.tv_sec, delay.tv_nsec / 100000000);
+    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay / 10, delay % 10);
     DEBUGQUEUE("Set Timer", 1, -1);
     return node->id;
 }

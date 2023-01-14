@@ -481,7 +481,7 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 #define TMNAMESZ 48
 #define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 struct timespec timer_ageQueue();
-uint64_t        timer_setTimer(struct timespec delay, const char *name, void (*func)(), void *);
+uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, int fd);
 

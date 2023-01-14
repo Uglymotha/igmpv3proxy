@@ -541,7 +541,7 @@ void bwControl(uint64_t *tid) {
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(timeDelay(CONFIG->bwControlInterval * 10), "Bandwidth Control", bwControl, tid);
+    *tid = timer_setTimer(CONFIG->bwControlInterval * 10, "Bandwidth Control", bwControl, tid);
 }
 
 /**
