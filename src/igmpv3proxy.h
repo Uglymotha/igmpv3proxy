@@ -111,6 +111,7 @@ struct Config {
     char               *configFilePath;
     char               *runPath;
     struct passwd      *user;
+    struct group       *group;
     char               *chroot;
     uint16_t            reqQsz;
     uint16_t            tmQsz;
@@ -153,8 +154,6 @@ struct Config {
     bool                querierElection;
     // Set if must not validate igmp checksum.
     bool                cksumVerify;
-    // Group for CLI access.
-    struct group       *socketGroup;
 };
 
 // Linked list of filters.
@@ -377,7 +376,6 @@ void           configureVifs(void);
 */
 int  openCliFd(void);
 void closeCliFd(int fd);
-void cliSetGroup(struct group *gid);
 void acceptCli(int fd);
 void cliCmd(char *cmd);
 

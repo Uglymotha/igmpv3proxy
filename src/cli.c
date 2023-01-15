@@ -66,23 +66,13 @@ int openCliFd(void) {
         ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
         ||    listen(cli_fd, CONFIG->reqQsz) < 0
-        ||  (     chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : -1, CONFIG->socketGroup->gr_gid))
+        ||  (     chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : -1, CONFIG->group->gr_gid))
                || chmod(cli_sa.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
         cli_fd = -1;
     }
 
     return cli_fd;
-}
-
-/**
-*   Sets access for specified path and group to configured cligroup.
-*/
-void cliSetGroup(struct group *gid) {
-    if (chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
-        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_name : "root");
-    if (chown(CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_uid : 0, gid->gr_gid))
-        LOG(LOG_ERR, errno, "cliSetGroup: cannot chown %s to %s.", CONFIG->runPath, CONFIG->user ? CONFIG->user->pw_name : "root");
 }
 
 /**
@@ -118,7 +108,7 @@ void acceptCli(int fd) {
         return;
     } else if (buf[0] == 'r') {
         if (len > 2 && parseSubnetAddress(buf[1] == 'h'? &buf[2] : &buf[1], &addr, &mask))
-            send(cli_fd, "GO AWAY\n\0", 9, MSG_DONTWAIT);
+            send(cli_fd, "GO AWAY\n", 9, MSG_DONTWAIT);
         else
             logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 'i') {
@@ -129,12 +119,12 @@ void acceptCli(int fd) {
         debugQueue("", buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 'c') {
         sighandled |= GOT_SIGUSR1;
-        send(cli_fd, "Reloading Configuration.\n\0", 26, MSG_DONTWAIT);
+        send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT);
     } else if (buf[0] == 'b') {
         sighandled |= GOT_SIGUSR2;
-        send(cli_fd, "Rebuilding Interfaces.\n\0", 24, MSG_DONTWAIT);
+        send(cli_fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
     } else
-        send(cli_fd, "GO AWAY\n\0", 9, MSG_DONTWAIT);
+        send(cli_fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 
     // Close connection.
     close(cli_fd);
@@ -142,7 +132,7 @@ void acceptCli(int fd) {
 }
 
 // Below are functions and definitions for client connections.
-static int                srv_fd = -1, cli_fd = -1;
+static int                srv_fd = -1;
 
 /**
 *   Sends command to daemon and writes response to stdout. Error exit if socket cannot be connected.
@@ -151,7 +141,6 @@ void cliCmd(char *cmd) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    bool               cli = strcmp(cmd, "cli") == 0 ? true : false;
     char               buf[CLI_CMD_BUF] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
 
     sa.sa_handler = signalHandler;
@@ -180,27 +169,22 @@ void cliCmd(char *cmd) {
     }
 
     // Open and bind socket for receiving answers from daemon.
-    if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1
-           || (cli_fd = connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un))) < 0) {
+    if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0
+           || connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un)) != 0) {
         fprintf(stdout, "Cannot open socket %s. %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
 
-    for (cmd = cli ? fgets(buf, CLI_CMD_BUF, stdin) : strcpy(buf, cmd); cmd && strcmp("done\n", buf) != 0
-                   && strcmp(".\n", buf) != 0 && strlen(buf) < CLI_CMD_BUF; cmd = fgets(buf, CLI_CMD_BUF, stdin)) {
-        if (send(srv_fd, buf, cli ? strlen(buf) - 1 : strlen(buf), 0) < 0) {
-            fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
-            exit(-1);
-        }
-
-        // Receive the daemon's answer. It will be closed by one single byte.
-        for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, sizeof(buf), 0))
-            fprintf(stdout, "%s", buf);
-        if (! cli)
-            break;
+    if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
+        fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
+        exit(-1);
     }
 
-    close(cli_fd);
+    // Receive the daemon's answer. It will be closed by one single byte.
+    for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, sizeof(buf), 0))
+        fprintf(stdout, "%s", buf);
+
+    close(srv_fd);
 }
 
 static void signalHandler(int sig) {
@@ -209,8 +193,8 @@ static void signalHandler(int sig) {
     case SIGTERM:
     case SIGURG:
     case SIGPIPE:
-        if (cli_fd != -1)
-            close(cli_fd);
+        if (srv_fd != -1)
+            close(srv_fd);
         fprintf(stdout, "Terminated.\n");
         exit(1);
     }

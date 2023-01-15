@@ -135,7 +135,6 @@ int main(int ArgCn, char *ArgVc[]) {
                 else
                     fprintf(stdout, h == 'c' || h == 'b' ? "" : "\n");
             }
-            cliCmd("cli");
             exit(0);
         case 'V':
             fprintf(stdout, "Igmpproxy %s\n", PACKAGE_VERSION);
@@ -227,8 +226,12 @@ static void igmpProxyInit(void) {
     LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
+    // If no socket group was configured set it to configured users's group or root.
+    if (! CONFIG->group && ! (CONFIG->group = getgrgid(CONFIG->user ? CONFIG->user->pw_gid : 0)))
+        LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", CONFIG->user ? CONFIG->user->pw_gid : 0);
+
     // Check for valid location to place socket and PID file.
-    unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->socketGroup->gr_gid;
+    unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->group->gr_gid;
     char   paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
     struct stat st;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
@@ -259,7 +262,7 @@ static void igmpProxyInit(void) {
     // Switch root if chroot is configured.
     if (CONFIG->chroot) {
         char *p = CONFIG->configFilePath, *b = basename(CONFIG->configFilePath);
-        LOG(LOG_WARNING, 0, "Switching root to %s %p %p.", CONFIG->chroot, p, CONFIG->configFilePath);
+        LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
 
         // Truncate config file path.
         if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
@@ -276,7 +279,6 @@ static void igmpProxyInit(void) {
             if (! (CONFIG->logFilePath = malloc(strlen(b) + 1)))
                 LOG(LOG_ERR, 0, "Out of Memory");
             strcpy(CONFIG->logFilePath, b);
-            LOG(LOG_DEBUG,0,"BLABLA %s",CONFIG->logFilePath);
             free(p);    // Alloced by loadConfig()
         }
     }
@@ -324,7 +326,7 @@ static void igmpProxyCleanUp(void) {
 
     if (CONFIG->runPath) {
         // Remove socket and PID file.
-        char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 3];
+        char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
         sprintf(rFile, "%s%s.pid", CONFIG->runPath, fileName);
         remove(rFile);
         sprintf(rFile, "%scli.sock", CONFIG->runPath);
@@ -332,7 +334,6 @@ static void igmpProxyCleanUp(void) {
         if (rmdir(CONFIG->runPath))
             LOG(LOG_DEBUG, errno, "Cannot remove run dir %s.", CONFIG->runPath);
     }
-
     free(recv_buf);                // Alloced by initIgmp()
     freeConfig(0);
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);

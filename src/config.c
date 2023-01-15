@@ -49,7 +49,7 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
+static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
 static const char *phyintopt = " updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
@@ -174,11 +174,10 @@ static inline bool nextToken(char *token) {
 *   Initialize default values of configuration parameters.
 */
 static inline void initCommonConfig(void) {
-    // User to run daemon process.
+    // User and group to run daemon process.
     commonConfig.user   = STARTUP ? NULL : commonConfig.user;
     commonConfig.chroot = STARTUP ? NULL : commonConfig.chroot;
-    // Default no group for socket (use root's).
-    commonConfig.socketGroup = NULL;
+    commonConfig.group  = STARTUP ? NULL : commonConfig.group;
 
     // Defaul Query Parameters.
     commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
@@ -628,6 +627,12 @@ bool loadConfig(char *cfgFile) {
 #else
             LOG(LOG_NOTICE, 0, "Config: Run as user %s is only valid for linux.", token + 1);
 #endif
+        } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
+            if (! (commonConfig.group = getgrnam(token + 1)))
+                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
+            else
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.group->gr_name);
+
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
             LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
@@ -794,8 +799,9 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" logfile", token) == 0 && nextToken(token)) {
             // Only use log file if not logging to stderr.
-            if (commonConfig.log2Stderr || (commonConfig.logFilePath &&
-                                            memcmp(commonConfig.logFilePath, token + 1, strlen(token) - 2) == 0))
+            char *t = (!STARTUP && commonConfig.chroot) ? basename(token + 1) : token + 1;
+            LOG(LOG_DEBUG,0,"BLABLA %s",commonConfig.logFilePath);
+            if (commonConfig.log2Stderr || (commonConfig.logFilePath && memcmp(commonConfig.logFilePath, t, strlen(t) - 1) == 0))
                 continue;
             else if (! (fp = fopen(token + 1, "w")) || fclose(fp))
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
@@ -803,8 +809,8 @@ bool loadConfig(char *cfgFile) {
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else {
-                memcpy(commonConfig.logFilePath, token + 1, strlen(token) - 1);
-                commonConfig.logFilePath[strlen(token) - 1] = '\0';
+                memcpy(commonConfig.logFilePath, t, strlen(t));
+                commonConfig.logFilePath[strlen(t)] = '\0';
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
@@ -822,12 +828,6 @@ bool loadConfig(char *cfgFile) {
             commonConfig.cksumVerify = false;
             LOG(LOG_NOTICE, 0, "Config: Will not verify IGMP checksums by default.");
 
-        } else if (strcmp(" cligroup", token) == 0 && nextToken(token)) {
-            if (! (commonConfig.socketGroup = getgrnam(token + 1)))
-                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
-            else
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.socketGroup->gr_name);
-
         } else if (token[1] != '\0')
             // Token may be " " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
@@ -839,12 +839,6 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", commonConfig.cnt, cfgFile);
     if (--commonConfig.cnt > 0 || logwarning)
         return !logwarning;
-
-    // If no socket group was configured set it to configured users's group or root.
-    if (! commonConfig.socketGroup && ! (commonConfig.socketGroup = getgrgid(commonConfig.user ? commonConfig.user->pw_gid : 0)))
-        LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", commonConfig.user ? commonConfig.user->pw_gid : 0);
-    if (!STARTUP)
-        cliSetGroup(commonConfig.socketGroup);
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
