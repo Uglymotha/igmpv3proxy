@@ -802,13 +802,14 @@ bool loadConfig(char *cfgFile) {
             char *t = (!STARTUP && commonConfig.chroot) ? basename(token + 1) : token + 1;
             if (commonConfig.log2Stderr || (commonConfig.logFilePath && strcmp(commonConfig.logFilePath, t) == 0))
                 continue;
-            else if (! (fp = fopen(token + 1, "w")) || fclose(fp))
+            else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else {
                 strcpy(commonConfig.logFilePath, t);
+                chmod(CONFIG->logFilePath, 0640);
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);

@@ -199,14 +199,14 @@ int main(int ArgCn, char *ArgVc[]) {
 *   Handles the initial startup of the daemon.
 */
 static void igmpProxyInit(void) {
+    char             tS[32] = "";
     struct sigaction sa;
     sigstatus = 1;  // STARTUP
 
     umask(S_IROTH | S_IWOTH | S_IXOTH);
     clock_gettime(CLOCK_REALTIME, &starttime);
-    char tS[32] = "", *t = asctime(localtime(&starttime.tv_sec));
-    memcpy(tS, t, strlen(t) - 1);
-    tS[strlen(t) - 1] = '\0';
+    strcpy(tS, asctime(localtime(&starttime.tv_sec)));
+    tS[strlen(tS) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Initializing IGMPv3 Proxy on %s.", tS);
 
     sa.sa_handler = signalHandler;
@@ -267,7 +267,7 @@ static void igmpProxyInit(void) {
         // Truncate config file path.
         if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
             LOG(LOG_ERR, 0, "Out of Memory");
-        memcpy(CONFIG->configFilePath, p, strlen(b) + 1);
+        strcpy(CONFIG->configFilePath, b);
         free(p);    // Alloced by main()
 
         if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
@@ -289,7 +289,7 @@ static void igmpProxyInit(void) {
         if (CONFIG->chroot && chown("/", uid, gid) != 0)
             LOG(LOG_WARNING, errno, "Failed to chown chroot diretory to %s.", CONFIG->user->pw_name);
 
-        if (CONFIG->logFilePath && (chown(CONFIG->logFilePath, uid, gid) || chmod(CONFIG->logFilePath, 0660)))
+        if (CONFIG->logFilePath && (chown(CONFIG->logFilePath, uid, gid) || chmod(CONFIG->logFilePath, 0640)))
             LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONFIG->logFilePath, CONFIG->user->pw_name);
 
         if (setgroups(1, (gid_t *)&gid) != 0 ||
@@ -309,6 +309,7 @@ static void igmpProxyInit(void) {
 *   Clean up all on exit...
 */
 static void igmpProxyCleanUp(void) {
+    char            tS[32] = "", tE[32] = "";
     struct timespec endtime;
     sigstatus = 0x20;         // Shutdown
 
@@ -318,11 +319,9 @@ static void igmpProxyCleanUp(void) {
         closeCliFd(pollFD[1].fd);
 
     clock_gettime(CLOCK_REALTIME, &endtime);
-    char tS[32] = "", tE[32] = "", *t = asctime(localtime(&starttime.tv_sec));
-    memcpy(tS, t, strlen(t) - 1);
-    t = asctime(localtime(&endtime.tv_sec));
-    memcpy(tE, t, strlen(t) - 1);
-    tS[strlen(t) - 1] = '\0', tE[strlen(t) - 1] = '\0';
+    strcpy(tS, asctime(localtime(&starttime.tv_sec)));
+    strcpy(tE, asctime(localtime(&endtime.tv_sec)));
+    tS[strlen(tS) - 1] = tE[strlen(tE) - 1] = '\0';
 
     if (CONFIG->runPath) {
         // Remove socket and PID file.
