@@ -60,8 +60,8 @@ int openCliFd(void) {
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-        || ! (cliSockAddr.sun_len = SUN_LEN(&cliSockAddr))
-        ||    bind(cli_fd, (struct sockaddr *)&cliSockAddr, cliSockAddr.sun_len) < 0
+        || ! (cli_sa.sun_len = SUN_LEN(&cli_sa))
+        ||    bind(cli_fd, (struct sockaddr *)&cliSockAddr, cli_sa.sun_len) < 0
 #else
         ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
@@ -88,16 +88,10 @@ void closeCliFd(int fd) {
 *   Processes an incoming cli connection. Requires the fd of the cli socket.
 */
 void acceptCli(int fd) {
-    int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr_un);
+    int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
     uint32_t            addr, mask;
     char                buf[CLI_CMD_BUF] = {0};
-    struct sockaddr_un  cli_sa;
-
-    memset(&cli_sa, 0, sizeof(struct sockaddr_un));
-    cli_sa.sun_family = AF_UNIX;
-#ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-    cli_sa.sun_len = SUN_LEN(&cli_sa);
-#endif
+    struct sockaddr     cli_sa;
 
     // Receive and answer the cli request.
     cli_fd = accept(fd, &cli_sa, (socklen_t *)&s);
