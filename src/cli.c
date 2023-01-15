@@ -61,7 +61,7 @@ int openCliFd(void) {
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
         || ! (cli_sa.sun_len = SUN_LEN(&cli_sa))
-        ||    bind(cli_fd, (struct sockaddr *)&cliSockAddr, cli_sa.sun_len) < 0
+        ||    bind(cli_fd, (struct sockaddr *)&cli_sa, cli_sa.sun_len) < 0
 #else
         ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
