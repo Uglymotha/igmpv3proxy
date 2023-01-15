@@ -106,6 +106,8 @@ struct mcTable *findGroup(register uint32_t group, bool create) {
 */
 static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, int mode, uint32_t srcHash) {
     struct ifMct  *imc, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
+    uint32_t       group = mct->group;
+
     if (dir ? NOT_SET(mct, d, IfDp) : NOT_SET(mct, u, IfDp)) {
         if (! (imc = malloc(sizeof(struct ifMct))))   // Freed by delGroup or freeIfDescL()
             LOG(LOG_ERR, errno, "addGroup: Out of Memory.");
@@ -144,6 +146,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         }
     }
 
+    logRouteTable("Add Group", 1, -1, group, (uint32_t)-1);
     return true;
 }
 
@@ -153,6 +156,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
 struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *imc, int dir) {
     struct ifMct *pimc = NULL, **list = (struct ifMct **)(dir ? &IfDp->dMct : &IfDp->uMct);
     struct src   *src;
+    uint32_t      group = mct->group;
     LOG(LOG_DEBUG, 0, "delGroup: Removing %s group entry for %s from %s.", dir ? "downstream" : "upstream",
                        inetFmt(mct->group, 1), IfDp->Name);
 
@@ -231,7 +235,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
     }
 
     if (MCT)
-        logRouteTable("Remove Group", 1, -1);
+        logRouteTable("Remove Group", 1, -1, group, (uint32_t)-1);
     else
         LOG(LOG_DEBUG, 0, "delGroup: Multicast table is empty.");
     return pimc;
@@ -738,7 +742,7 @@ void clearGroups(void *Dp) {
     if (! MCT)
         LOG(LOG_INFO, 0, "clearGroups: Multicast table is empty.");
     else
-        logRouteTable("Clear Groups", 1, -1);
+        logRouteTable("Clear Groups", 1, -1, (uint32_t)-1, (uint32_t)-1);
 }
 
 /**
@@ -904,7 +908,7 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     startQuery(IfDp, qlst);
 
     LOG(LOG_DEBUG, 0, "Updated group entry for %s on VIF #%d", inetFmt(group, 1), IfDp->index);
-    logRouteTable("Update Group", 1, -1);
+    logRouteTable("Update Group", 1, -1, group, (uint32_t)-1);
 }
 
 /**
@@ -1020,7 +1024,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     }
     k_addMRoute(src->ip, mct->group, src->mfc->IfDp->index, ttlVc);
 
-    logRouteTable("Activate Route", 1, -1);
+    logRouteTable("Activate Route", 1, -1, group, (uint32_t)-1);
 }
 
 /**
@@ -1073,7 +1077,7 @@ void ageGroups(struct IfDesc *IfDp) {
     }
 
     if (MCT)
-        logRouteTable("Age Groups", 1, -1);
+        logRouteTable("Age Groups", 1, -1, (uint32_t)-1, (uint32_t)-1);
     else
         LOG(LOG_DEBUG, 0, "ageGroups: Multicast table is empty.");
 }
@@ -1081,7 +1085,7 @@ void ageGroups(struct IfDesc *IfDp) {
 /**
 *   Debug function that writes the routing table entries to the log or sends them to the cli socket specified in arguments.
 */
-void logRouteTable(const char *header, int h, int fd) {
+void logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask) {
     struct mcTable  *mct;
     struct mfc      *mfc;
     struct IfDesc   *IfDp = NULL;
@@ -1097,6 +1101,8 @@ void logRouteTable(const char *header, int h, int fd) {
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     GETMRT(mct) {
+        if (addr != (uint32_t)-1 && (mct->group & mask) != addr)
+            continue;
         mfc = mct->mfc;
         do {
             if (mfc) {

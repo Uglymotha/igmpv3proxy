@@ -194,7 +194,8 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
 */
 void groupSpecificQuery(struct qlst *qlst) {
     struct igmpv3_query *query = NULL, *query1 = NULL, *query2 = NULL;
-    uint32_t            i = 0, nsrcs = qlst->nsrcs, size = sizeof(struct igmpv3_query) + nsrcs * sizeof(struct in_addr);
+    uint32_t            i = 0, nsrcs = qlst->nsrcs, group = qlst->mct->group,
+                        size = sizeof(struct igmpv3_query) + nsrcs * sizeof(struct in_addr);
 
     // Do aging upon reentry.
     if (++qlst->cnt > 1) {
@@ -288,6 +289,7 @@ void groupSpecificQuery(struct qlst *qlst) {
 
     free(query1);  // Alloced by self.
     free(query2);  // Alloced by self.
+    logRouteTable("Activate Route", 1, -1, group, (uint32_t)-1);
 }
 
 /**

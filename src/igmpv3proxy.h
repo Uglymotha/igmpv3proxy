@@ -464,7 +464,7 @@ void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
-void     logRouteTable(const char *header, int h, int fd);
+void     logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif

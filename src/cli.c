@@ -89,7 +89,7 @@ void closeCliFd(int fd) {
 */
 void acceptCli(int fd) {
     int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
-    uint32_t            addr, mask;
+    uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0};
     struct sockaddr     cli_sa;
 
@@ -102,7 +102,7 @@ void acceptCli(int fd) {
          (!parseSubnetAddress(&buf[buf[1] == 'h' ? 2 : 1], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
         LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
     } else if (buf[0] == 'r') {
-        logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd);
+        logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd, addr, mask);
     } else if (buf[0] == 'i') {
         getIfStats(buf[1] == 'h' ?  0 : 1, cli_fd);
     } else if (buf[0] == 'f') {

@@ -61,9 +61,9 @@ static char          *recv_buf;
 *   pointer to the arguments are received on the line...
 */
 int main(int ArgCn, char *ArgVc[]) {
-    int          c = 0, h = 0, i = 0, j = 0;
-    char        *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL,
-                 paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path = NULL, *file;
+    int          c = 0, i = 0, j = 0;
+    char        *opts[2] = { NULL, NULL }, cmd[20] = "",
+                 paths[sizeof(CFG_PATHS) + 1] = CFG_PATHS, *path = NULL, *file;
     struct stat  st;
     fileName = basename(ArgVc[0]);
 
@@ -87,7 +87,7 @@ int main(int ArgCn, char *ArgVc[]) {
         case 'c':
             c = getopt(ArgCn, ArgVc, "cbr::ifth");
             while (c != -1 && c != '?') {
-                uint32_t addr, mask;
+                uint32_t addr, mask, h = 0;
                 memset(cmd, 0, sizeof(cmd));
                 switch (c) {
                 case 'b':
@@ -97,24 +97,39 @@ int main(int ArgCn, char *ArgVc[]) {
                 case 't':
                 case 'r':
                     cmd[0] = c;
-                    if (c != 'r' && (h = getopt(ArgCn, ArgVc, "cbr::ifth")) == 'h')
+                    if (c != 'r' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ifth")) == 'h')
                         strcat(cmd, "h");
                     else if (c == 'r' && optarg) {
                         if (optarg[0] == 'h') {
                             strcat(cmd, "h");
                             optarg++;
+                            h = 'h';
                         }
-                        if (strlen(optarg) > 1 && (!parseSubnetAddress(optarg, &addr, &mask) || !IN_MULTICAST(ntohl(addr))))
-                            fprintf(stdout, "Ignoring %s, not a valid subnet address.\n", optarg);
-                        else
-                            strcat(cmd, optarg);
+                        if (strlen(optarg) > 0) {
+                            if (!parseSubnetAddress(optarg, &addr, &mask)) {
+                                i = optind, j = optind = 1;
+                                opts[1] = malloc(strlen(optarg) + 1);
+                                sprintf(opts[1], "-%s", optarg);
+                            } else if (!IN_MULTICAST(ntohl(addr))) {
+                                fprintf(stdout, "Ignoring %s, not a valid multicast address.\n", optarg);
+                            } else
+                                strcat(cmd, optarg);
+                        }
                     }
                     cliCmd(cmd);
                     break;
                 }
-                c = h == 'h' || c == 'r' ? getopt(ArgCn, ArgVc, "cbr::ifth") : h;
+                if (j) {
+                    c = c == 'r' || h == 'h' ? getopt(2, opts, "cbr::ift") : h;
+                } else if (h == 'h' || c == 'r')
+                    c = getopt(ArgCn, ArgVc, "cbr::ift");
+                else if (c == -1 && j == 1) {
+                    optind = i, j = 0;
+                    c = getopt(ArgCn, ArgVc, "cbr::ift");
+                } else
+                    c = h;
                 if (c != -1 && c != '?')
-                    fprintf(stdout, h == 'c' || h == 'b' ? "" : "\n");
+                    fprintf(stdout, "\n");
             }
             exit(0);
         case 'V':
