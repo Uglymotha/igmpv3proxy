@@ -97,14 +97,12 @@ void acceptCli(int fd) {
     cli_fd = accept(fd, &cli_sa, (socklen_t *)&s);
     len = recv(cli_fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT);
 
-    if (len <= 0 || len > CLI_CMD_BUF) {
-        close(cli_fd);
-        return;
+    if ( len <= 0 || len > CLI_CMD_BUF ||
+        (buf[0] == 'r' && len > 2 &&
+         (!parseSubnetAddress(&buf[buf[1] == 'h' ? 2 : 1], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
+        LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
     } else if (buf[0] == 'r') {
-        if (len > 2 && parseSubnetAddress(buf[1] == 'h'? &buf[2] : &buf[1], &addr, &mask))
-            send(cli_fd, "GO AWAY\n", 9, MSG_DONTWAIT);
-        else
-            logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd);
+        logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 'i') {
         getIfStats(buf[1] == 'h' ?  0 : 1, cli_fd);
     } else if (buf[0] == 'f') {
@@ -122,7 +120,7 @@ void acceptCli(int fd) {
 
     // Close connection.
     close(cli_fd);
-    LOG(LOG_DEBUG, 0, "Cli: Finished command %s.", buf);
+    LOG(LOG_DEBUG, 0, "acceptCli: Finished command %s.", buf);
 }
 
 // Below are functions and definitions for client connections.
@@ -135,7 +133,7 @@ void cliCmd(char *cmd) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    char               buf[CLI_CMD_BUF] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
+    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
@@ -175,7 +173,7 @@ void cliCmd(char *cmd) {
     }
 
     // Receive the daemon's answer. It will be closed by one single byte.
-    for (int len = recv(srv_fd, &buf, sizeof(buf), 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, sizeof(buf), 0))
+    for (int len = recv(srv_fd, &buf, CLI_CMD_BUF, 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, CLI_CMD_BUF, 0))
         fprintf(stdout, "%s", buf);
 
     close(srv_fd);

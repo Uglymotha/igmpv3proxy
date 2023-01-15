@@ -62,7 +62,6 @@ static char          *recv_buf;
 */
 int main(int ArgCn, char *ArgVc[]) {
     int          c = 0, h = 0, i = 0, j = 0;
-    uint32_t     addr, mask;
     char        *opts[2] = { NULL, NULL }, cmd[20] = "", *arg = NULL,
                  paths[sizeof(CFG_PATHS)] = CFG_PATHS, *path = NULL, *file;
     struct stat  st;
@@ -87,52 +86,34 @@ int main(int ArgCn, char *ArgVc[]) {
             break;
         case 'c':
             c = getopt(ArgCn, ArgVc, "cbr::ifth");
-            while (c != -1) {
+            while (c != -1 && c != '?') {
+                uint32_t addr, mask;
+                memset(cmd, 0, sizeof(cmd));
                 switch (c) {
                 case 'b':
                 case 'c':
-                    h = getopt(ArgCn, ArgVc, "cbr::ifth");
-                    cliCmd((char *)&c);
-                    break;
                 case 'f':
                 case 'i':
                 case 't':
                 case 'r':
-                    arg = optarg;
-                    if (optarg && !parseSubnetAddress(optarg, &addr, &mask)) {
-                        arg = NULL;
-                        if (i == 0) {
-                            j = optind;
-                            optind = i = 1;
-                            opts[1] = malloc(strlen(optarg) - 1);  // Freed by self.
-                            sprintf(opts[1], "-%s", optarg);
-                        }
-                    }
-                    h = getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth");
-                    if (i == 1 && h == -1) {
-                        free(opts[1]);  // Alloced by self.
-                        i = 0;
-                        optind = j;
-                        h = getopt(ArgCn, ArgVc, "cbr::ifth");
-                    }
-                    strncpy(cmd, (char *)&c, 1);
-                    if (h == 'h')
+                    cmd[0] = c;
+                    if (c != 'r' && (h = getopt(ArgCn, ArgVc, "cbr::ifth")) == 'h')
                         strcat(cmd, "h");
-                    if (arg)
-                        strcat(cmd, arg);
+                    else if (c == 'r' && optarg) {
+                        if (optarg[0] == 'h') {
+                            strcat(cmd, "h");
+                            optarg++;
+                        }
+                        if (strlen(optarg) > 1 && (!parseSubnetAddress(optarg, &addr, &mask) || !IN_MULTICAST(ntohl(addr))))
+                            fprintf(stdout, "Ignoring %s, not a valid subnet address.\n", optarg);
+                        else
+                            strcat(cmd, optarg);
+                    }
                     cliCmd(cmd);
-                    memset(cmd, 0, 20);
+                    break;
                 }
-                c = h == 'h' ? getopt(i == 0 ? ArgCn : 2, i == 0 ? ArgVc : opts, "cbr::ifth") : h;
-                if (c == -1 && i == 1) {
-                    free(opts[1]);  // Alloced by self.
-                    i = 0;
-                    optind = j;
-                    c = getopt(ArgCn, ArgVc, "cbr::ifth");
-                }
-                if (c == -1)
-                    exit(0);
-                else
+                c = h == 'h' || c == 'r' ? getopt(ArgCn, ArgVc, "cbr::ifth") : h;
+                if (c != -1 && c != '?')
                     fprintf(stdout, h == 'c' || h == 'b' ? "" : "\n");
             }
             exit(0);
