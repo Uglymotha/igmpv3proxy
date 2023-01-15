@@ -800,8 +800,7 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" logfile", token) == 0 && nextToken(token)) {
             // Only use log file if not logging to stderr.
             char *t = (!STARTUP && commonConfig.chroot) ? basename(token + 1) : token + 1;
-            LOG(LOG_DEBUG,0,"BLABLA %s",commonConfig.logFilePath);
-            if (commonConfig.log2Stderr || (commonConfig.logFilePath && memcmp(commonConfig.logFilePath, t, strlen(t) - 1) == 0))
+            if (commonConfig.log2Stderr || (commonConfig.logFilePath && strcmp(commonConfig.logFilePath, t) == 0))
                 continue;
             else if (! (fp = fopen(token + 1, "w")) || fclose(fp))
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
@@ -809,8 +808,7 @@ bool loadConfig(char *cfgFile) {
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else {
-                memcpy(commonConfig.logFilePath, t, strlen(t));
-                commonConfig.logFilePath[strlen(t)] = '\0';
+                strcpy(commonConfig.logFilePath, t);
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
                 LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
