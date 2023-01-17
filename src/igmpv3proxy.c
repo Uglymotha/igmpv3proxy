@@ -144,7 +144,7 @@ int main(int ArgCn, char *ArgVc[]) {
         }
     }
 
-    // Going to run as daemon.
+    // Going to run as daemon. Find configuration.
     if (geteuid() != 0) {
         // Check that we are root.
         fprintf(stderr, "%s: Must be root.\n", fileName);
