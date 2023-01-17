@@ -133,7 +133,7 @@ void cliCmd(char *cmd) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[50];
+    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[128];
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
@@ -149,9 +149,14 @@ void cliCmd(char *cmd) {
     srv_sa.sun_len = SUN_LEN(&srv_sa);
 #endif
 
-    // Check for daemon socket.
+    // Check for daemon socket location.
     path = strtok(paths, " ");
     while (path) {
+        sprintf(tpath, "%s/%s/root", path, fileName);
+        if (lstat(tpath, &st) == 0 && (S_ISLNK(st.st_mode) || S_ISDIR(st.st_mode))) {
+            strcpy(srv_sa.sun_path, strcat(tpath, "/cli.sock"));
+            break;
+        }
         sprintf(tpath, "%s/%s/cli.sock", path, fileName);
         if (stat(tpath, &st) != -1) {
             strcpy(srv_sa.sun_path, tpath);
@@ -173,8 +178,7 @@ void cliCmd(char *cmd) {
     }
 
     // Receive the daemon's answer. It will be closed by one single byte.
-    for (int len = recv(srv_fd, &buf, CLI_CMD_BUF, 0); len > 0; memset(buf, 0, len), len = recv(srv_fd, &buf, CLI_CMD_BUF, 0))
-        fprintf(stdout, "%s", buf);
+    for (int len = 0; (len = recv(srv_fd, &buf, CLI_CMD_BUF, 0)) > 0; buf[len] = '\0', fprintf(stdout, "%s", buf));
 
     close(srv_fd);
 }

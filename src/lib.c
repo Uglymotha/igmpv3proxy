@@ -38,8 +38,8 @@
 */
 
 #include "igmpv3proxy.h"
-    extern bool bla;
-const char Usage[] =
+
+char Usage[] =
 "Usage: %s [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"

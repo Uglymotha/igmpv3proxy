@@ -341,7 +341,7 @@ struct igmpv3_report {
 //############A#####################################################################
 
 // Filename, Help string.
-extern const char      *fileName, Usage[];
+extern char            *fileName, Usage[];
 
 // Timekeeping.
 extern struct timespec  curtime, utcoff;

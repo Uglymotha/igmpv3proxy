@@ -111,8 +111,9 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
     else if ((IfDp->state & ifstate) == 0) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
                               : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
-        LOG(LOG_INFO, 0, "checkIgmp: Message for %s from %s was received on %s. Ignoring.",
-                          inetFmt(group, 1), inetFmt(src, 2), strcat(msg, IfDp->Name));
+        LOG(LOG_INFO, 0, "checkIgmp: Message for %s from %s was received on %s interface %s. Ignoring.",
+                          inetFmt(group, 1), inetFmt(src, 2), IS_UPSTREAM(IfDp->state) ? "upstream"
+                          : IS_DOWNSTREAM(IfDp->state) ? "downstream" : "disabled", IfDp->Name);
     } else
         return true;
 
@@ -189,7 +190,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
     else if (IfDp->conf->cksumVerify && cksum != inetChksum((uint16_t *)igmp, ipdatalen))
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
-    else if (checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_DOWNSTREAM)) {
+    else {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
@@ -220,7 +221,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         }
 
         case IGMP_MEMBERSHIP_QUERY:
-            if (IN_MULTICAST(ntohl(dst)) && IfDp->conf->qry.election && !IS_DISABLED(IfDp->state))
+            if (IfDp->conf->qry.election && checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_UPDOWNSTREAM))
                 acceptMemberQuery(IfDp, src, dst, igmpv3, ipdatalen);
             return;
 

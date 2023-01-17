@@ -49,7 +49,7 @@ static void igmpProxyRun(void);
 // Global Variables Signal Handling / Timekeeping.
 uint8_t               sighandled, sigstatus, logwarning;
 struct timespec       curtime, utcoff, starttime;
-const char           *fileName;
+char                 *fileName, tS[32] = "", tE[32] = "";
 
 // Polling and buffering local statics.
 static struct pollfd  pollFD[2];
@@ -62,7 +62,7 @@ static char          *recv_buf;
 */
 int main(int ArgCn, char *ArgVc[]) {
     int          c = 0, i = 0, j = 0;
-    char        *opts[2] = { NULL, NULL }, cmd[20] = "",
+    char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "",
                  paths[sizeof(CFG_PATHS) + 1] = CFG_PATHS, *path = NULL, *file;
     struct stat  st;
     fileName = basename(ArgVc[0]);
@@ -72,6 +72,7 @@ int main(int ArgCn, char *ArgVc[]) {
     openlog(fileName, LOG_PID, LOG_DAEMON);
     CONFIG->logLevel = LOG_WARNING;
     srand(time(NULL) * getpid());
+    CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // Parse the commandline options and setup basic settings..
     for (c = getopt(ArgCn, ArgVc, "cvVdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnh")) {
@@ -99,6 +100,8 @@ int main(int ArgCn, char *ArgVc[]) {
                     cmd[0] = c;
                     if (c != 'r' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ifth")) == 'h')
                         strcat(cmd, "h");
+                    else if (h == '?')
+                        break;
                     else if (c == 'r' && optarg) {
                         if (optarg[0] == 'h') {
                             strcat(cmd, "h");
@@ -108,10 +111,11 @@ int main(int ArgCn, char *ArgVc[]) {
                         if (strlen(optarg) > 0) {
                             if (!parseSubnetAddress(optarg, &addr, &mask)) {
                                 i = optind, j = optind = 1;
-                                opts[1] = malloc(strlen(optarg) + 1);
+                                if (! (opts[1] = malloc(strlen(optarg) + 1)))
+                                    exit(-1);
                                 sprintf(opts[1], "-%s", optarg);
                             } else if (!IN_MULTICAST(ntohl(addr))) {
-                                fprintf(stdout, "Ignoring %s, not a valid multicast address.\n", optarg);
+                                fprintf(stdout, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
                             } else
                                 strcat(cmd, optarg);
                         }
@@ -119,11 +123,10 @@ int main(int ArgCn, char *ArgVc[]) {
                     cliCmd(cmd);
                     break;
                 }
-                if (j) {
-                    c = c == 'r' || h == 'h' ? getopt(2, opts, "cbr::ift") : h;
-                } else if (h == 'h' || c == 'r')
-                    c = getopt(ArgCn, ArgVc, "cbr::ift");
+                if (h == 'h' || c == 'r')
+                    c = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ift");
                 else if (c == -1 && j == 1) {
+                    free(opts[1]);
                     optind = i, j = 0;
                     c = getopt(ArgCn, ArgVc, "cbr::ift");
                 } else
@@ -169,12 +172,6 @@ int main(int ArgCn, char *ArgVc[]) {
     if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
         LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
 
-    // Detach daemon from stdin/out/err, and fork.
-    int f = -1;
-    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0
-         || dup2(0, 1) < 0 || dup2(0, 2) < 0 || setpgid(0, 0) < 0 || (f = fork()) != 0))
-        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.") : exit(0);
-
     do {
         sighandled = sigstatus = 0;
 
@@ -195,7 +192,6 @@ int main(int ArgCn, char *ArgVc[]) {
 *   Handles the initial startup of the daemon.
 */
 static void igmpProxyInit(void) {
-    char             tS[32] = "";
     struct sigaction sa;
     sigstatus = 1;  // STARTUP
 
@@ -220,7 +216,6 @@ static void igmpProxyInit(void) {
     if (!loadConfig(CONFIG->configFilePath))
         LOG(LOG_ERR, 0, "Failed to load configuration from '%s'.", CONFIG->configFilePath);
     LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
-    CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
 
     // If no socket group was configured set it to configured users's group or root.
     if (! CONFIG->group && ! (CONFIG->group = getgrgid(CONFIG->user ? CONFIG->user->pw_gid : 0)))
@@ -232,7 +227,7 @@ static void igmpProxyInit(void) {
     struct stat st;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
-            if (! (CONFIG->runPath = malloc(strlen(path) + strlen(fileName) + 3)))
+            if (! (CONFIG->runPath = malloc(strlen(path) + strlen(fileName) + 8)))
                 LOG(LOG_ERR, 0, "Out of memory.");   // Freed by igmpProxyCleanup()
             sprintf(CONFIG->runPath, "%s/%s/", path, fileName);
             break;
@@ -241,6 +236,37 @@ static void igmpProxyInit(void) {
     if (  (stat(CONFIG->runPath, &st) == -1 && mkdir(CONFIG->runPath, 0770))
         || chown(CONFIG->runPath, uid, gid) || chmod (CONFIG->runPath, 01770))
         LOG(LOG_ERR, errno, "Failed to create run ndirectory %s.", CONFIG->runPath);
+
+    // Switch root if chroot is configured.
+    if (CONFIG->chroot) {
+        char *p = CONFIG->configFilePath, *b = basename(CONFIG->configFilePath);
+        LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
+
+        // Link the root to the run directory and set runpath to /..
+        remove(strcat(CONFIG->runPath, "root"));
+        if (symlink(CONFIG->chroot, CONFIG->runPath) != 0)
+            LOG(LOG_ERR, errno, "Failed to link chroot directory %s to run directory %s.", CONFIG->chroot, CONFIG->runPath);
+        strcpy(CONFIG->runPath, "/");
+
+        // Truncate config file path to /.
+        if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
+            LOG(LOG_ERR, 0, "Out of Memory");
+        strcpy(CONFIG->configFilePath, b);
+        free(p);    // Alloced by main()
+
+        // Truncate log file path to /.
+        if (CONFIG->logFilePath) {
+            p = CONFIG->logFilePath, b = basename(CONFIG->logFilePath);
+            if (! (CONFIG->logFilePath = malloc(strlen(b) + 1)))
+                LOG(LOG_ERR, 0, "Out of Memory");
+            strcpy(CONFIG->logFilePath, b);
+            free(p);    // Alloced by loadConfig()
+        }
+
+        // Swith root directory.
+        if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
+            LOG(LOG_ERR, errno, "Failed to switch root to %s.",CONFIG->chroot);
+    }
 
     // Write PID.
     char  pidFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
@@ -254,30 +280,6 @@ static void igmpProxyInit(void) {
     pollFD[0] = (struct pollfd){ k_enableMRouter(), POLLIN, 0 };
     // Open CLI Socket
     pollFD[1] = (struct pollfd){ openCliFd(), POLLIN, 0 };
-
-    // Switch root if chroot is configured.
-    if (CONFIG->chroot) {
-        char *p = CONFIG->configFilePath, *b = basename(CONFIG->configFilePath);
-        LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
-
-        // Truncate config file path.
-        if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
-            LOG(LOG_ERR, 0, "Out of Memory");
-        strcpy(CONFIG->configFilePath, b);
-        free(p);    // Alloced by main()
-
-        if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
-            LOG(LOG_ERR, errno, "Failed to switch root to %s.",CONFIG->chroot);
-
-        // Truncate log file path if congigured.
-        if (CONFIG->logFilePath) {
-            p = CONFIG->logFilePath, b = basename(CONFIG->logFilePath);
-            if (! (CONFIG->logFilePath = malloc(strlen(b) + 1)))
-                LOG(LOG_ERR, 0, "Out of Memory");
-            strcpy(CONFIG->logFilePath, b);
-            free(p);    // Alloced by loadConfig()
-        }
-    }
 
     // Make sure logfile and chroot directoryis owned by configured user and switch ids.
     if (CONFIG->user) {
@@ -297,6 +299,11 @@ static void igmpProxyInit(void) {
     // Initialize IGMP.
     recv_buf = initIgmp();
 
+    // Detach daemon from stdin/out/err, and fork.
+    int f = -1;
+    if (!CONFIG->notAsDaemon && (close(0) < 0 || close(1) < 0 || close(2) < 0 || (f = fork()) != 0))
+        f < 0 ? LOG(LOG_ERR, errno, "Failed to detach daemon.") : exit(0);
+
     // Loads configuration for Physical interfaces and mcast vifs.
     rebuildIfVc(NULL);
 }
@@ -305,20 +312,16 @@ static void igmpProxyInit(void) {
 *   Clean up all on exit...
 */
 static void igmpProxyCleanUp(void) {
-    char            tS[32] = "", tE[32] = "";
     struct timespec endtime;
     sigstatus = 0x20;         // Shutdown
 
-    rebuildIfVc(NULL);        // Shutdown all interfaces, queriers and remove all routes.
+    // Shutdown all interfaces, queriers, remove all routes, close sockets.
+    rebuildIfVc(NULL);
     k_disableMRouter();
     if (pollFD[1].fd > 0)
         closeCliFd(pollFD[1].fd);
 
-    clock_gettime(CLOCK_REALTIME, &endtime);
-    strcpy(tS, asctime(localtime(&starttime.tv_sec)));
-    strcpy(tE, asctime(localtime(&endtime.tv_sec)));
-    tS[strlen(tS) - 1] = tE[strlen(tE) - 1] = '\0';
-
+    // Remove CLI socket and PID file and Config.
     if (CONFIG->runPath) {
         // Remove socket and PID file.
         char rFile[strlen(CONFIG->runPath) + strlen(fileName) + 5];
@@ -329,9 +332,16 @@ static void igmpProxyCleanUp(void) {
         if (rmdir(CONFIG->runPath))
             LOG(LOG_DEBUG, errno, "Cannot remove run dir %s.", CONFIG->runPath);
     }
-    free(recv_buf);                // Alloced by initIgmp()
     freeConfig(0);
+
+    // Log shutdown.
+    clock_gettime(CLOCK_REALTIME, &endtime);
+    strcpy(tE, asctime(localtime(&endtime.tv_sec)));
+    tE[strlen(tE) - 1] = '\0';
     LOG(LOG_WARNING, 0, "Shutting down on %s. Running since %s (%ds).", tE, tS, timeDiff(starttime, endtime).tv_sec);
+
+    // Free remaining allocs.
+    free(recv_buf);                // Alloced by initIgmp()
     free(CONFIG->logFilePath);     // Alloced by loadConfig() or igmpProxyInit()
     free(CONFIG->runPath);         // Alloced by openCliSock()
     free(CONFIG->chroot);          // Alloced by loadConfig()

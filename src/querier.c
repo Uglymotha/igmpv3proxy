@@ -289,7 +289,7 @@ void groupSpecificQuery(struct qlst *qlst) {
 
     free(query1);  // Alloced by self.
     free(query2);  // Alloced by self.
-    logRouteTable("Activate Route", 1, -1, group, (uint32_t)-1);
+    logRouteTable("GSQ", 1, -1, group, (uint32_t)-1);
 }
 
 /**

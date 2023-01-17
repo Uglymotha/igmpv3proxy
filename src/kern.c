@@ -156,7 +156,7 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
 #endif
     LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
-                     fmode ? "IN" : "EX", nsrcs);
+                      fmode ? "IN" : "EX", nsrcs);
     if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
                         fmode, nsrcs, ss) < 0 && ((err = errno) != er || nsrcs == 0))
         LOG(LOG_WARNING, err, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
