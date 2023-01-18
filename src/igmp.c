@@ -96,14 +96,14 @@ char *initIgmp(void) {
 *  Checks if request is valid.
 */
 static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint32_t group, register uint8_t ifstate) {
-    // Sanitycheck the group adress...
     if (! IN_MULTICAST(ntohl(group)))
+        // Sanitycheck the group adress.
         LOG(LOG_NOTICE, 0, "%s on %s is not a valid Multicast group. Ignoring", inetFmt(group, 1), IfDp->Name);
     else if (src == 0xFFFFFFFF)
         LOG(LOG_INFO, 0, "checkIgmp: The request from: %s for: %s on: %s is invalid. Ignoring.",
                             inetFmt(src, 1), inetFmt(group, 2), IfDp->Name);
     else if (! IfDp->conf->proxyLocalMc && IGMP_LOCAL(group))
-        /* filter local multicast 224.0.0.0/24 */
+        // Filter local multicast 224.0.0.0/24
         LOG(LOG_DEBUG, 0, "checkIgmp: Local multicast (%s) on %s from %s and proxylocalmc is not set. Ignoring.",
                            inetFmt(group,1), IfDp->Name, inetFmt(src, 2));
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
@@ -380,7 +380,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
         IfDp->querier.ageTimer = timer_setTimer(timeout, strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name), ageGroups, IfDp);
         LOG(LOG_INFO, 0, "sendGeneralMemberQuery: From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
-                           inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
+                          inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
     }
 }
 

@@ -308,7 +308,7 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
 
     if (CONFIG->logFilePath || CONFIG->log2Stderr)
         fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
-                                     sec % 3600 % 60, nsec / 100000, LogMsg);
+                                                     sec % 3600 % 60, nsec / 100000, LogMsg);
     else
         syslog(Severity, "%s", LogMsg);
 

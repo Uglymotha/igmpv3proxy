@@ -168,12 +168,12 @@ void cliCmd(char *cmd) {
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0
            || connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un)) != 0) {
-        fprintf(stdout, "Cannot open socket %s. %s\n", srv_sa.sun_path, strerror(errno));
+        fprintf(stderr, "Cannot open socket %s. %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
 
     if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
-        fprintf(stdout, "Cannot send command. %s\n", strerror(errno));
+        fprintf(stderr, "Cannot send command. %s\n", strerror(errno));
         exit(-1);
     }
 

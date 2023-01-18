@@ -78,7 +78,10 @@ int main(int ArgCn, char *ArgVc[]) {
     for (c = getopt(ArgCn, ArgVc, "cvVdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnh")) {
         switch (c) {
         case 'v':
-            CONFIG->logLevel = LOG_INFO; // FALLTHRU
+            if (CONFIG->logLevel == LOG_WARNING)
+                CONFIG->logLevel = LOG_NOTICE;
+            else
+                CONFIG->logLevel = LOG_INFO; // FALLTHRU
         case 'd':
             CONFIG->logLevel = CONFIG->logLevel == LOG_WARNING ? LOG_DEBUG : CONFIG->logLevel;
             CONFIG->log2Stderr = true; // FALLTHRU
@@ -115,7 +118,8 @@ int main(int ArgCn, char *ArgVc[]) {
                                     exit(-1);
                                 sprintf(opts[1], "-%s", optarg);
                             } else if (!IN_MULTICAST(ntohl(addr))) {
-                                fprintf(stdout, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
+                                fprintf(stderr, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
+                                break;
                             } else
                                 strcat(cmd, optarg);
                         }
@@ -136,11 +140,11 @@ int main(int ArgCn, char *ArgVc[]) {
             }
             exit(0);
         case 'V':
-            fprintf(stdout, "Igmpproxy %s\n", PACKAGE_VERSION);
+            fprintf(stdout, "%s %s\n", fileName, PACKAGE_VERSION);
             exit(0);
         default:
             fprintf(stdout, Usage, fileName);
-            exit(-1);
+            exit(0);
         }
     }
 
