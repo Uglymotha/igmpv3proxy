@@ -122,7 +122,7 @@ void buildIfVc(void) {
             IfDescL = IfDp;
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
         } else
-            // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.;
+            // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
             IfDp->state |= 0x40;
 
         // Set the interface flags, index and IP.
@@ -155,7 +155,6 @@ void buildIfVc(void) {
                           IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
     }
 
-    // Free the getifadds struct.
     free(IfAddrsP);   // Alloced by getiffaddrs()
 }
 

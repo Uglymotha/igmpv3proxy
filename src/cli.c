@@ -34,7 +34,7 @@
 */
 
 /**
-*   Contains function for cli control of daemon. It's a simple question -> answer implementation.
+*   Contains function for cli control and status of daemon.
 */
 
 #include "igmpv3proxy.h"
@@ -42,7 +42,7 @@
 // Local Prototypes.
 static void signalHandler(int sig);
 
-// Daemon Cli socket address.
+// Daemon CLI socket address.
 static struct sockaddr_un cli_sa;
 
 /**
@@ -133,7 +133,7 @@ void cliCmd(char *cmd) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path, tpath[128];
+    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(RUN_PATHS)] = RUN_PATHS, *path, tpath[128];
 
     sa.sa_handler = signalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */

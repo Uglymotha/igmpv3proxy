@@ -793,7 +793,7 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config: Logleven must be between 1 and 7.");
             else {
-                commonConfig.logLevel = intToken;
+                commonConfig.logLevel = !commonConfig.log2Stderr ? intToken : commonConfig.logLevel;
                 LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
             }
 

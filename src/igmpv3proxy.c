@@ -70,9 +70,9 @@ int main(int ArgCn, char *ArgVc[]) {
     // Initialize configuration, syslog and rng.
     memset(CONFIG, 0, sizeof(struct Config));
     openlog(fileName, LOG_PID, LOG_DAEMON);
-    CONFIG->logLevel = LOG_WARNING;
     srand(time(NULL) * getpid());
     CONFIG->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
+    CONFIG->logLevel = LOG_WARNING;
 
     // Parse the commandline options and setup basic settings..
     for (c = getopt(ArgCn, ArgVc, "cvVdnh"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnh")) {
@@ -127,14 +127,11 @@ int main(int ArgCn, char *ArgVc[]) {
                     cliCmd(cmd);
                     break;
                 }
-                if (h == 'h' || c == 'r')
-                    c = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ift");
-                else if (c == -1 && j == 1) {
+                if (c == -1 && j == 1) {
                     free(opts[1]);
                     optind = i, j = 0;
-                    c = getopt(ArgCn, ArgVc, "cbr::ift");
-                } else
-                    c = h;
+                }
+                c = (h == 'h' || c == 'r') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ift") : h;
                 if (c != -1 && c != '?')
                     fprintf(stdout, "\n");
             }
@@ -227,7 +224,7 @@ static void igmpProxyInit(void) {
 
     // Check for valid location to place socket and PID file.
     unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->group->gr_gid;
-    char   paths[sizeof(CLI_SOCK_PATHS)] = CLI_SOCK_PATHS, *path;
+    char   paths[sizeof(RUN_PATHS)] = RUN_PATHS, *path;
     struct stat st;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) != -1) {
@@ -385,7 +382,7 @@ static void igmpProxyRun(void) {
             timeout = timer_ageQueue();
             // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
             Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &nto : &timeout, NULL);
-            i = 0;
+            i = 1;
         }
 
         // log and ignore failures
@@ -393,9 +390,11 @@ static void igmpProxyRun(void) {
         if (Rt < 0 && errno != EINTR)
             LOG(LOG_WARNING, errno, "ppoll() error");
         else if (Rt > 0) do {
-            // Read IGMP request, and handle it...
+            clock_gettime(CLOCK_REALTIME, &timeout);
+
+            // Handle incoming IGMP request first.
             if (pollFD[0].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV Queued Packet %d.", i+1);
+                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV IGMP Request %d.", i);
                 union  cmsgU  cmsgUn;
                 struct iovec  ioVec[1] = { { recv_buf, CONFIG->pBufsz } };
                 struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsgUn, sizeof(cmsgUn), MSG_DONTWAIT };
@@ -411,10 +410,13 @@ static void igmpProxyRun(void) {
 
             // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV cli Connection %d.", i+1);
+                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV CLI Request %d.", i);
                 acceptCli(pollFD[1].fd);
             }
-        } while (i++ < CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &nto, NULL)) > 0 && !sighandled);
+
+            clock_gettime(CLOCK_REALTIME, &curtime);
+            LOG(LOG_DEBUG, 0, "igmpProxyRun: Fnished request %d in %dus.", i, timeDiff(timeout, curtime).tv_nsec / 1000);
+        } while (i++ <= CONFIG->reqQsz && (Rt = ppoll(pollFD, 2, &nto, NULL)) > 0 && !sighandled);
     }
 }
 

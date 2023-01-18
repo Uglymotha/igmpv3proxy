@@ -118,6 +118,16 @@ struct qlst {
     struct src        *src[];                     // Array of pointers to sources
 };
 
+#define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
+                                        for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
+#define IS_EX(x, y)       BIT_TST(x->mode, y->index)
+#define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
+#define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
+#define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
+#define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
+#define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
+#define NO_HASH(x)        (IfDp->conf->quickLeave && noHash(x))
+
 static char              msg[TMNAMESZ] = "";      // Timer name buffer
 
 // Prototypes

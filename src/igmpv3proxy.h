@@ -103,6 +103,7 @@ union cmsgU {
 #define MAX_GROUPNAME_SIZE     32
 
 // Keeps common configuration settings.
+#define RUN_PATHS     "/run /var/run /tmp /var/tmp"
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
     uint8_t             cnt;
@@ -283,8 +284,7 @@ struct IfDesc {
 #define SHUTDOWN   (sigstatus == 32)
 
 // CLI Defines.
-#define CLI_CMD_BUF    256
-#define CLI_SOCK_PATHS "/run /var/run /tmp /var/tmp"
+#define CLI_CMD_BUF 256
 
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
@@ -364,7 +364,7 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 /**
 *   config.c
 */
-#define CONFIG getConfig()
+#define        CONFIG getConfig()
 struct Config *getConfig(void);
 void           freeConfig(int old);
 void           reloadConfig(uint64_t *tid);
@@ -382,11 +382,11 @@ void cliCmd(char *cmd);
 /**
 *   ifvc.c
 */
-#define IFL(x)               x = getIfL(); x; x = x->next
-#define GETIFL(x)            for (IFL(x))
-#define IFGETIFL(y, x)       if (y) GETIFL(x)
-#define GETIFLIF(x, y)       GETIFL(x) if (y)
-#define IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
+#define        IFL(x)               x = getIfL(); x; x = x->next
+#define        GETIFL(x)            for (IFL(x))
+#define        IFGETIFL(y, x)       if (y) GETIFL(x)
+#define        GETIFLIF(x, y)       GETIFL(x) if (y)
+#define        IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
@@ -405,7 +405,7 @@ void  sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
-#define LOG(x, ...) x <= CONFIG->logLevel ? myLog(x, __VA_ARGS__) : (void)0
+#define         LOG(x, ...) x <= CONFIG->logLevel ? myLog(x, __VA_ARGS__) : (void)0
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
@@ -431,34 +431,24 @@ void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
 *   kern.c
 */
 #define MROUTERFD k_getMrouterFD()
-void k_set_rcvbuf(int bufsize);
-void k_set_ttl(uint8_t ttl);
-void k_set_loop(bool l);
-void k_set_if(struct IfDesc *IfDp);
-bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t src);
-int  k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
-int  k_getMrouterFD(void);
-int  k_enableMRouter(void);
-void k_disableMRouter(void);
-bool k_addVIF(struct IfDesc *IfDp);
-void k_delVIF(struct IfDesc *IfDp);
-void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
-void k_delMRoute(uint32_t src, uint32_t group, int vif);
-void k_deleteUpcalls(uint32_t src, uint32_t group);
+void    k_set_rcvbuf(int bufsize);
+void    k_set_ttl(uint8_t ttl);
+void    k_set_loop(bool l);
+void    k_set_if(struct IfDesc *IfDp);
+bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t src);
+int     k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
+int     k_getMrouterFD(void);
+int     k_enableMRouter(void);
+void    k_disableMRouter(void);
+bool    k_addVIF(struct IfDesc *IfDp);
+void    k_delVIF(struct IfDesc *IfDp);
+void    k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
+void    k_delMRoute(uint32_t src, uint32_t group, int vif);
+void    k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
 *   mctable.c
 */
-#define IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
-#define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
-                                        for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
-#define IS_EX(x, y)       BIT_TST(x->mode, y->index)
-#define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
-#define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
-#define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
-#define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
-#define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
-#define NO_HASH(x)        (IfDp->conf->quickLeave && noHash(x))
 void     bwControl(uint64_t *tid);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
@@ -472,6 +462,7 @@ void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 /**
 *   querier.c
 */
+#define  IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
 void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver);
 void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
@@ -479,8 +470,8 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 /**
 *   timers.c
 */
-#define TMNAMESZ 48
-#define DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
+#define         TMNAMESZ 48
+#define         DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
 void           *timer_clearTimer(uint64_t timer_id);
