@@ -63,7 +63,7 @@ static char          *recv_buf;
 int main(int ArgCn, char *ArgVc[]) {
     int          c = 0, i = 0, j = 0;
     char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "",
-                 paths[sizeof(CFG_PATHS) + 1] = CFG_PATHS, *path = NULL, *file;
+                 paths[sizeof(CFG_PATHS) + 1] = CFG_PATHS, *path = NULL;
     struct stat  st;
     fileName = basename(ArgVc[0]);
 
@@ -148,19 +148,21 @@ int main(int ArgCn, char *ArgVc[]) {
     // Going to run as daemon. Find configuration.
     if (geteuid() != 0) {
         // Check that we are root.
-        fprintf(stderr, "%s: Must be root.\n", fileName);
+        fprintf(stderr, "%s: Must be started as root.\n", fileName);
         exit(-1);
     } else if (! (CONFIG->configFilePath = calloc(1, sizeof(CFG_PATHS) + strlen(ArgVc[optind - !(optind == ArgCn - 1)])))) {
         // Freed by igmpProxyInit or igmpProxyCleanup().
+        fprintf(stderr, "%s. Out of Memory.\n", fileName);
+        exit(-1);
+    } else if (optind == ArgCn - 1 && !(stat(ArgVc[optind], &st) == 0 && (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)))) {
+        // Config file path specified as last argument. Check if it's ok.
+        fprintf(stderr, "%s. Config file path '%s' not found. %s\n", fileName, ArgVc[optind], strerror(errno));
         exit(-1);
     } else if (optind == ArgCn - 1) {
-        // Config file specified as last argument.
-       strcpy(CONFIG->configFilePath, ArgVc[optind]);
+        strcpy(CONFIG->configFilePath, ArgVc[optind]);
     } else {
-        // Search for config in default locations.
-        for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
-            struct stat st;
-            strcpy(CONFIG->configFilePath, path);
+        for (path = strtok(paths, " "); path && strcpy(CONFIG->configFilePath, path); path = strtok(NULL, " ")) {
+            // Search for config in default locations.
             if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
                 break;
             path[strlen(CONFIG->configFilePath) - 5] = '/';
@@ -168,10 +170,11 @@ int main(int ArgCn, char *ArgVc[]) {
             if (stat(strcat(strcat(CONFIG->configFilePath, fileName), ".conf"), &st) == 0)
                 break;
         }
-        CONFIG->configFilePath = NULL;
+        if (! path) {
+            fprintf(stderr, "%s. Config file path not found in %s.\n", fileName, CFG_PATHS);
+            exit(-1);
+        }
     }
-    if (! CONFIG->configFilePath || stat(CONFIG->configFilePath, &st) != 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
-        LOG(LOG_ERR, 0, "No config file specified nor found in '%s'.", CFG_PATHS);
 
     do {
         sighandled = sigstatus = 0;
@@ -219,11 +222,11 @@ static void igmpProxyInit(void) {
     LOG(LOG_WARNING, 0, "Loaded configuration from '%s'. Starting IGMPv3 Proxy.", CONFIG->configFilePath);
 
     // If no socket group was configured set it to configured users's group or root.
-    if (! CONFIG->group && ! (CONFIG->group = getgrgid(CONFIG->user ? CONFIG->user->pw_gid : 0)))
+    if (!CONFIG->group && !(CONFIG->group = getgrgid(CONFIG->user ? CONFIG->user->pw_gid : 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", CONFIG->user ? CONFIG->user->pw_gid : 0);
+    unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->group->gr_gid;
 
     // Check for valid location to place socket and PID file.
-    unsigned int uid = CONFIG->user ? CONFIG->user->pw_uid : 0, gid = CONFIG->group->gr_gid;
     char   paths[sizeof(RUN_PATHS)] = RUN_PATHS, *path;
     struct stat st;
     for (path = strtok(paths, " "); path; path = strtok(NULL, " ")) {
@@ -243,12 +246,6 @@ static void igmpProxyInit(void) {
         char *p = CONFIG->configFilePath, *b = basename(CONFIG->configFilePath);
         LOG(LOG_WARNING, 0, "Switching root to %s.", CONFIG->chroot);
 
-        // Link the root to the run directory and set runpath to /..
-        remove(strcat(CONFIG->runPath, "root"));
-        if (symlink(CONFIG->chroot, CONFIG->runPath) != 0)
-            LOG(LOG_ERR, errno, "Failed to link chroot directory %s to run directory %s.", CONFIG->chroot, CONFIG->runPath);
-        strcpy(CONFIG->runPath, "/");
-
         // Truncate config file path to /.
         if (! (CONFIG->configFilePath = malloc(strlen(b) + 1)))
             LOG(LOG_ERR, 0, "Out of Memory");
@@ -263,6 +260,12 @@ static void igmpProxyInit(void) {
             strcpy(CONFIG->logFilePath, b);
             free(p);    // Alloced by loadConfig()
         }
+
+        // Link the root to the run directory and set runpath to /..
+        remove(strcat(CONFIG->runPath, "root"));
+        if (symlink(CONFIG->chroot, CONFIG->runPath) != 0)
+            LOG(LOG_ERR, errno, "Failed to link chroot directory %s to run directory %s.", CONFIG->chroot, CONFIG->runPath);
+        strcpy(CONFIG->runPath, "/");
 
         // Swith root directory.
         if (!(stat(CONFIG->chroot, &st) == 0 && chmod(CONFIG->chroot, 0770) == 0 && chroot(CONFIG->chroot) == 0 && chdir("/") == 0))
@@ -284,7 +287,7 @@ static void igmpProxyInit(void) {
 
     // Make sure logfile and chroot directoryis owned by configured user and switch ids.
     if (CONFIG->user) {
-        LOG(LOG_WARNING, 0, "Switching user to %s.", CONFIG->user->pw_name);
+        LOG(CONFIG->logLevel, 0, "Switching user to %s.", CONFIG->user->pw_name);
         if (CONFIG->chroot && chown("/", uid, gid) != 0)
             LOG(LOG_WARNING, errno, "Failed to chown chroot diretory to %s.", CONFIG->user->pw_name);
 
