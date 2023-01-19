@@ -46,7 +46,7 @@ static struct timeOutQueue {
     void                 *data;    // Argument for function.
     struct timespec       time;    // Time for event
     struct timeOutQueue  *next;    // Next event in queue
-    char                  name[];  // name of the timer
+    char                 *name;    // name of the timer
 }     *queue = NULL;
 static uint64_t id = 1;
 
@@ -59,12 +59,10 @@ struct timespec timer_ageQueue() {
     uint64_t                i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (; i <= CONFIG->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; free(node), node = queue, i++) {
+    for (;i <= CONFIG->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1
+         ;queue = node->next, node->func(node->data, node->id), free(node), node = queue, i++)  // Alloced by timer_setTimer()
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
                           timeDiff(node->time, curtime).tv_nsec / 1000);
-        queue = node->next;
-        node->func(node->data, node->id);
-    }
     if (i > 1)
         DEBUGQUEUE("Age Queue", 1, -1);
 
@@ -80,10 +78,10 @@ uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data)
     uint64_t                i = 1,        n = strlen(name) + 1;
 
     // Create and set a new timer.
-    if (! (node = malloc(sizeof(struct timeOutQueue) + n)))  // Freed by timer_ageQueue() or timer_clearTimer()
+    if (! (node = malloc(sizeof(struct timeOutQueue) + sizeof(void *) + n)))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, errno, "timer_setTimer: Out of memory.");
-    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL };
-    memcpy(&node->name, name, n);
+    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, n) };
+LOG(LOG_DEBUG,0,"BLA %p %p %s", &node->name, &node->name + 1, node->name);
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
         node->next = queue;
