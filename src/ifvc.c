@@ -53,7 +53,7 @@ static void freeIfDescL() {
             if (!SHUTDOWN)
                 LOG(LOG_WARNING, 0, "Interface %s was removed.", (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
             fIfDp = (IfDp->state & 0x80) ? IfDescL : IfDp->next;
-            if (IfDp->state & 0x80L)
+            if (IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;
             else
                 IfDp->next = IfDp->next->next;
