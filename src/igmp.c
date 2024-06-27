@@ -221,6 +221,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         }
 
         case IGMP_MEMBERSHIP_QUERY:
+            IfDp->rqCnt++;
             if (IfDp->conf->qry.election && checkIgmp(IfDp, src, htonl(0xE0FFFFFF), IF_STATE_UPDOWNSTREAM))
                 acceptMemberQuery(IfDp, src, dst, igmpv3, ipdatalen);
             return;
@@ -251,6 +252,7 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
                             IfDp->Name, IfDp->querier.ver);
         return;
     }
+    IfDp->sqCnt++;
 
     memset(igmpv3, 0, sizeof(struct igmpv3_query));
     memset(&sdst, 0, sizeof(struct sockaddr_in));

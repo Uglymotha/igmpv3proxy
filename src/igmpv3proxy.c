@@ -89,49 +89,42 @@ int main(int ArgCn, char *ArgVc[]) {
             CONFIG->notAsDaemon = true;
             break;
         case 'c':
-            c = getopt(ArgCn, ArgVc, "cbr::ifth");
+            c = getopt(ArgCn, ArgVc, "cbr::i::fth");
             while (c != -1 && c != '?') {
                 uint32_t addr, mask, h = 0;
                 memset(cmd, 0, sizeof(cmd));
-                switch (c) {
-                case 'b':
-                case 'c':
-                case 'f':
-                case 'i':
-                case 't':
-                case 'r':
-                    cmd[0] = c;
-                    if (c != 'r' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ifth")) == 'h')
-                        strcat(cmd, "h");
-                    else if (h == '?')
-                        break;
-                    else if (c == 'r' && optarg) {
-                        if (optarg[0] == 'h') {
-                            strcat(cmd, "h");
-                            optarg++;
-                            h = 'h';
-                        }
-                        if (strlen(optarg) > 0) {
-                            if (!parseSubnetAddress(optarg, &addr, &mask)) {
-                                i = optind, j = optind = 1;
-                                if (! (opts[1] = malloc(strlen(optarg) + 1)))
-                                    exit(-1);
-                                sprintf(opts[1], "-%s", optarg);
-                            } else if (!IN_MULTICAST(ntohl(addr))) {
-                                fprintf(stderr, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
-                                break;
-                            } else
-                                strcat(cmd, optarg);
-                        }
-                    }
-                    cliCmd(cmd);
+                cmd[0] = c;
+                if (c != 'r' && c != 'i' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::fth")) == 'h')
+                    strcat(cmd, "h");
+                else if (h == '?')
                     break;
+                else if ((c == 'r' || c == 'i') && optarg) {
+                    if (optarg[0] == 'h') {
+                        strcat(cmd, "h");
+                        optarg++;
+                        h = 'h';
+                    }
+                    if (strlen(optarg) > 0) {
+                        if (c == 'r' && !parseSubnetAddress(optarg, &addr, &mask)) {
+                            i = optind, j = optind = 1;
+                            if (! (opts[1] = malloc(strlen(optarg) + 1))) {
+                                fprintf(stderr, "Out of Memery!");
+                                exit(-1);
+                            }
+                            sprintf(opts[1], "-%s", optarg);
+                        } else if (c == 'r' && !IN_MULTICAST(ntohl(addr))) {
+                            fprintf(stderr, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
+                        } else
+                            strcat(strcat(cmd, " "), optarg);
+                    }
                 }
+                cliCmd(cmd);
+                c = (h == 'h' || c == 'r' || c == 'i') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::ft") : h;
                 if (c == -1 && j == 1) {
                     free(opts[1]);
                     optind = i, j = 0;
+                    c = getopt(ArgCn, ArgVc, "cbr::i::ft");
                 }
-                c = (h == 'h' || c == 'r') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::ift") : h;
                 if (c != -1 && c != '?')
                     fprintf(stdout, "\n");
             }

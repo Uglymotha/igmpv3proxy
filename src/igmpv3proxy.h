@@ -230,13 +230,15 @@ struct IfDesc {
     struct querier                querier;               // igmp querier for interface
     uint64_t                      bytes;                 // Total bytes sent/received on interface
     uint64_t                      rate;                  // Rate in bytes / s
+    uint64_t                      rqCnt;                 // IGMP Received Query Count
+    uint64_t                      sqCnt;                 // IGMP Sent Query Count
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -391,7 +393,7 @@ void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
-void           getIfStats(int h, int fd);
+void           getIfStats(struct IfDesc *IfDp, int h, int fd);
 void           getIfFilters(int h, int fd);
 
 /**

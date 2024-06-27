@@ -90,8 +90,9 @@ void closeCliFd(int fd) {
 void acceptCli(int fd) {
     int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
-    char                buf[CLI_CMD_BUF] = {0};
+    char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
+    struct IfDesc      *IfDp = NULL;
 
     // Receive and answer the cli request.
     cli_fd = accept(fd, &cli_sa, (socklen_t *)&s);
@@ -99,16 +100,19 @@ void acceptCli(int fd) {
 
     if ( len <= 0 || len > CLI_CMD_BUF ||
         (buf[0] == 'r' && len > 2 &&
-         (!parseSubnetAddress(&buf[buf[1] == 'h' ? 2 : 1], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
+         (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
         LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
     } else if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd, addr, mask);
+    } else if (buf[0] == 'i' && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
+        sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
+        send(cli_fd, msg, strlen(msg), MSG_DONTWAIT);
     } else if (buf[0] == 'i') {
-        getIfStats(buf[1] == 'h' ?  0 : 1, cli_fd);
+        getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, cli_fd);
     } else if (buf[0] == 'f') {
-        getIfFilters(buf[1] == 'h' ? 0 : 1, cli_fd);
+        getIfFilters(len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 't') {
-        debugQueue("", buf[1] == 'h' ? 0 : 1, cli_fd);
+        debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 'c') {
         sighandled |= GOT_SIGUSR1;
         send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT);

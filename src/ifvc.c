@@ -179,8 +179,7 @@ inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
 /**
 *   Outputs interface statistics to socket specified in arguments.
 */
-void getIfStats(int h, int fd) {
-    struct IfDesc *IfDp;
+void getIfStats(struct IfDesc *IfDp, int h, int fd) {
     char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "";
     int            i = 1;
     struct totals {
@@ -189,12 +188,20 @@ void getIfStats(int h, int fd) {
         uint64_t   ratelimit;
     }              total = { 0, 0, 0 };
 
-    if (h) {
+    if (! IfDp && h) {
         sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
-    for (IFL(IfDp), i++) {
+    if (IfDp) {
+        if (h)
+            sprintf(buf, "Details for Interface: %s\n    IGMP Queries Received: %lu\n    IGMP Queries Sent:     %lu\n",
+                          IfDp->Name, IfDp->rqCnt, IfDp->sqCnt);
+        else
+            sprintf(buf, "%lu,%lu\n", IfDp->rqCnt, IfDp->sqCnt);
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
+        return;
+    } else for (IFL(IfDp), i++) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
@@ -204,7 +211,6 @@ void getIfStats(int h, int fd) {
         sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled", inetFmt(IfDp->querier.ip, 2), IfDp->bytes, IfDp->rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
-
     if (h) {
         strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B | %10lld B/s | %10lld B/s\n");
         sprintf(buf, msg, total.bytes, total.rate, total.ratelimit);
