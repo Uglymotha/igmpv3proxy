@@ -117,9 +117,15 @@ struct qlst {
     uint32_t           nsrcs;                     // Nr of sources in query
     struct src        *src[];                     // Array of pointers to sources
 };
-
-#define GETMRT(x) uint16_t iz; if (MCT) for (iz = 0; iz < CONFIG->mcTables; iz++) \
-                                        for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
+#define MCTSZ            (CONF->mcTables * sizeof(void *))
+#define MCESZ            (sizeof(struct mcTable) + CONF->dHostsHTSize)
+#define OMCESZ           (sizeof(struct mcTable) + OLDCONF->dHostsHTSize)
+#define SRCSZ            (sizeof(struct src) + CONF->dHostsHTSize)
+#define OSRCSZ           (sizeof(struct src) + OLDCONF->dHostsHTSize)
+#define IFMSZ            (sizeof(struct ifMct))
+#define MFCSZ            (sizeof(struct mfc))
+#define QLSZ             (sizeof(struct qlst))
+#define QRYSZ(n)         (QLSZ + (((n >> 5) + 1) * 32 * sizeof(void *)))
 #define IS_EX(x, y)       BIT_TST(x->mode, y->index)
 #define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
 #define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
@@ -127,7 +133,11 @@ struct qlst {
 #define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
 #define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
 #define NO_HASH(x)        (IfDp->conf->quickLeave && noHash(x))
+#define GETMRT(x)         if (MCT)                                                   \
+                              for (uint16_t iz = 0; iz < CONF->mcTables; iz++)       \
+                                   for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
 
+// Static variables.
 static char              msg[TMNAMESZ] = "";      // Timer name buffer
 
 // Prototypes

@@ -56,13 +56,13 @@ static struct mcTable **MCT = NULL;
 *   Private access function to find a given group in MCT, creates new if required.
 */
 struct mcTable *findGroup(register uint32_t group, bool create) {
-    struct mcTable *mct, *Nmct;
-    uint32_t        mctHash = murmurhash3(group) % CONFIG->mcTables;
+    struct mcTable *mct, *nmct;
+    uint32_t        mctHash = murmurhash3(group) % CONF->mcTables;
 
     // Initialize the routing tables if necessary.
     if (! MCT && !create)
         return NULL;
-    if (! MCT && ! (MCT = calloc(CONFIG->mcTables, sizeof(void *))))   // Freed by delGroup())
+    if (! MCT && ! _calloc(MCT, 1, mct, MCTSZ))   // Freed by delGroup())
         LOG(LOG_ERR, errno, "findGroup: Out of memory.");
     else for (mct = MCT[mctHash];; mct = mct->next) {
         // Find the group (or place for new) in the table.
@@ -78,25 +78,25 @@ struct mcTable *findGroup(register uint32_t group, bool create) {
 
     // Create and initialize the new MCT entry. Freed by delGroup()
     LOG(LOG_INFO, 0, "findGroup: Create new group %s in table %d.", inetFmt(group, 1), mctHash);
-    if (! (Nmct = calloc(1, sizeof(struct mcTable) + CONFIG->dHostsHTSize)))
+    if (! _calloc(nmct, 1, mct, MCESZ))   // Freed by delGroup()
         LOG(LOG_ERR, errno, "findGroup: Out of memory.");
-    Nmct->group = group;
-    clock_gettime(CLOCK_REALTIME, &(Nmct->stamp));
+    nmct->group = group;
+    clock_gettime(CLOCK_REALTIME, &(nmct->stamp));
     if (! MCT[mctHash] || MCT[mctHash]->group > group) {
-        MCT[mctHash] = Nmct;
+        MCT[mctHash] = nmct;
         if (mct) {
-            mct->prev = Nmct;
-            Nmct->next = mct;
+            mct->prev = nmct;
+            nmct->next = mct;
         }
     } else {
-        Nmct->prev = mct;
-        Nmct->next = mct->next;
-        if (Nmct->next)
-            Nmct->next->prev = Nmct;
-        mct->next = Nmct;
+        nmct->prev = mct;
+        nmct->next = mct->next;
+        if (nmct->next)
+            nmct->next->prev = nmct;
+        mct->next = nmct;
     }
 
-    return Nmct;
+    return nmct;
 }
 
 /**
@@ -109,7 +109,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
     uint32_t       group = mct->group;
 
     if (dir ? NOT_SET(mct, d, IfDp) : NOT_SET(mct, u, IfDp)) {
-        if (! (imc = malloc(sizeof(struct ifMct))))   // Freed by delGroup or freeIfDescL()
+        if (! _malloc(imc, ifm, IFMSZ))   // Freed by delGroup()
             LOG(LOG_ERR, errno, "addGroup: Out of Memory.");
         *imc = (struct ifMct){ NULL, mct, *list };
         if (*list)
@@ -137,7 +137,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
     } else {
         // Set upstream status and join group if it is in exclude mode upstream.
         BIT_SET(mct->vifB.u, IfDp->index);
-        if (mct->mode && CONFIG->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
+        if (mct->mode && CONF->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
                                 IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
         else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1)) {
@@ -170,7 +170,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
         imc->prev->next = imc->next;
     else
         *list = imc->next;
-    free(imc);  // Alloced by addGroup()
+    _free(imc, ifm, IFMSZ);  // Alloced by addGroup()
 
     if (!dir) {
         // Leave group upstream and clear upstream status.
@@ -207,7 +207,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
                  BIT_CLR(src->vifB.dd, IfDp->index), BIT_CLR(src->vifB.sd, IfDp->index), src = delSrc(src, IfDp, 0, (uint32_t)-1));
         } else {
             // Group can be removed from table.
-            uint32_t mctHash = murmurhash3(mct->group) % CONFIG->mcTables;
+            uint32_t mctHash = murmurhash3(mct->group) % CONF->mcTables;
 
             LOG(LOG_DEBUG, 0, "delGroup: Deleting group %s from table %d.",inetFmt(mct->group, 1), mctHash);
             // Send Leave requests upstream.
@@ -221,16 +221,16 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
                 mct->prev->next = mct->next;
             else if (! (MCT[mctHash] = mct->next)) {
                 uint16_t iz;
-                for (iz = 0; MCT && iz < CONFIG->mcTables && ! MCT[iz]; iz++);
-                if (iz == CONFIG->mcTables) {
-                    free(MCT);  // Alloced by findGroup()
+                for (iz = 0; MCT && iz < CONF->mcTables && ! MCT[iz]; iz++);
+                if (iz == CONF->mcTables) {
+                    _free(MCT, mct, MCTSZ);  // Alloced by findGroup()
                     MCT = NULL;
                 }
             }
 
             // Remove all sources from group.
             for (struct src *src = mct->sources; src; src = delSrc(src, NULL, 0, (uint32_t)-1));
-            free(mct);  // Alloced by findGroup()
+            _free(mct, mct, MCESZ); // Alloced by findGroup()
         }
     }
 
@@ -252,16 +252,16 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint3
     if (! src || src->ip != ip) {
         // New source should be created, increase nrsrcs.
         struct src *nsrc;
-        if (++mct->nsrcs > CONFIG->maxOrigins && CONFIG->maxOrigins) {
+        if (++mct->nsrcs > CONF->maxOrigins && CONF->maxOrigins) {
             // Check if maxorigins is exceeded.
             if (!(mct->nsrcs & 0x80000000)) {
                 mct->nsrcs |= 0x80000000;
-                LOG(LOG_WARNING, 0, "Max origins (%d) exceeded for %s.", CONFIG->maxOrigins, inetFmt(mct->group, 1));
+                LOG(LOG_WARNING, 0, "Max origins (%d) exceeded for %s.", CONF->maxOrigins, inetFmt(mct->group, 1));
             }
             return NULL;
         }
         LOG(LOG_DEBUG, 0, "addSrc: New source %s (%d) for group %s.", inetFmt(ip, 1), mct->nsrcs, inetFmt(mct->group, 2));
-        if (! (nsrc = calloc(1, sizeof(struct src) + CONFIG->dHostsHTSize)))
+        if (! _calloc(nsrc, 1, src, SRCSZ))
             LOG(LOG_ERR, errno, "addSrc: Out of memory.");   // Freed by delSrc()
         nsrc->ip = ip;
         nsrc->mct = mct;
@@ -343,7 +343,7 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
             if ((mode == 0 || mode == 3) && ! src->mfc) {
                 // Remove the source if there are no senders and it was not requested by include mode host.
                 mct->nsrcs--;
-                if (CONFIG->maxOrigins && (mct->nsrcs & 0x80000000) && (mct->nsrcs & ~0x80000000) < CONFIG->maxOrigins) {
+                if (CONF->maxOrigins && (mct->nsrcs & 0x80000000) && (mct->nsrcs & ~0x80000000) < CONF->maxOrigins) {
                     // Reset maxorigins exceeded flag.
                     LOG(LOG_INFO, 0, "delSrc: Maxorigins reset for group %s.", inetFmt(src->mct->group, 1));
                     mct->nsrcs &= ~0x80000000;
@@ -356,7 +356,7 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
                     src->prev->next = src->next;
                 else
                     mct->sources = src->next;
-                free(src);  // Alloced by addSrc()
+                _free(src, src, SRCSZ);  // Alloced by addSrc()
              }
         } else if (src->mfc && IS_IN(mct, IfDp))
             // If group is in include mode downstream traffic must no longer be forwarded, update MFC.
@@ -475,7 +475,7 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
 
         if (mfc) {
             mfc->bytes += bwUpc->bu_measured.b_bytes;
-            mfc->rate = bwUpc->bu_measured.b_bytes / CONFIG->bwControlInterval;
+            mfc->rate = bwUpc->bu_measured.b_bytes / CONF->bwControlInterval;
             LOG(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to Src %s Dst %s, total %lldB (%lld B/s)",
                                bwUpc->bu_measured.b_bytes, inetFmt(mfc->src->ip, 1), inetFmt(mct->group, 2), mfc->bytes, mfc->rate);
             GETIFLIF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
@@ -514,7 +514,7 @@ void bwControl(uint64_t *tid) {
             }
             uint64_t bytes = siocReq.bytecnt - mfc->bytes;
             mfc->bytes += bytes;
-            mfc->rate = bytes / CONFIG->bwControlInterval;
+            mfc->rate = bytes / CONF->bwControlInterval;
             LOG(LOG_DEBUG, 0, "BW_CONTROL: Added %lld bytes to Src %s Dst %s (%lld B/s), total %lld.",
                                bytes, inetFmt(mfc->src->ip, 1), inetFmt(mct->group, 2), mfc->rate, mfc->bytes);
 #else
@@ -538,14 +538,14 @@ void bwControl(uint64_t *tid) {
         }
         uint64_t bytes = (IS_UPSTREAM(IfDp->state) ? siocVReq.ibytes : siocVReq.obytes) - IfDp->bytes;
         IfDp->bytes += bytes;
-        IfDp->rate = bytes / CONFIG->bwControlInterval;
+        IfDp->rate = bytes / CONF->bwControlInterval;
         LOG(LOG_DEBUG, 0, "BW_CONTROL: Added %lld bytes to interface %s (%lld B/s), total %lld.",
                            bytes, IfDp->Name, IfDp->rate, IfDp->bytes);
     }
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(CONFIG->bwControlInterval * 10, "Bandwidth Control", bwControl, tid);
+    *tid = timer_setTimer(CONF->bwControlInterval * 10, "Bandwidth Control", bwControl, tid);
 }
 
 /**
@@ -656,25 +656,25 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
 void clearGroups(void *Dp) {
     struct ifMct      *imc;
     struct mcTable    *mct;
-    struct IfDesc     *IfDp     = Dp != CONFIG && Dp != getConfig ? Dp : NULL;
+    struct IfDesc     *IfDp     = Dp != CONF && Dp != getConfig ? Dp : NULL;
     register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
-    if (Dp == CONFIG || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
+    if (Dp == CONF || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
         GETMRT(mct) {
-            if (Dp == CONFIG) {
+            if (Dp == CONF) {
                 struct src **src;
                 // Quickleave was enabled or disabled, or hastable size was changed.
                 // Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
                 for (src = &(mct->sources); *src; src = &(*src)->next) {
-                    if (! (*src = realloc(*src, sizeof(struct src) + CONFIG->dHostsHTSize)))
+                    if (! _realloc(*src, src, SRCSZ, OSRCSZ))
                         LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                    if (CONFIG->quickLeave)
-                        memset((*src)->dHostsHT, 0, CONFIG->dHostsHTSize);
+                    if (CONF->quickLeave)
+                        memset((*src)->dHostsHT, 0, CONF->dHostsHTSize);
                 }
-                if (! (mct = realloc(mct, sizeof(struct mcTable) + CONFIG->dHostsHTSize)))
+                if (! _realloc(mct, mct, MCESZ, OMCESZ))
                     LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                if (CONFIG->quickLeave)
-                    memset(mct->dHostsHT, 0, CONFIG->dHostsHTSize);
+                if (CONF->quickLeave)
+                    memset(mct->dHostsHT, 0, CONF->dHostsHTSize);
                 if (! mct->prev)
                     MCT[iz] = mct;
                 else
@@ -693,7 +693,7 @@ void clearGroups(void *Dp) {
                 // New upstream interface join all relevant groups and sources.
                 for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
         }
-        if (Dp == CONFIG || Dp == getConfig)
+        if (Dp == CONF || Dp == getConfig)
             return;
     }
 
@@ -764,7 +764,7 @@ void clearGroups(void *Dp) {
 void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     uint32_t  i = 0, type    = grecType(grec), nsrcs = sortArr((uint32_t *)grec->grec_src, grecNscrs(grec));
     uint32_t         group   = grec->grec_mca.s_addr,
-                     srcHash  = IfDp->conf->quickLeave ? murmurhash3(ip) % CONFIG->dHostsHTSize : (uint32_t)-1;
+                     srcHash  = IfDp->conf->quickLeave ? murmurhash3(ip) % CONF->dHostsHTSize : (uint32_t)-1;
     struct src      *src     = NULL, *tsrc  = NULL;
     struct qlst     *qlst    = NULL;
     struct mcTable  *mct;
@@ -965,7 +965,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
             src->mfc->prev->next = src->mfc->next;
         if (mct->mfc == src->mfc)
             mct->mfc = src->mfc->next;
-        free(src->mfc);   // Alloced by Self
+        _free(src->mfc, mfc, MFCSZ);  // Alloced by Self
         src->mfc = NULL;
         return;
     } else if (! src) {
@@ -1000,7 +1000,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
 
     // Create and initialize an upstream source for new sender.
     if (! src->mfc) {
-        if (! (src->mfc = malloc(sizeof(struct mfc))))
+        if (! _malloc(src->mfc, mfc, MFCSZ))
             LOG(LOG_ERR, errno, "activateRoute: Out of Memory!");  // Freed by Self.
         *src->mfc = (struct mfc){ NULL, NULL, {0, 0}, src, IfDp, 0, 0 };
         clock_gettime(CLOCK_REALTIME, &src->mfc->stamp);
@@ -1116,9 +1116,9 @@ void logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t ma
                 strcpy(msg, "%d %s %s %s %08x %s %ld %ld");
             }
             if (fd < 0) {
-                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONFIG->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                LOG(LOG_DEBUG, 0, msg, rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONF->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
             } else {
-                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONFIG->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
+                sprintf(buf, strcat(msg, "\n"), rcount, mfc ? inetFmt(mfc->src->ip, 1) : "-", inetFmt(mct->group, 2), mfc ? IfDp->Name : "", mct->vifB.d, !CONF->dHostsHTSize ? "not tracked" : noHash(mct->dHostsHT) ? "no" : "yes", mfc ? mfc->bytes : 0, mfc ? mfc->rate : 0);
                 send(fd, buf, strlen(buf), MSG_DONTWAIT);
             }
             mfc = mfc ? mfc->next : NULL;
@@ -1127,7 +1127,17 @@ void logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t ma
     }
 
     if (fd < 0) {
-        LOG(LOG_DEBUG, 0, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s", totalb, totalr);
+        LOG(LOG_DEBUG, 0, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s",
+                           totalb, totalr);
+        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.",
+                           memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry,
+                           memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry);
+        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
+                           memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry,
+                           memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry);
+        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
+                           memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
+                           memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
     } else if (h) {
         strcpy(msg, "Total|---------------|---------------|----------------|------------|-------------| %14lld B | %10lld B/s\n");
         sprintf(buf, msg, totalb, totalr);

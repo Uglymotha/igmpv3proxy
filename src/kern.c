@@ -65,6 +65,7 @@ void k_set_rcvbuf(int bufsize) {
             }
         }
     }
+    memuse.rcv += bufsize;
 
     LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, i);
 }
@@ -188,9 +189,9 @@ int k_enableMRouter(void) {
         LOG(LOG_ERR, errno, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
-               || ! (Va & MRT_MFC_BW_UPCALL)) {
+          || ! (Va & MRT_MFC_BW_UPCALL)) {
         LOG(LOG_WARNING, errno, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
-        CONFIG->bwControlInterval = 0;
+        CONF->bwControlInterval = 0;
     }
 #endif
     fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
@@ -284,8 +285,8 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    if (CONFIG->bwControlInterval) {
-        struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ, { {CONFIG->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
+    if (CONF->bwControlInterval) {
+        struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ, { {CONF->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
         if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
             LOG(LOG_WARNING, errno, "MRT_ADD_BW_UPCALL %d - %s", vif, inetFmt(group, 1));
     }

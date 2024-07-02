@@ -38,9 +38,10 @@
 */
 
 #include "igmpv3proxy.h"
+#include <sys/resource.h>
 
 char Usage[] =
-"Usage: %s [-h | -V] [-c [-cbrift...] [-h]] [[-n | -v | -d] <configfile>]\n"
+"Usage: %s [-h | -V] [-c [-cbriftm...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
 "   -V   Display version.\n"
@@ -55,6 +56,7 @@ char Usage[] =
 "        -i   Display interface statistics.\n"
 "        -f   Display configured filters.\n"
 "        -t   Display running timers.\n"
+"        -m   Display Memory Statistics.\n"
 "        -h   Do not display headers.\n"
 "\n"
 PACKAGE_STRING "\n";
@@ -176,7 +178,7 @@ inline uint16_t inetChksum(register uint16_t *addr, register int len) {
 *   MurmurHash3 32bit hash function by Austin Appleby, public domain
 */
 inline uint32_t murmurhash3(register uint32_t x) {
-    x ^= CONFIG->hashSeed;
+    x ^= CONF->hashSeed;
     x = (x ^ (x >> 16)) * 0x85ebca6b;
     x = (x ^ (x >> 13)) * 0xc2b2ae35;
     return x ^ (x >> 16);
@@ -201,7 +203,7 @@ inline bool testHash(register uint64_t *table, register uint32_t hash) {
 
 // Tests if hash table is empty.
 inline bool noHash(register uint64_t *table) {
-    register uint64_t i, n = CONFIG->dHostsHTSize / 8;
+    register uint64_t i, n = CONF->dHostsHTSize / 8;
     for (i = 0; i < n && table[i] == 0; i++);
     return i >= n;
 }
@@ -297,7 +299,7 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     clock_gettime(CLOCK_REALTIME, &curtime);
     long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
     char      LogMsg[256];
-    FILE     *lfp = CONFIG->logFilePath ? fopen(CONFIG->logFilePath, "a") : stderr;
+    FILE     *lfp = CONF->logFilePath ? fopen(CONF->logFilePath, "a") : stderr;
     va_list   ArgPt;
     unsigned  Ln;
 
@@ -307,7 +309,7 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
     va_end(ArgPt);
 
-    if (CONFIG->logFilePath || CONFIG->log2Stderr)
+    if (CONF->logFilePath || CONF->log2Stderr)
         fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                                                      sec % 3600 % 60, nsec / 100000, LogMsg);
     else
@@ -318,4 +320,75 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     if (Severity <= LOG_ERR)
         exit(-1);
     logwarning |= (Severity == LOG_WARNING);
+}
+
+bool getMemStats(int h, int fd) {
+    char buf[1280], msg[1024];
+    struct rusage usage;
+
+    if (fd >= 0) {
+        if (h) {
+            strcpy(msg, "Current Memory Statistics:\n");
+            strcat(msg, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.\n");
+            strcat(msg, "Timer  Stats: %lldb in use, %lld allocs, %lld frees.\n");
+            strcat(msg, "Config Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n");
+            strcat(msg, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.\n");
+            strcat(msg, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.\n");
+            strcat(msg, "Routes Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.\n");
+            strcat(msg, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
+            strcat(msg, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
+        } else
+            strcpy(msg, "%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld");
+        sprintf(buf, msg, memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
+                          memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd, memuse.tmr, memalloc.tmr, memfree.tmr,
+                          memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil,
+                          memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil,
+                          memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil,
+                          memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry,
+                          memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry,
+                          memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry,
+                          memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry,
+                          memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
+                          memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
+    }
+
+    LOG(LOG_DEBUG, 0, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
+        memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
+        memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd);
+    LOG(LOG_DEBUG, 0, "Timer  Stats: %lldb in use, %lld allocs, %lld frees.", memuse.tmr, memalloc.tmr, memfree.tmr);
+    LOG(LOG_DEBUG, 0, "Config Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
+        memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
+    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
+        memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
+    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
+        memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
+    LOG(LOG_DEBUG, 0, "Routes Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.",
+        memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry,
+        memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry);
+    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
+        memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry,
+        memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry);
+    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
+        memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
+        memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
+
+    if (getrusage(RUSAGE_SELF, &usage) < 0) {
+        if (fd && !h)
+            send(fd, "\n", 1, MSG_DONTWAIT);
+        LOG(LOG_WARNING, 0, "getMemStats: rusage() failed.");
+    } else {
+        if (fd >= 0) {
+            if (h)
+                strcpy(msg, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.\n");
+            else
+                strcpy(msg, " %lld %lld %lld %lld %lld\n");
+            sprintf(buf, msg, usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
+            send(fd, buf, strlen(buf), MSG_DONTWAIT);
+        }
+        LOG(LOG_DEBUG, 0, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
+                           usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
+    }
+
+    return false;  // Needed for _alloc macros.
 }

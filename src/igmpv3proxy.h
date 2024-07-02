@@ -81,15 +81,19 @@
 #define IFINFO IP_RECVIF
 #endif
 
-//  Socket control message union.
-union cmsgU {
-    struct cmsghdr cmsgHdr;
-#ifdef IP_PKTINFO
-    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
-#elif IP_RECVIF
-    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
-#endif
+// Memory statistics.
+struct memstats {
+    int64_t mct, src, mfc, ifm;       // Multicast Forwarding Table
+    int64_t ifd, fil, vif;            // Interfaces
+    int64_t rcv, snd;                 // Buffers
+    int64_t qry, tmr;                 // Queries, Timers
 };
+extern struct memstats memuse, memalloc, memfree;
+inline void __free(void *p, int64_t *m, int64_t *f, size_t s) { free(p); *m -= s; ++*f; }
+#define _free(p, m, s)         __free(p, &memuse.m, &memfree.m, s)
+#define _malloc(p, m, s)       (((p = malloc(s))      && (memuse.m += s) > 0           && ++memalloc.m) || getMemStats(0, -1))
+#define _calloc(p, n, m, s)    (((p = calloc(n, s))   && (memuse.m += (n * s)) > 0     && ++memalloc.m) || getMemStats(0, -1))
+#define _realloc(p, m, sp, sm) (((p = realloc(p, sp)) && (memuse.m -= (sm) + (sp)) > 0 && ++memalloc.m) || getMemStats(0, -1))
 
 // In / output buffering.
 #define BUF_SIZE   9216                                 // Jumbo MTU
@@ -103,7 +107,7 @@ union cmsgU {
 #define MAX_GROUPNAME_SIZE     32
 
 // Keeps common configuration settings.
-#define RUN_PATHS     "/run /var/run /tmp /var/tmp"
+#define RUN_PATHS "/run /var/run /tmp /var/tmp"
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
 struct Config {
     uint8_t             cnt;
@@ -170,6 +174,7 @@ struct filters {
     uint64_t              action;                       // Action (aalow / block / ratelimit)
     struct filters       *next;
 };
+#define FILSZ (sizeof(struct filters))
 #define ALLOW 1
 #define BLOCK 0
 #define FILTERANY (struct filters){ {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, 3, 3, ALLOW, NULL }
@@ -203,7 +208,8 @@ struct vifConfig {
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define DEFAULT_VIFCONF (struct vifConfig){ "", commonConfig.defaultInterfaceState, commonConfig.defaultThreshold, commonConfig.defaultRatelimit, {commonConfig.querierIp, commonConfig.querierVer, commonConfig.querierElection, commonConfig.robustnessValue, commonConfig.queryInterval, commonConfig.queryResponseInterval, commonConfig.lastMemberQueryInterval, commonConfig.lastMemberQueryCount, 0, 0}, false, commonConfig.cksumVerify, commonConfig.quickLeave, commonConfig.proxyLocalMc, NULL, NULL, vifConf }
+#define VIFSZ (sizeof(struct vifConfig))
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -238,6 +244,7 @@ struct IfDesc {
     void                         *uMct;                  // Pointers to active upstream groups for vif
     struct IfDesc                *next;
 };
+#define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 /// Interface states.
@@ -366,9 +373,10 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 /**
 *   config.c
 */
-#define        CONFIG getConfig()
-struct Config *getConfig(void);
-void           freeConfig(int old);
+#define        CONF getConfig(false)
+#define        OLDCONF getConfig(true)
+struct Config *getConfig(bool old);
+void           freeConfig(bool old);
 void           reloadConfig(uint64_t *tid);
 bool           loadConfig(char *cfgFile);
 void           configureVifs(void);
@@ -399,15 +407,15 @@ void           getIfFilters(int h, int fd);
 /**
 *   igmp.c
 */
-char *initIgmp(void);
-void  acceptIgmp(int recvlen, struct msghdr msgHdr);
-void  sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
-void  sendGeneralMemberQuery(struct IfDesc *IfDp);
+void   initIgmp(bool free);
+void   acceptIgmp(int recvlen, struct msghdr msgHdr);
+void   sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
+void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 
 /**
 *   lib.c
 */
-#define         LOG(x, ...) x <= CONFIG->logLevel ? myLog(x, __VA_ARGS__) : (void)0
+#define         LOG(x, ...) x <= CONF->logLevel ? myLog(x, __VA_ARGS__) : (void)0
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
@@ -428,6 +436,7 @@ uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
 void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
+bool            getMemStats(int h, int fd);
 
 /**
 *   kern.c
@@ -473,7 +482,7 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 *   timers.c
 */
 #define         TMNAMESZ 48
-#define         DEBUGQUEUE(...) if (CONFIG->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
+#define         DEBUGQUEUE(...) if (CONF->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 struct timespec timer_ageQueue();
 uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
 void           *timer_clearTimer(uint64_t timer_id);

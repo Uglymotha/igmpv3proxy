@@ -53,7 +53,7 @@ static const char *options = " include phyint user group chroot defaultquickleav
 static const char *phyintopt = " updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
-static struct Config commonConfig, oldcommonConfig;
+static struct Config conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
@@ -72,31 +72,33 @@ static struct timers {
 /**
 *   Returns pointer to the configuration.
 */
-inline struct Config *getConfig(void) {
-    return &commonConfig;
+inline struct Config *getConfig(bool old) {
+    return old ? &oldconf : &conf;
 }
 
 /**
 *   Frees the old vifconf list and associated filters.
 */
-void freeConfig(int old) {
+void freeConfig(bool old) {
     struct vifConfig *tConf, *cConf;
-    struct filters   *fil, *tFil,  *dFil  = old ? oldcommonConfig.defaultFilters : commonConfig.defaultFilters,
-                           *tRate, *dRate = old ? oldcommonConfig.defaultRates   : commonConfig.defaultRates;
+    struct filters   *fil, *tFil,  *dFil  = old ? oldconf.defaultFilters : conf.defaultFilters,
+                           *tRate, *dRate = old ? oldconf.defaultRates   : conf.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
         // Remove and free filters and ratelimits.
-        for (; cConf->filters && cConf->filters != dFil; tFil = cConf->filters->next, free(cConf->filters), cConf->filters = tFil);
-        for (; cConf->rates && cConf->rates != dRate; tRate = cConf->rates->next, free(cConf->rates), cConf->rates = tRate);
-        free(cConf);
+        for (; cConf->filters && cConf->filters != dFil;
+               tFil = cConf->filters->next, _free(cConf->filters, fil, FILSZ), cConf->filters = tFil);
+        for (; cConf->rates && cConf->rates != dRate;
+               tRate = cConf->rates->next, _free(cConf->rates, fil, FILSZ), cConf->rates = tRate);
+        _free(cConf, vif, VIFSZ);
     }
 
     if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
-        for (; dFil; tFil = dFil->next, free(dFil), dFil = tFil);
-        for (; dRate; tRate = dRate->next, free(dRate), dRate = tRate);
+        for (; dFil; tFil = dFil->next, _free(dFil, fil, FILSZ), dFil = tFil);
+        for (; dRate; tRate = dRate->next, _free(dRate, fil, FILSZ), dRate = tRate);
     }
     if (SHUTDOWN) {
         // On Shutdown stop any running timers.
@@ -175,62 +177,62 @@ static inline bool nextToken(char *token) {
 */
 static inline void initCommonConfig(void) {
     // User and group to run daemon process.
-    commonConfig.user   = STARTUP ? NULL : commonConfig.user;
-    commonConfig.chroot = STARTUP ? NULL : commonConfig.chroot;
-    commonConfig.group  = STARTUP ? NULL : commonConfig.group;
+    conf.user   = STARTUP ? NULL : conf.user;
+    conf.chroot = STARTUP ? NULL : conf.chroot;
+    conf.group  = STARTUP ? NULL : conf.group;
 
     // Defaul Query Parameters.
-    commonConfig.robustnessValue = DEFAULT_ROBUSTNESS;
-    commonConfig.queryInterval = DEFAULT_INTERVAL_QUERY;
-    commonConfig.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
-    commonConfig.bwControlInterval = 0;
+    conf.robustnessValue = DEFAULT_ROBUSTNESS;
+    conf.queryInterval = DEFAULT_INTERVAL_QUERY;
+    conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
+    conf.bwControlInterval = 0;
 
     // Request queue size. This many request buffered requests will be handled before other work is done.
-    commonConfig.reqQsz = REQQSZ;
-    commonConfig.tmQsz  = TMQSZ;
-    commonConfig.kBufsz = K_BUF_SIZE;
-    commonConfig.pBufsz = BUF_SIZE;
+    conf.reqQsz = REQQSZ;
+    conf.tmQsz  = TMQSZ;
+    conf.kBufsz = K_BUF_SIZE;
+    conf.pBufsz = BUF_SIZE;
 
     // Default values for leave intervals...
-    commonConfig.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
-    commonConfig.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
+    conf.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
+    conf.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
 
     // Sent leave message upstream on leave messages from downstream.
-    commonConfig.quickLeave = false;
+    conf.quickLeave = false;
 
     // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
-    commonConfig.maxOrigins = DEFAULT_MAX_ORIGINS;
+    conf.maxOrigins = DEFAULT_MAX_ORIGINS;
 
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
-    commonConfig.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
+    conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
 
     // Number of (hashed) route tables.
-    commonConfig.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldcommonConfig.mcTables;
+    conf.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
 
     // Default interface state and parameters.
-    commonConfig.defaultInterfaceState = IF_STATE_DISABLED;
-    commonConfig.defaultThreshold = DEFAULT_THRESHOLD;
-    commonConfig.defaultRatelimit = DEFAULT_RATELIMIT;
-    commonConfig.defaultFilters   = NULL;
-    commonConfig.defaultRates     = NULL;
+    conf.defaultInterfaceState = IF_STATE_DISABLED;
+    conf.defaultThreshold = DEFAULT_THRESHOLD;
+    conf.defaultRatelimit = DEFAULT_RATELIMIT;
+    conf.defaultFilters   = NULL;
+    conf.defaultRates     = NULL;
 
     // Log to file disabled by default.
-    commonConfig.logLevel = !commonConfig.log2Stderr ? LOG_WARNING : commonConfig.logLevel;
+    conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
 
     // Default no timed rebuild interfaces / reload config.
-    commonConfig.rescanVif  = 0;
-    commonConfig.rescanConf = 0;
+    conf.rescanVif  = 0;
+    conf.rescanConf = 0;
 
     // Do not proxy local mc by default.
-    commonConfig.proxyLocalMc = false;
+    conf.proxyLocalMc = false;
 
     // Default igmpv3, validate checksums and participate in querier election by default.
-    commonConfig.querierIp = (uint32_t)-1;
-    commonConfig.querierVer = 3;
-    commonConfig.querierElection = true;
-    commonConfig.cksumVerify = true;
+    conf.querierIp = (uint32_t)-1;
+    conf.querierVer = 3;
+    conf.querierElection = true;
+    conf.cksumVerify = true;
 }
 
 /*
@@ -260,8 +262,8 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
             }
             if ((strcmp(" ratelimit", token) == 0 || strcmp(" r", token) == 0 || strcmp(" rl", token) == 0
                                                   || strcmp(" 2", token) == 0) && INTTOKEN) {
-                if (! commonConfig.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
-                    LOG(LOG_NOTICE, 0, "Config (%s): %s Ignoring '%s - %s %lld.'", in, !commonConfig.bwControlInterval ?
+                if (! conf.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
+                    LOG(LOG_NOTICE, 0, "Config (%s): %s Ignoring '%s - %s %lld.'", in, !conf.bwControlInterval ?
                         "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
                          inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), intToken);
                     fil = filNew;
@@ -321,7 +323,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
-            if (! (***n = calloc(1, sizeof(struct filters))))
+            if (! _calloc(***n, 1, fil, FILSZ))
                 LOG(LOG_ERR, errno, "parseFilters: Out of Memory.");  // Freed by freeConfig()
             ****n = fil;
 
@@ -348,7 +350,7 @@ static inline bool parsePhyintToken(char *token) {
     // Find existing or create new vifConf.
     for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
     if (! tmpPtr) {
-        if (! (tmpPtr = malloc(sizeof(struct vifConfig))))  // Freed by freeConfig or self()
+        if (! _malloc(tmpPtr, vif, VIFSZ))  // Freed by freeConfig
             LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");
         // Insert vifconf in list and set default config and filters pointers.
         *tmpPtr = DEFAULT_VIFCONF;
@@ -361,8 +363,8 @@ static inline bool parsePhyintToken(char *token) {
         filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
     } else {
         // If any (default) filters have already been set, find the end of the list.
-        for (filP = &tmpPtr->filters; *filP && *filP != commonConfig.defaultFilters; filP = &(*filP)->next);
-        for (rateP = &tmpPtr->rates; *rateP && *rateP != commonConfig.defaultRates; rateP = &(*rateP)->next);
+        for (filP = &tmpPtr->filters; *filP && *filP != conf.defaultFilters; filP = &(*filP)->next);
+        for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.defaultRates; rateP = &(*rateP)->next);
     }
 
     // Parse the rest of the config.
@@ -518,7 +520,7 @@ static inline bool parsePhyintToken(char *token) {
     }
 
     if (!tmpPtr->noDefaultFilter)
-        *filP = commonConfig.defaultFilters;
+        *filP = conf.defaultFilters;
 
     LOG(LOG_INFO, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
         tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
@@ -540,14 +542,14 @@ bool loadConfig(char *cfgFile) {
     struct stat              st;
 
     // Initialize common config on first entry.
-    if (commonConfig.cnt++ == 0) {
+    if (conf.cnt++ == 0) {
         logwarning = 0;
         initCommonConfig();
-        filP  = &commonConfig.defaultFilters;
-        rateP = &commonConfig.defaultRates;
+        filP  = &conf.defaultFilters;
+        rateP = &conf.defaultRates;
     }
 
-    if (commonConfig.cnt == 0xFF) {
+    if (conf.cnt == 0xFF) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", 0xFF, cfgFile);
     } else if (stat(cfgFile, &st) != 0 || !(st_mode = st.st_mode)) {
@@ -574,7 +576,7 @@ bool loadConfig(char *cfgFile) {
         // Increase count and initialize buffer. First char of token is ' ', counters to 0.
         token[0] = ' ';
         *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
-        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", commonConfig.cnt, cfgFile);
+        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", conf.cnt, cfgFile);
     }
 
     // Loop though file tokens until all configuration is read or error encounterd.
@@ -584,7 +586,7 @@ bool loadConfig(char *cfgFile) {
             if (strcmp(" phyint", token) == 0) {
                 parsePhyintToken(token);
             } else if (strcmp(" defaultfilter", token) == 0) {
-                if (commonConfig.defaultFilters && *filP == commonConfig.defaultFilters) {
+                if (conf.defaultFilters && *filP == conf.defaultFilters) {
                     LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
                     break;
                 } else {
@@ -599,7 +601,7 @@ bool loadConfig(char *cfgFile) {
             }
         }
 
-        if (strcmp(" include", token) == 0 && nextToken(token) && strcmp(commonConfig.configFilePath, token + 1) != 0) {
+        if (strcmp(" include", token) == 0 && nextToken(token) && strcmp(conf.configFilePath, token + 1) != 0) {
             // Load the config from include file and restore current.
             if (loadConfig(token + 1))
                 LOG(LOG_NOTICE, 0, "Config: Succesfully included config from '%s'.", token + 1);
@@ -608,110 +610,110 @@ bool loadConfig(char *cfgFile) {
             configFile(confFilePtr, 2);
 
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
-            if (! (commonConfig.chroot = malloc(strlen(token))))
+            if (! (conf.chroot = malloc(strlen(token))))
                 LOG(LOG_ERR, errno, "Config: Out of Memory.");
-            memcpy(commonConfig.chroot, token + 1, strlen(token));   // Freed by igmpProxyInit(), igmpProxyCleanup() or Self.
-            if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(commonConfig.chroot, 0770) == 0)) {
-                LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", commonConfig.chroot);
-                free(commonConfig.chroot);
-                commonConfig.chroot = NULL;
+            memcpy(conf.chroot, token + 1, strlen(token));   // Freed by igmpProxyInit(), igmpProxyCleanup() or Self.
+            if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
+                LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", conf.chroot);
+                free(conf.chroot);
+                conf.chroot = NULL;
             } else
-                LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", commonConfig.chroot);
+                LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", conf.chroot);
 
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
 #ifdef __linux__
-            if (! (commonConfig.user = getpwnam(token + 1)))
+            if (! (conf.user = getpwnam(token + 1)))
                 LOG(LOG_WARNING, 0, "Config: User %s does not exist.", token + 1);
             else
-                LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", commonConfig.user->pw_name, commonConfig.user->pw_uid);
+                LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", conf.user->pw_name, conf.user->pw_uid);
 #else
             LOG(LOG_NOTICE, 0, "Config: Run as user %s is only valid for linux.", token + 1);
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
-            if (! (commonConfig.group = getgrnam(token + 1)))
+            if (! (conf.group = getgrnam(token + 1)))
                 LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
             else
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", commonConfig.group->gr_name);
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", conf.group->gr_name);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
-            commonConfig.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
-            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", commonConfig.mcTables);
+            conf.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
+            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", conf.mcTables);
 
-        } else if (strcmp(" kbufsize", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
-            commonConfig.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
+        } else if (strcmp(" kbufsize", token) == 0 && INTTOKEN) {
+            conf.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
             LOG(LOG_NOTICE, 0, "Config: Setting kernel ring buffer to %dKB.", intToken);
 
         } else if (strcmp(" pbufsize", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
-            commonConfig.pBufsz = intToken > 0 && intToken < 65536 ? intToken : BUF_SIZE;
+            conf.pBufsz = intToken > 0 && intToken < 65536 ? intToken : BUF_SIZE;
             LOG(LOG_NOTICE, 0, "Config: Setting packet buffer to %dB.", intToken);
 
         } else if (strcmp(" reqqueuesize", token) == 0 && INTTOKEN) {
-            commonConfig.reqQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
+            conf.reqQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
             LOG(LOG_NOTICE, 0, "Config: Setting request queue size to %d.", intToken);
 
         } else if (strcmp(" timerqueuesize", token) == 0 && INTTOKEN) {
-            commonConfig.tmQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
+            conf.tmQsz = intToken > 0 && intToken < 65535 ? intToken : REQQSZ;
             LOG(LOG_NOTICE, 0, "Config: Setting timer queue size to %d.", intToken);
 
         } else if (strcmp(" quickleave", token) == 0 || strcmp(" defaultquickleave", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config: Quick leave mode enabled.");
-            commonConfig.quickLeave = true;
+            conf.quickLeave = true;
 
         } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
             if (intToken < DEFAULT_MAX_ORIGINS || intToken > 65535)
                 LOG(LOG_WARNING, 0, "Config: Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
             else {
-                commonConfig.maxOrigins = intToken;
-                LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", commonConfig.maxOrigins);
+                conf.maxOrigins = intToken;
+                LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", conf.maxOrigins);
             }
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
             if (intToken < 8 || intToken > 131072)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
             else {
-                commonConfig.dHostsHTSize = (intToken - intToken % 8) * 8;
-                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", commonConfig.dHostsHTSize / 8);
+                conf.dHostsHTSize = (intToken - intToken % 8) * 8;
+                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", conf.dHostsHTSize / 8);
             }
 
         } else if (strcmp(" defaultupdown", token) == 0) {
-            if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
+            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
                 LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
-                commonConfig.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
+                conf.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
             }
 
         } else if (strcmp(" defaultup", token) == 0) {
-            if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
+            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
                 LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
-                commonConfig.defaultInterfaceState = IF_STATE_UPSTREAM;
+                conf.defaultInterfaceState = IF_STATE_UPSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
             }
 
         } else if (strcmp(" defaultdown", token) == 0) {
-            if (commonConfig.defaultInterfaceState != IF_STATE_DISABLED)
+            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
                 LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
             else {
-                commonConfig.defaultInterfaceState = IF_STATE_DOWNSTREAM;
+                conf.defaultInterfaceState = IF_STATE_DOWNSTREAM;
                 LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
             }
 
         } else if (strcmp(" defaultfilterany", token) == 0) {
-            if (commonConfig.defaultFilters)
+            if (conf.defaultFilters)
                 LOG(LOG_WARNING, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
-                if (! (commonConfig.defaultFilters = calloc(1, sizeof(struct filters))))
+                if (! _calloc(conf.defaultFilters, 1, fil, FILSZ))  // Freed by freeConfig()
                     LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-                *commonConfig.defaultFilters = FILTERANY;
+                *conf.defaultFilters = FILTERANY;
             }
 
         } else if (strcmp(" defaultratelimit", token) == 0 && INTTOKEN) {
             if (intToken < 0)
                 LOG(LOG_WARNING, 0, "Config: Ratelimit must be more than 0.");
             else {
-                commonConfig.defaultRatelimit = intToken;
+                conf.defaultRatelimit = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default ratelimit %d.", intToken);
             }
 
@@ -719,19 +721,19 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 255)
                 LOG(LOG_WARNING, 0, "Config: Threshold must be between 1 and 255.");
             else {
-                commonConfig.defaultThreshold = intToken;
+                conf.defaultThreshold = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default threshold %d.", intToken);
             }
 
         } else if (strcmp(" defaultquerierip", token) == 0 && nextToken(token)) {
-            commonConfig.querierIp = inet_addr(token + 1);
-            LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(commonConfig.querierIp, 1));
+            conf.querierIp = inet_addr(token + 1);
+            LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(conf.querierIp, 1));
 
         } else if (strcmp(" defaultquerierver", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 3)
                 LOG(LOG_WARNING, 0, "Config: Querier version %d invalid.", intToken);
             else {
-                commonConfig.querierVer = intToken;
+                conf.querierVer = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default querier version to %d.", intToken);
             }
 
@@ -739,9 +741,9 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config: Robustness value must be between 1 and 7.");
             else {
-                commonConfig.robustnessValue = intToken;
-                commonConfig.lastMemberQueryCount = commonConfig.lastMemberQueryCount != DEFAULT_ROBUSTNESS
-                                                  ? commonConfig.lastMemberQueryCount : commonConfig.robustnessValue;
+                conf.robustnessValue = intToken;
+                conf.lastMemberQueryCount = conf.lastMemberQueryCount != DEFAULT_ROBUSTNESS
+                                                  ? conf.lastMemberQueryCount : conf.robustnessValue;
                 LOG(LOG_NOTICE, 0, "Config: Setting default robustness value to %d.", intToken);
             }
 
@@ -749,15 +751,15 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 255)
                 LOG(LOG_WARNING, 0, "Config: Query interval must be between 1 and 255.");
             else {
-                commonConfig.queryInterval = intToken;
-                LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds.", commonConfig.queryInterval);
+                conf.queryInterval = intToken;
+                LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds.", conf.queryInterval);
             }
 
         } else if (strcmp(" defaultqueryrepsonseinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
                 LOG(LOG_WARNING, 0, "Config: Query response interval must be between 1 and 255.");
             else {
-                commonConfig.queryResponseInterval = intToken;
+                conf.queryResponseInterval = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default query response interval to %d.", intToken);
             }
 
@@ -765,7 +767,7 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 255)
                 LOG(LOG_WARNING, 0, "Config: Last member query interval must be between 1 and 255.");
             else {
-                commonConfig.lastMemberQueryInterval = intToken;
+                conf.lastMemberQueryInterval = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default last member query interval to %d.", intToken);
             }
 
@@ -773,58 +775,58 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config: Last member count must be between 1 and 7.");
             else {
-                commonConfig.lastMemberQueryCount = intToken;
+                conf.lastMemberQueryCount = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
             }
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
-            commonConfig.bwControlInterval = intToken < 3 ? 3 : intToken;
+            conf.bwControlInterval = intToken < 3 ? 3 : intToken;
             LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken);
 
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
-            commonConfig.rescanVif = intToken > 0 ? intToken : 0;
+            conf.rescanVif = intToken > 0 ? intToken : 0;
             LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
 
         } else if (strcmp(" rescanconf", token) == 0 && INTTOKEN) {
-            commonConfig.rescanConf = intToken > 0 ? intToken : 0;
+            conf.rescanConf = intToken > 0 ? intToken : 0;
             LOG(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);
 
         } else if (strcmp(" loglevel", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config: Logleven must be between 1 and 7.");
             else {
-                commonConfig.logLevel = !commonConfig.log2Stderr ? intToken : commonConfig.logLevel;
-                LOG(LOG_NOTICE, 0, "Config: Log Level %d", commonConfig.logLevel);
+                conf.logLevel = !conf.log2Stderr ? intToken : conf.logLevel;
+                LOG(LOG_NOTICE, 0, "Config: Log Level %d", conf.logLevel);
             }
 
         } else if (strcmp(" logfile", token) == 0 && nextToken(token)) {
             // Only use log file if not logging to stderr.
-            char *t = (!STARTUP && commonConfig.chroot) ? basename(token + 1) : token + 1;
-            if (commonConfig.log2Stderr || (commonConfig.logFilePath && strcmp(commonConfig.logFilePath, t) == 0))
+            char *t = (!STARTUP && conf.chroot) ? basename(token + 1) : token + 1;
+            if (conf.log2Stderr || (conf.logFilePath && strcmp(conf.logFilePath, t) == 0))
                 continue;
             else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
-            else if (! (commonConfig.logFilePath = realloc(commonConfig.logFilePath, strlen(token))))
+            else if (! (conf.logFilePath = realloc(conf.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else {
-                strcpy(commonConfig.logFilePath, t);
-                chmod(CONFIG->logFilePath, 0640);
+                strcpy(conf.logFilePath, t);
+                chmod(conf.logFilePath, 0640);
                 time_t rawtime = time(NULL);
                 utcoff.tv_sec = timegm(localtime(&rawtime)) - rawtime;
-                LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", commonConfig.logFilePath);
+                LOG(LOG_NOTICE, 0, "Config: Logging to file '%s'", conf.logFilePath);
             }
 
         } else if (strcmp(" defaultproxylocalmc", token) == 0) {
-            commonConfig.proxyLocalMc = true;
+            conf.proxyLocalMc = true;
             LOG(LOG_NOTICE, 0, "Config: Will proxy local multicast range 224.0.0.0/8.");
 
         } else if (strcmp(" defaultnoquerierelection", token) == 0) {
-            commonConfig.querierElection = false;
+            conf.querierElection = false;
             LOG(LOG_NOTICE, 0, "Config: Will not participate in IGMP querier election by default.");
 
         } else if (strcmp(" defaultnocksumverify", token) == 0) {
-            commonConfig.cksumVerify = false;
+            conf.cksumVerify = false;
             LOG(LOG_NOTICE, 0, "Config: Will not verify IGMP checksums by default.");
 
         } else if (token[1] != '\0')
@@ -835,41 +837,45 @@ bool loadConfig(char *cfgFile) {
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     free(token);  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
-        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", commonConfig.cnt, cfgFile);
-    if (--commonConfig.cnt > 0 || logwarning)
+        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
+    if (--conf.cnt > 0 || logwarning)
         return !logwarning;
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
-                                      : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10 > commonConfig.queryInterval) {
-        if (commonConfig.querierVer != 3)
-            commonConfig.queryResponseInterval = commonConfig.queryInterval * 10;
+    if ((conf.querierVer != 3 ? conf.queryResponseInterval
+                                      : getIgmpExp(conf.queryResponseInterval, 0)) / 10 > conf.queryInterval) {
+        if (conf.querierVer != 3)
+            conf.queryResponseInterval = conf.queryInterval * 10;
         else
-            commonConfig.queryResponseInterval = getIgmpExp(commonConfig.queryInterval * 10, 1);
-        float f = (commonConfig.querierVer != 3 ? commonConfig.queryResponseInterval
-                                                : getIgmpExp(commonConfig.queryResponseInterval, 0)) / 10;
+            conf.queryResponseInterval = getIgmpExp(conf.queryInterval * 10, 1);
+        float f = (conf.querierVer != 3 ? conf.queryResponseInterval
+                                                : getIgmpExp(conf.queryResponseInterval, 0)) / 10;
         LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs",
-                            commonConfig.queryInterval, f);
+                            conf.queryInterval, f);
     }
 
+    // Check if buffer sizes have changed.
+    if (CONFRELOAD && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
+        initIgmp(false);
+
     // Check rescanvif status and start or clear timers if necessary.
-    if (commonConfig.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(commonConfig.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
-    } else if (!commonConfig.rescanVif && timers.rescanVif != 0) {
+    if (conf.rescanVif && timers.rescanVif == 0) {
+        timers.rescanVif = timer_setTimer(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
+    } else if (!conf.rescanVif && timers.rescanVif != 0) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
     }
 
     // Check rescanconf status and start or clear timers if necessary.
-    if (commonConfig.rescanConf && timers.rescanConf == 0) {
-        timers.rescanConf = timer_setTimer(commonConfig.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
-    } else if (!commonConfig.rescanConf && timers.rescanConf != 0) {
+    if (conf.rescanConf && timers.rescanConf == 0) {
+        timers.rescanConf = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
+    } else if (!conf.rescanConf && timers.rescanConf != 0) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
 
     // Check bwcontrol status and start or clear timers if necessary..
-    if (oldcommonConfig.bwControlInterval != commonConfig.bwControlInterval) {
+    if (oldconf.bwControlInterval != conf.bwControlInterval) {
         timer_clearTimer(timers.bwControl);
         timers.bwControl = 0;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -877,12 +883,12 @@ bool loadConfig(char *cfgFile) {
         if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0
                          || ! (Va & MRT_MFC_BW_UPCALL))) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
-            commonConfig.bwControlInterval = 0;
+            conf.bwControlInterval = 0;
         } else if (!STARTUP)
             clearGroups(getConfig);
 #endif
-        if (commonConfig.bwControlInterval)
-            timers.bwControl = timer_setTimer(commonConfig.bwControlInterval * 10, "Bandwidth Control",
+        if (conf.bwControlInterval)
+            timers.bwControl = timer_setTimer(conf.bwControlInterval * 10, "Bandwidth Control",
                                               bwControl, &timers.bwControl);
     }
 
@@ -897,25 +903,32 @@ void reloadConfig(uint64_t *tid) {
     sigstatus       = NOSIG ? GOT_CONFREL : sigstatus;
     ovifConf        = vifConf;
     vifConf         = NULL;
-    oldcommonConfig = commonConfig;
+    oldconf = conf;
 
     // Load the new configuration keep reference to the old.
-    commonConfig.cnt = 0;
-    if (!loadConfig(commonConfig.configFilePath)) {
-        LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", commonConfig.configFilePath);
+    conf.cnt = 0;
+    if (!loadConfig(conf.configFilePath)) {
+        LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", conf.configFilePath);
         if (vifConf)
             freeConfig(0);
         vifConf = ovifConf;
-        commonConfig = oldcommonConfig;
+        conf = oldconf;
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
-        LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", commonConfig.configFilePath);
+        LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
-    if (sigstatus == GOT_CONFREL && commonConfig.rescanConf)
-        *tid = timer_setTimer(commonConfig.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
 
+    LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
+                       memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
+    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
+                       memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
+    LOG(LOG_DEBUG, 0, "              %lld frees total, %lld interfaces, %lld config, %lld filters.",
+                       memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
+
+    if (sigstatus == GOT_CONFREL && conf.rescanConf)
+        *tid = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
     sigstatus = 0;
 }
 
@@ -945,15 +958,15 @@ inline void configureVifs(void) {
         } else {
             // Interface has no matching config, create default config.
             LOG(LOG_INFO, 0, "configureVifs: Creating default config for %s interface %s.",
-                               IS_DISABLED(commonConfig.defaultInterfaceState)     ? "disabled"
-                             : IS_UPDOWNSTREAM(commonConfig.defaultInterfaceState) ? "updownstream"
-                             : IS_UPSTREAM(commonConfig.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
-            if (! (confPtr = malloc(sizeof(struct vifConfig))))
+                               IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"
+                             : IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream"
+                             : IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
+            if (! _malloc(confPtr, vif, VIFSZ))
                 LOG(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
             *confPtr = DEFAULT_VIFCONF;
             vifConf  = confPtr;
             strcpy(confPtr->name, IfDp->Name);
-            confPtr->filters = commonConfig.defaultFilters;
+            confPtr->filters = conf.defaultFilters;
         }
         // Link the configuration to the interface. And update the states.
         oconfPtr = IfDp->conf;
@@ -1035,15 +1048,15 @@ inline void configureVifs(void) {
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
     if (!quickLeave) {
         LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
-        commonConfig.quickLeave = false;
-        commonConfig.dHostsHTSize = 0;
+        conf.quickLeave = false;
+        conf.dHostsHTSize = 0;
     }
 
     // Check if quickleave was enabled or disabled due to config change.
-    if ((CONFRELOAD || SSIGHUP) && oldcommonConfig.dHostsHTSize != commonConfig.dHostsHTSize) {
+    if ((CONFRELOAD || SSIGHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize) {
         LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
-                             oldcommonConfig.dHostsHTSize, commonConfig.dHostsHTSize);
-        clearGroups(CONFIG);
+                             oldconf.dHostsHTSize, conf.dHostsHTSize);
+        clearGroups(&conf);
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.

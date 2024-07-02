@@ -50,23 +50,29 @@ uint32_t    allrouters_group;          // All hosts addr in net order
 uint32_t    alligmp3_group;            // IGMPv3 addr in net order
 
 // Buffers for sending and receiving IGMP packets.
-static char *recv_buf;        // Input packet buffer
-static char *send_buf;        // Output packet buffer
+extern char *rcv_buf;           // Input packet buffer (from igmpv3proxy.c)
+static char *snd_buf = NULL;    // Output Packet buffer
 static char  msg[TMNAMESZ];
 
 /**
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
 *   Returns pointer to the receive buffer.
 */
-char *initIgmp(void) {
-    // Allocate send and receive packet buffers.
-    if (! (recv_buf = calloc(2, CONFIG->pBufsz)) || !(send_buf = recv_buf + CONFIG->pBufsz))
-        LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by igmpProxyCleanup()
-    struct ip *ip = (struct ip *)send_buf;
+void initIgmp(bool free) {
+    // Allocate and initialize send and receive packet buffers.
+    if (rcv_buf)
+        _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
+    if (snd_buf)
+        _free(snd_buf, snd, memuse.snd);  // Alloced by Self
+    if (free)
+        return;
+    if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
+        LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by Self
+    struct ip *ip = (struct ip *)snd_buf;
 
-    k_set_rcvbuf(CONFIG->kBufsz*1024);  // Set kernel ring buffer size
-    k_set_ttl(1);                       // Restrict multicasts to one hop
-    k_set_loop(false);                  // Disable multicast loopback
+    k_set_rcvbuf(CONF->kBufsz*1024);  // Set kernel ring buffer size
+    k_set_ttl(1);                     // Restrict multicasts to one hop
+    k_set_loop(false);                // Disable multicast loopback
 
     /*
      * Fields zeroed that aren't filled in later:
@@ -80,16 +86,18 @@ char *initIgmp(void) {
     ip->ip_ttl = 1;                            // IGMP TTL = 1
     ip->ip_p   = IPPROTO_IGMP;
     /* Add Router Alert option */
-    ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[0] = IPOPT_RA;
-    ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[1] = 0x04;
-    ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[2] = 0x00;
-    ((unsigned char*)send_buf + MIN_IP_HEADER_LEN)[3] = 0x00;
+    ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[0] = IPOPT_RA;
+    ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[1] = 0x04;
+    ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[2] = 0x00;
+    ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[3] = 0x00;
 
     allhosts_group   = htonl(INADDR_ALLHOSTS_GROUP);
     allrouters_group = htonl(INADDR_ALLRTRS_GROUP);
     alligmp3_group   = htonl(INADDR_ALLIGMPV3_GROUP);
 
-    return recv_buf;
+    LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
+        memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
+        memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd);
 }
 
 /**
@@ -124,16 +132,16 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
 *   Process a newly received IGMP packet that is sitting in the input packet buffer.
 */
 void acceptIgmp(int recvlen, struct msghdr msgHdr) {
-    struct ip         *ip = (struct ip *)recv_buf;
+    struct ip         *ip = (struct ip *)rcv_buf;
     register uint32_t  src = ip->ip_src.s_addr, dst = ip->ip_dst.s_addr;
     register int       ipdatalen = IPDATALEN, iphdrlen = ip->ip_hl << 2, ifindex = 0;
-    struct igmp       *igmp = (struct igmp *)(recv_buf + iphdrlen);
+    struct igmp       *igmp = (struct igmp *)(rcv_buf + iphdrlen);
     struct cmsghdr    *cmsgPtr;
     struct IfDesc     *IfDp = NULL;
 
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
-        struct igmpmsg *igmpMsg = (struct igmpmsg *)(recv_buf);
+        struct igmpmsg *igmpMsg = (struct igmpmsg *)(rcv_buf);
         if (! (IfDp = getIf(igmpMsg->im_vif, NULL, 0)))
             return;
         LOG(LOG_INFO, 0, "acceptIgmp: Upcall from %s to %s on %s.", inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
@@ -144,7 +152,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
             return;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         case IGMPMSG_BW_UPCALL:
-            if (CONFIG->bwControlInterval)
+            if (CONF->bwControlInterval)
                 processBwUpcall((struct bw_upcall *)(recv_buf + sizeof(struct igmpmsg)),
                                ((recvlen - sizeof(struct igmpmsg)) / sizeof(struct bw_upcall)));
             return;
@@ -191,8 +199,8 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
         LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
                              inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else {
-        struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(recv_buf + iphdrlen);
-        struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(recv_buf + iphdrlen);
+        struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(rcv_buf + iphdrlen);
+        struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(rcv_buf + iphdrlen);
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
         LOG(LOG_DEBUG, 0, "acceptIgmp: RECV %s from %-15s to %s on %s%s.", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
                            inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name, IfDp->conf->cksumVerify ? " (checksum correct)" : "");
@@ -238,8 +246,8 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
 *   Construct an IGMP query message in the output packet buffer and send it.
 */
 void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
-    struct ip           *ip     = (struct ip *)send_buf;
-    struct igmpv3_query *igmpv3 = (struct igmpv3_query *)(send_buf + IP_HEADER_RAOPT_LEN);
+    struct ip           *ip     = (struct ip *)snd_buf;
+    struct igmpv3_query *igmpv3 = (struct igmpv3_query *)(snd_buf + IP_HEADER_RAOPT_LEN);
     int                  len    = 0;
     struct sockaddr_in   sdst;
 
@@ -292,7 +300,7 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
         sprintf(msg, "sendIGMP: %s from %-15s to %s (%d:%d:%d) on %s.", igmpPacketKind(igmpv3->igmp_type, igmpv3->igmp_code),
                            IfDp->querier.ip == INADDR_ANY ? "INADDR_ANY" : inetFmt(IfDp->querier.ip, 1),
                            inetFmt(ip->ip_dst.s_addr, 2), igmpv3->igmp_code, igmpv3->igmp_misc, igmpv3->igmp_qqi, IfDp->Name);
-        if (sendto(MROUTERFD, send_buf, len, MSG_DONTWAIT, (struct sockaddr *)&sdst, sizeof(sdst)) < 0)
+        if (sendto(MROUTERFD, snd_buf, len, MSG_DONTWAIT, (struct sockaddr *)&sdst, sizeof(sdst)) < 0)
             LOG(LOG_WARNING, errno, msg);
         else
             LOG(LOG_DEBUG, 0, msg);
@@ -338,7 +346,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             else
                 timeout = (100 * IfDp->conf->qry.robustness) + 5;
             // Set timeout for other querier.
-            sprintf(msg, "%sv%1d Querier Timer: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
+            sprintf(msg, "%sv%1d Querier: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
             IfDp->querier.Timer = timer_setTimer(timeout, strcat(msg, IfDp->Name), expireQuerierTimer, IfDp);
 
             LOG(LOG_INFO, 0, "acceptMemberQuery: %sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",

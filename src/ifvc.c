@@ -57,7 +57,7 @@ static void freeIfDescL() {
                 IfDescL = IfDp = IfDp->next;
             else
                 IfDp->next = IfDp->next->next;
-            free(fIfDp);
+            _free(fIfDp, ifd, IFSZ);
         } else
             IfDp = IfDp->next;
     }
@@ -84,9 +84,16 @@ void rebuildIfVc(uint64_t *tid) {
     freeIfDescL();
 
     // Restart timer when doing timed reload.
-    if (tid && sigstatus == GOT_IFREB && CONFIG->rescanVif)
-        *tid = timer_setTimer(CONFIG->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
-
+    if (sigstatus == GOT_IFREB && CONF->rescanVif && tid)
+        *tid = timer_setTimer(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
+    if (IFREBUILD || STARTUP) {
+        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
+                           memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
+        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
+                           memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
+        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
+                           memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
+    }
     sigstatus = IFREBUILD ? 0 : sigstatus;
 }
 
@@ -107,7 +114,7 @@ void buildIfVc(void) {
             || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
             || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
-            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
+            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONF))
 #endif
             || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0)))
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
@@ -116,7 +123,7 @@ void buildIfVc(void) {
         uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
         if (! IfDp) {
             // New interface, allocate and initialize.
-            if (! (IfDp  = malloc(sizeof(struct IfDesc))))
+            if (!_malloc(IfDp, ifd, IFSZ))
                 LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
@@ -244,7 +251,9 @@ void getIfFilters(int h, int fd) {
                 strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
             else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
-            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1), inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both", filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
+            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
+                    inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
+                    filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }

@@ -56,7 +56,7 @@ int openCliFd(void) {
     cli_sa.sun_family = AF_UNIX;
 
     // Open the socket, set permissions and mode.
-    if (   ! strcat(strcpy(cli_sa.sun_path, CONFIG->runPath), "cli.sock")
+    if (   ! strcat(strcpy(cli_sa.sun_path, CONF->runPath), "cli.sock")
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -65,8 +65,8 @@ int openCliFd(void) {
 #else
         ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
-        ||    listen(cli_fd, CONFIG->reqQsz) < 0
-        ||  (     chown(cli_sa.sun_path, CONFIG->user ? CONFIG->user->pw_uid : -1, CONFIG->group->gr_gid))
+        ||    listen(cli_fd, CONF->reqQsz) < 0
+        ||  (     chown(cli_sa.sun_path, CONF->user ? CONF->user->pw_uid : -1, CONF->group->gr_gid))
                || chmod(cli_sa.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
         cli_fd = -1;
@@ -87,22 +87,36 @@ void closeCliFd(int fd) {
 /**
 *   Processes an incoming cli connection. Requires the fd of the cli socket.
 */
-void acceptCli(int fd) {
-    int                 cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
+void acceptCli(int fd)
+{
+    int                 pid = 0, cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
     struct IfDesc      *IfDp = NULL;
 
     // Receive and answer the cli request.
-    cli_fd = accept(fd, &cli_sa, (socklen_t *)&s);
-    len = recv(cli_fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT);
+    if ((cli_fd = accept(fd, &cli_sa, (socklen_t *)&s)) < 0) {
+        LOG(LOG_WARNING, errno, "acceptCli: Failed accept()");
+        return;
+    } else {
+        if ((len = recv(cli_fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 || len > CLI_CMD_BUF ||
+            (buf[0] == 'r' && len > 2 &&
+            (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
+            LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
+        } else if (buf[0] == 'c' || buf[0] == 'b') {
+            sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
+            buf[0] == 'c' ? send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
+                          : send(cli_fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+        } else if ((pid = fork()) != 0)
+            pid < 0 ? LOG(LOG_WARNING, errno, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
+        if (pid != 0 || buf[0] == 'c' || buf[0] == 'b') {
+            close(cli_fd);
+            return;
+        }
+    }
 
-    if ( len <= 0 || len > CLI_CMD_BUF ||
-        (buf[0] == 'r' && len > 2 &&
-         (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-        LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
-    } else if (buf[0] == 'r') {
+    if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd, addr, mask);
     } else if (buf[0] == 'i' && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
         sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
@@ -113,18 +127,15 @@ void acceptCli(int fd) {
         getIfFilters(len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 't') {
         debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
-    } else if (buf[0] == 'c') {
-        sighandled |= GOT_SIGUSR1;
-        send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT);
-    } else if (buf[0] == 'b') {
-        sighandled |= GOT_SIGUSR2;
-        send(cli_fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+    } else if (buf[0] == 'm') {
+        getMemStats(buf[1] == 'h' ?  0 : 1, cli_fd);
     } else
         send(cli_fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 
     // Close connection.
     close(cli_fd);
     LOG(LOG_DEBUG, 0, "acceptCli: Finished command %s.", buf);
+    exit(0);
 }
 
 // Below are functions and definitions for client connections.
