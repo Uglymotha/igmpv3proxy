@@ -38,10 +38,9 @@
 */
 
 #include "igmpv3proxy.h"
-#include <sys/resource.h>
 
 char Usage[] =
-"Usage: %s [-h | -V] [-c [-cbriftm...] [-h]] [[-n | -v | -d] <configfile>]\n"
+"Usage: %s [-h | -V] [-t table] [-c [-cbriftm...] [-h]] [[-n | -v | -d] <configfile>]\n"
 "\n"
 "   -h   Display this help screen\n"
 "   -V   Display version.\n"
@@ -49,6 +48,7 @@ char Usage[] =
 "   -v   Run in verbose mode, Output all messages on stderr. Implies -n.\n"
 "   -vv  Run in more verbose mode. Implies -n.\n"
 "   -d   Run in debug mode. Implies -vv.\n"
+"   -t   Operate on routing table.\n"
 "   -c   Daemon control and statistics.\n"
 "        -c   Reload Configuration.\n"
 "        -b   Rebuild Interfaces.\n"
@@ -309,22 +309,79 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
     va_end(ArgPt);
 
-    if (CONF->logFilePath || CONF->log2Stderr)
+    if ((CONF->logFilePath || CONF->log2Stderr) && lfp)
+#ifdef __linux__
+        if (!chld.nr || mrt_tbl < 0)
+            fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
+                          sec % 3600 % 60, nsec / 100000, LogMsg);
+        else
+            fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
+                    sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
+#else
         fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                                                      sec % 3600 % 60, nsec / 100000, LogMsg);
+#endif
     else
         syslog(Severity, "%s", LogMsg);
 
-    if (lfp != stderr)
+    if (lfp && lfp != stderr)
         fclose(lfp);
-    if (Severity <= LOG_ERR)
+    if (Severity <= LOG_ERR) {
+#ifdef __linux__
+        if (mrt_tbl < 0) {
+            sigstatus = 0x20;
+            IF_FOR_IF(chld.c, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid != 0) {
+                LOG(LOG_INFO, 0, "SIGTERM: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
+                kill(chld.c[Ln].pid, SIGTERM);
+                chld.c[Ln].pid = chld.c[Ln].tbl = -1;
+            }
+            igmpProxyCleanUp();
+        }
+#endif
         exit(-1);
-    logwarning |= (Severity == LOG_WARNING);
+    }
 }
 
+#ifdef __linux__
+/**
+*   Sets or removes ip mrules for table.
+*/
+void ipRules(int tbl, bool activate)
+{
+    struct IfDesc *IfDp;
+    char           msg[12];
+    sprintf(msg, "%d", tbl);
+    LOG(LOG_INFO, 0, "ipRules: %s mrules%s%s.", activate ? "Adding" : "Removing", activate ? "" : " for table ", activate ? "" : msg);
+    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IS_DISABLED(IfDp->state)) {
+        pid_t pid;
+        LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
+        for (int i = 0; i < 2; i++) {
+            if ((pid = fork()) < 0) {
+                LOG(LOG_ERR, errno, "ipRules: Cannot fork.");
+            } else if (pid == 0) {
+                execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
+                LOG(LOG_WARNING, errno, "Failed to exec: ip mrule %s iif %s table %s.", activate ? "add" : "del", IfDp->Name, msg);
+                exit(-1);
+            } else {
+                int status;
+                waitpid(pid, &status, 0);
+                if (WEXITSTATUS(status) != 0)
+                    LOG(activate ? LOG_WARNING : LOG_NOTICE, errno, "Failed to ip mrule %s %s %s table %s.",
+                        activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, msg);
+            }
+        }
+    }
+}
+#endif
+
+/**
+*   Show memory statistics for debugging purposes.
+*/
 bool getMemStats(int h, int fd) {
     char buf[1280], msg[1024];
     struct rusage usage;
+    if (fd < 0 && CONF->logLevel < LOG_DEBUG)
+        return false;
 
     if (fd >= 0) {
         if (h) {

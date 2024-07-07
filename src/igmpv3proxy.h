@@ -60,12 +60,14 @@
 #include <dirent.h>
 #include <libgen.h>
 
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/poll.h>
+#include <sys/resource.h>
 
 #include <net/if.h>
 #include <arpa/inet.h>
@@ -73,6 +75,9 @@
 //#################################################################################
 //  Global definitions and declarations.
 //#################################################################################
+#define IF_FOR(x, y)       if  (x) for (y)
+#define FOR_IF(x, y)       for (x) if  (y)
+#define IF_FOR_IF(x, y, z) if  (x) for (y) if (z)
 
 // Set type of control message structure for received socket data.
 #ifdef IP_PKTINFO
@@ -88,8 +93,8 @@ struct memstats {
     int64_t rcv, snd;                 // Buffers
     int64_t qry, tmr;                 // Queries, Timers
 };
-extern struct memstats memuse, memalloc, memfree;
-inline void __free(void *p, int64_t *m, int64_t *f, size_t s) { free(p); *m -= s; ++*f; }
+bool            getMemStats(int h, int fd);  // From lib.c
+inline void __free(void *p, int64_t *m, int64_t *f, size_t s) { free(p); if ((*m -= s) < 0 || !++*f) { getMemStats(0, -1); exit(6); }; }
 #define _free(p, m, s)         __free(p, &memuse.m, &memfree.m, s)
 #define _malloc(p, m, s)       (((p = malloc(s))      && (memuse.m += s) > 0           && ++memalloc.m) || getMemStats(0, -1))
 #define _calloc(p, n, m, s)    (((p = calloc(n, s))   && (memuse.m += (n * s)) > 0     && ++memalloc.m) || getMemStats(0, -1))
@@ -138,6 +143,12 @@ struct Config {
     uint32_t            dHostsHTSize;
     uint32_t            hashSeed;
     uint16_t            mcTables;
+#ifdef __linux__
+    // Mroute tables only supported on linux
+    int                 maxtbl;
+    int                 defaultTable;
+    bool                disableIpMrules;
+#endif
     // Max origins for route when bw control is disabled.
     uint16_t            maxOrigins;
     // Set default interface status and parameters.
@@ -159,6 +170,13 @@ struct Config {
     bool                querierElection;
     // Set if must not validate igmp checksum.
     bool                cksumVerify;
+};
+
+// Timers for proxy control.
+struct timers {
+    uint64_t rescanConf;
+    uint64_t rescanVif;
+    uint64_t bwControl;
 };
 
 // Linked list of filters.
@@ -196,6 +214,9 @@ struct queryParam {
 // Structure to keep configuration for VIFs.
 struct vifConfig {
     char                name[IF_NAMESIZE];
+#ifdef __linux__
+    int                 tbl;                            // Mroute Table for Interface.
+#endif
     uint8_t             state;                          // Configured interface state
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
@@ -209,7 +230,11 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
+#ifdef __linux__
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
+#else
 #define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
+#endif
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -277,6 +302,7 @@ struct IfDesc {
 #define DEFAULT_MAX_ORIGINS    64                       // Maximun nr of group sources.
 #define DEFAULT_HASHTABLE_SIZE 32                       // Default host tracking hashtable size.
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
+#define DEFAULT_MAXTBL         32                       // Maximum nr of mroute tables.
 
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
 #define GOT_SIGHUP  0x02
@@ -285,12 +311,32 @@ struct IfDesc {
 #define GOT_SIGUSR2 0x08
 #define GOT_IFREB   0x09
 #define GOT_SIGURG  0x10
+#define GOT_SIGTERM 0x20
 #define CONFRELOAD (sigstatus & GOT_SIGUSR1)
 #define IFREBUILD  (sigstatus & GOT_SIGUSR2)
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
 #define NOSIG      (sigstatus ==  0)
 #define STARTUP    (sigstatus ==  1)
 #define SHUTDOWN   (sigstatus == 32)
+#define STRSIG     const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
+#define SETSIGS     struct sigaction sa = { 0 };              \
+                    sa.sa_sigaction = signalHandler;          \
+                    sa.sa_flags = SA_SIGINFO;                 \
+                    sigemptyset(&sa.sa_mask);                 \
+                    sigaction(SIGTERM, &sa, NULL);            \
+                    sigaction(SIGINT,  &sa, NULL);            \
+                    sigaction(SIGHUP,  &sa, NULL);            \
+                    sigaction(SIGUSR1, &sa, NULL);            \
+                    sigaction(SIGUSR2, &sa, NULL);            \
+                    sigaction(SIGURG,  &sa, NULL);            \
+                    sigaction(SIGPIPE, &sa, NULL);            \
+                    sa.sa_flags |= SA_NOCLDWAIT | SA_NODEFER; \
+                    sigaction(SIGCHLD, &sa, NULL)
+#define BLOCKSIGS   signal(SIGUSR1, SIG_DFL);  \
+                    signal(SIGUSR2, SIG_DFL);  \
+                    signal(SIGHUP, SIG_DFL);   \
+                    signal(SIGCHLD, SIG_DFL);  \
+                    signal(SIGPIPE, SIG_DFL)
 
 // CLI Defines.
 #define CLI_CMD_BUF 256
@@ -349,14 +395,29 @@ struct igmpv3_report {
 //  Global Variables.
 //############A#####################################################################
 
+// Memory Statistics.
+extern struct memstats  memuse, memalloc, memfree;
+
 // Filename, Help string.
-extern char            *fileName, Usage[];
+extern char            *fileName, Usage[], tS[32];
 
 // Timekeeping.
-extern struct timespec  curtime, utcoff;
+extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
 extern uint8_t          sighandled, sigstatus, logwarning;
+
+#ifdef __linux__
+// MRT route table id. Linux only, not supported on FreeBSD.
+extern struct chld {
+    struct pt {
+        pid_t pid;
+        int   tbl;
+    }             *c;
+    int            nr;
+}                       chld;
+extern int              mrt_tbl;
+#endif
 
 // Upstream vif mask.
 extern uint32_t         uVifs;
@@ -369,6 +430,11 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
+/**
+*   igmpproxy.c
+*/
+void igmpProxyFork(int tbl);
+void igmpProxyCleanUp(void);
 
 /**
 *   config.c
@@ -385,9 +451,9 @@ void           configureVifs(void);
 *   cli.c
 */
 int  openCliFd(void);
-void closeCliFd(int fd);
+int  closeCliFd(int fd);
 void acceptCli(int fd);
-void cliCmd(char *cmd);
+void cliCmd(char *cmd, int tbl);
 
 /**
 *   ifvc.c
@@ -402,12 +468,12 @@ void           buildIfVc(void);
 struct IfDesc *getIfL(void);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void           getIfStats(struct IfDesc *IfDp, int h, int fd);
-void           getIfFilters(int h, int fd);
+void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
 
 /**
 *   igmp.c
 */
-void   initIgmp(bool free);
+int    initIgmp(bool activate);
 void   acceptIgmp(int recvlen, struct msghdr msgHdr);
 void   sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void   sendGeneralMemberQuery(struct IfDesc *IfDp);
@@ -415,7 +481,7 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
-#define         LOG(x, ...) x <= CONF->logLevel ? myLog(x, __VA_ARGS__) : (void)0
+#define         LOG(x, ...) ((logwarning |= (x == LOG_WARNING)) || true) && !(x <= CONF->logLevel) ?: myLog(x, __VA_ARGS__)
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
@@ -436,7 +502,9 @@ uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
 void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
-bool            getMemStats(int h, int fd);
+#ifdef __linux
+void            ipRules(int tbl, bool activate);
+#endif
 
 /**
 *   kern.c
@@ -483,7 +551,7 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 */
 #define         TMNAMESZ 48
 #define         DEBUGQUEUE(...) if (CONF->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
-struct timespec timer_ageQueue();
+struct timespec timer_ageQueue(void);
 uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
 void           *timer_clearTimer(uint64_t timer_id);
 void            debugQueue(const char *header, int h, int fd);

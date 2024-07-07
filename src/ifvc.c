@@ -50,8 +50,8 @@ static void freeIfDescL() {
     while (IfDp) {
         if ((IfDp->state & 0x80) || (IfDp->next && (IfDp->next->state & 0x80))) {
             // Remove interface marked for deletion.
-            if (!SHUTDOWN)
-                LOG(LOG_WARNING, 0, "Interface %s was removed.", (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
+            LOG(SHUTDOWN ? LOG_NOTICE : LOG_WARNING, 0,
+                "Interface %s was removed.", (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
             fIfDp = (IfDp->state & 0x80) ? IfDescL : IfDp->next;
             if (IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;
@@ -73,7 +73,7 @@ void rebuildIfVc(uint64_t *tid) {
     sigstatus = NOSIG ? GOT_IFREB : sigstatus;
 
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if (!CONFRELOAD && !SHUTDOWN)
+    if ((!CONFRELOAD && !SHUTDOWN) || (sighandled & GOT_SIGURG))
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
@@ -114,11 +114,13 @@ void buildIfVc(void) {
             || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
             || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
 #ifdef IFF_CANTCONFIG
-            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONF))
+            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0)))
+            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0))) {
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
+            LOG(LOG_DEBUG, 0, "buildIfVc: Found unusable interface %s.", tmpIfAddrsP->ifa_name);
             continue;
+        }
 
         uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
         if (! IfDp) {
@@ -128,9 +130,12 @@ void buildIfVc(void) {
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-        } else
+            LOG(LOG_DEBUG, 0, "buildIfVc: Found new interface %s.", IfDp->Name);
+        } else {
             // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
             IfDp->state |= 0x40;
+            LOG(LOG_DEBUG, 0, "buildIfVc: Found existing interface %s.", IfDp->Name);
+        }
 
         // Set the interface flags, index and IP.
         IfDp->sysidx       = ix;
@@ -140,23 +145,29 @@ void buildIfVc(void) {
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
-            LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
-            IfDp->mtu = 0;
+
+#ifdef __linux__
+        if (mrt_tbl >= 0) {
+#endif
+          if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
+              LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
+              IfDp->mtu = 0;
+          } else
+              IfDp->mtu = ifr.ifr_mtu;
+          // Enable multicast if necessary.
+          if (! (IfDp->Flags & IFF_MULTICAST)) {
+              ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
+              if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
+                  LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
+              else {
+                  IfDp->Flags = ifr.ifr_flags;
+                  LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
+              }
+          }
+#ifdef __linux__
         } else
-            IfDp->mtu = ifr.ifr_mtu;
-
-        // Enable multicast if necessary.
-        if (! (IfDp->Flags & IFF_MULTICAST)) {
-            ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
-            if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
-                LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
-            else {
-                IfDp->Flags = ifr.ifr_flags;
-                LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
-            }
-        }
-
+            IfDp->mtu = 1;
+#endif
         // Log the result...
         LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
                           IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
@@ -208,7 +219,11 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             sprintf(buf, "%lu,%lu\n", IfDp->rqCnt, IfDp->sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
+#ifdef __linux__
+    } else for (IFL(IfDp), i++) if (!mrt_tbl || !IS_DISABLED(IfDp->state)) {
+#else
     } else for (IFL(IfDp), i++) {
+#endif
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
@@ -228,21 +243,22 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
 /**
 *   Outputs configured filters to socket specified in arguments.
 */
-void getIfFilters(int h, int fd) {
-    struct IfDesc *IfDp;
-    char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "";
+void getIfFilters(struct IfDesc *IfDp, int h, int fd) {
+    char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "", s[10] = "";
+    struct IfDesc *IfDp2 = NULL;
     int            i = 1;
 
     if (h) {
-        sprintf(buf, "Current Active Filters:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n");
+        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp ? IfDp->Name : "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
-    for (IFL(IfDp), i++) {
+    for (IFL(IfDp2), i++) {
         struct filters *filter;
         int             i = 1;
-        for (filter = IfDp->conf->filters; filter; filter = filter->next, i++) {
-            char s[10] = "";
+        if (IfDp && IfDp != IfDp2)
+            continue;
+        for (filter = IfDp2->conf->filters; filter; filter = filter->next, i++) {
             if (filter->action > ALLOW) {
                 strcpy(msg, h ? "%10lld B/s" : "%lld");
                 sprintf(s, msg, filter->action);
@@ -251,7 +267,7 @@ void getIfFilters(int h, int fd) {
                 strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
             else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
-            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
+            sprintf(buf, msg, !h || i == 1 ? IfDp2->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
                     inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
                     filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);

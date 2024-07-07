@@ -49,22 +49,22 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize";
-static const char *phyintopt = " updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable  disableipmrules";
+static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
 
 // Daemon Configuration.
-static struct Config conf, oldconf;
+static struct Config       conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
-static struct timers {
-    uint64_t rescanConf;
-    uint64_t rescanVif;
-    uint64_t bwControl;
-} timers = { 0, 0, 0 };
+struct timers timers = { 0, 0, 0 };
+
+#ifdef __linux__
+    int *tbl, ntbl;
+#endif
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -209,14 +209,19 @@ static inline void initCommonConfig(void) {
     conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
 
     // Number of (hashed) route tables.
+#ifdef __linux__
+    conf.maxtbl          = DEFAULT_MAXTBL;
+    conf.defaultTable    = 0;
+    conf.disableIpMrules = false;
+#endif
     conf.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
 
     // Default interface state and parameters.
     conf.defaultInterfaceState = IF_STATE_DISABLED;
-    conf.defaultThreshold = DEFAULT_THRESHOLD;
-    conf.defaultRatelimit = DEFAULT_RATELIMIT;
-    conf.defaultFilters   = NULL;
-    conf.defaultRates     = NULL;
+    conf.defaultThreshold      = DEFAULT_THRESHOLD;
+    conf.defaultRatelimit      = DEFAULT_RATELIMIT;
+    conf.defaultFilters        = NULL;
+    conf.defaultRates          = NULL;
 
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
@@ -339,7 +344,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
 static inline bool parsePhyintToken(char *token) {
     struct vifConfig  *tmpPtr;
     struct filters   **filP, **rateP;
-    int64_t            intToken;
+    int64_t            intToken, i;
 
     if (!nextToken(token)) {
         // First token should be the interface name.
@@ -366,7 +371,9 @@ static inline bool parsePhyintToken(char *token) {
         for (filP = &tmpPtr->filters; *filP && *filP != conf.defaultFilters; filP = &(*filP)->next);
         for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.defaultRates; rateP = &(*rateP)->next);
     }
-
+#ifdef __linux__
+    tmpPtr->tbl = conf.defaultTable;
+#endif
     // Parse the rest of the config.
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpPtr->name);
     while (!logwarning && nextToken(token)) {
@@ -374,10 +381,29 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
             parseFilters(tmpPtr->name, token, &filP, &rateP);
         }
-
         if (strcmp(" nodefaultfilter", token) == 0) {
             tmpPtr->noDefaultFilter = true;
             LOG(LOG_NOTICE, 0, "Config (%s): Not setting default filters.", tmpPtr->name);
+
+        } else if (strcmp(" table", token) == 0 && INTTOKEN) {
+#ifdef __linux__
+            if (intToken < 0 || intToken > conf.maxtbl)
+                LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and %d.", tmpPtr->name, conf.maxtbl);
+            else {
+                int j;
+                LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
+                tmpPtr->tbl = intToken;
+                if (intToken > 0) {
+                    // igmpProxyInit() will fork the process for table 0 after config is loaded
+                    igmpProxyFork(intToken);
+                    for (j = 1; j < ntbl && tbl[j] != intToken; j++);
+                    if (j >= ntbl)
+                        tbl[ntbl++] = intToken;
+                }
+            }
+#else
+            LOG(LOG_NOTICE, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
+#endif
 
         } else if (strcmp(" updownstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPDOWNSTREAM;
@@ -540,6 +566,11 @@ bool loadConfig(char *cfgFile) {
     FILE                    *confFilePtr = NULL, *fp;
     char                    *token       = NULL;
     struct stat              st;
+#ifdef __linux__
+    ntbl = 1;
+    if (! (tbl = calloc((conf.maxtbl + 1), sizeof(int))))   // Freed by self
+        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+#endif
 
     // Initialize common config on first entry.
     if (conf.cnt++ == 0) {
@@ -609,6 +640,15 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
 
+        } else if (strcmp(" defaulttbl", token) == 0 && INTTOKEN) {
+#ifdef __linux__
+            if (intToken < 0 || intToken > conf.maxtbl)
+                LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and %d.", conf.maxtbl);
+            else
+                conf.defaultTable = intToken;
+#else
+            LOG(LOG_NOTICE, 0, "Config: Default table id is only valid on linux.");
+#endif
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.chroot = malloc(strlen(token))))
                 LOG(LOG_ERR, errno, "Config: Out of Memory.");
@@ -628,6 +668,32 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", conf.user->pw_name, conf.user->pw_uid);
 #else
             LOG(LOG_NOTICE, 0, "Config: Run as user %s is only valid for linux.", token + 1);
+#endif
+        } else if (strcmp(" maxtbl", token) == 0 && INTTOKEN) {
+#ifdef __linux__
+            if (intToken < 2 || intToken > 999999999)
+                LOG(LOG_NOTICE, 0, "Config: maxtbl should be between 2 and 999999999.");
+            else  {
+                if (!STARTUP && oldconf.maxtbl > intToken)
+                    LOG(LOG_WARNING, 0, "Config: Cannot decrease maxtbl, %d tables in use.", chld.nr);
+                else if (oldconf.maxtbl != intToken) {
+                    conf.maxtbl = intToken;
+                    if (!STARTUP && (   ! (chld.c = realloc(chld.c, (conf.maxtbl + 1) * sizeof(struct pt)))
+                                    || ! (tbl = realloc(tbl, (conf.maxtbl + 1) * sizeof(int)))))
+                        // Freed by igmpProxyCleanUp()
+                        LOG(LOG_ERR, errno, "Config: Out of Memory.");
+                }
+                LOG(LOG_NOTICE, 0, "Config: Setting max route tables to %d.", conf.maxtbl);
+            }
+#else
+            LOG(LOG_NOTICE, 0, "Config: maxtbl is only valid on linux.");
+#endif
+        } else if (strcmp(" disableipmrules", token) == 0) {
+#ifdef __linux__
+            LOG(LOG_NOTICE, 0, "Config: Will disable ip mrules for mc route tables.");
+            conf.disableIpMrules = true;
+#else
+            LOG(LOG_NOTICE, 0, "disableipmrules is ony valid for linux.");
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.group = getgrnam(token + 1)))
@@ -807,7 +873,7 @@ bool loadConfig(char *cfgFile) {
             else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (conf.logFilePath = realloc(conf.logFilePath, strlen(token))))
-                // Freed by igmpProxyCleanUp()
+                // Freed by igmpProxyMonitor() or signalHandler()
                 LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
             else {
                 strcpy(conf.logFilePath, t);
@@ -838,6 +904,19 @@ bool loadConfig(char *cfgFile) {
     free(token);  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
+
+#ifdef __linux__
+    if (chld.c && !logwarning) for (int i = 0; i < chld.nr; i++) {
+        // Check if any proxy needs to be stopped because it is no longer used.
+        int j = 0;
+        for (;j < ntbl && chld.c[i].tbl != tbl[j]; j++);
+        if (j >= ntbl) {
+            kill(chld.c[i].pid, SIGINT);  // SIGINT so process will not ve restarted in SIGCHLD
+            LOG(LOG_NOTICE, 0, "Stopping PID: %d (%d) for table %d.", chld.c[i].pid, i, chld.c[i].tbl);
+        }
+    }
+    free(tbl);  // Alloced by Self
+#endif
     if (--conf.cnt > 0 || logwarning)
         return !logwarning;
 
@@ -903,31 +982,25 @@ void reloadConfig(uint64_t *tid) {
     sigstatus       = NOSIG ? GOT_CONFREL : sigstatus;
     ovifConf        = vifConf;
     vifConf         = NULL;
-    oldconf = conf;
 
     // Load the new configuration keep reference to the old.
+    memcpy(&oldconf, &conf, sizeof(struct Config));
     conf.cnt = 0;
     if (!loadConfig(conf.configFilePath)) {
         LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", conf.configFilePath);
         if (vifConf)
             freeConfig(0);
         vifConf = ovifConf;
-        conf = oldconf;
+        memcpy(&conf, &oldconf, sizeof(struct Config));
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
+    getMemStats(0, -1);
 
-    LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
-                       memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
-    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
-                       memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
-    LOG(LOG_DEBUG, 0, "              %lld frees total, %lld interfaces, %lld config, %lld filters.",
-                       memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
-
-    if (sigstatus == GOT_CONFREL && conf.rescanConf)
+    if (conf.rescanConf && sigstatus == GOT_CONFREL && tid)
         *tid = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
     sigstatus = 0;
 }
@@ -939,6 +1012,9 @@ void reloadConfig(uint64_t *tid) {
 *   - Establish correct old and new state of interfaces.
 *   - Control querier process and do route maintenance on interface transitions.
 *   - Add and remove vifs from the kernel if needed.
+*   - IfDp->state represents the old and new state of interfaces as below.
+*      1        2           3      4        5       6       7       8
+*      upstream downstream  oldup  olddown  unused  unused  rebuilt removed
 */
 inline void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
@@ -986,6 +1062,16 @@ inline void configureVifs(void) {
         } else
             // Existing interface, oldstate is current state, newstate is configured state.
             IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
+#ifdef __linux__
+        if (mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) {
+            // Check if Interface is in table for current process.
+            LOG(LOG_NOTICE, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
+            IfDp->state &= ~0x3;  // Keep old state, new state disabled.
+        }
+        if (mrt_tbl < 0)
+            // Monitor process only needs config and state.
+            continue;
+#endif
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
         quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
 
@@ -1044,7 +1130,11 @@ inline void configureVifs(void) {
                 upsvifcount--;
         }
     }
-
+#ifdef __linux__
+    if (mrt_tbl < 0)
+        // Monitor process only needs config and state.
+        return;
+#endif
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
     if (!quickLeave) {
         LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");

@@ -183,6 +183,11 @@ int k_enableMRouter(void) {
         LOG(LOG_ERR, errno, "IGMP socket open Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_ERR, errno, "IGMP socket IP_HDRINCL Failed");
+#ifdef __linux__
+    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
+        errno == ENOPROTOOPT ? LOG(LOG_ERR, errno, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
+                             : LOG(LOG_ERR, errno, "IGMP socket MRT_TABLE Failed.");
+#endif
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_ERR, errno, "IGMP socket MRT_INIT Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
@@ -194,6 +199,7 @@ int k_enableMRouter(void) {
         CONF->bwControlInterval = 0;
     }
 #endif
+    LOG(LOG_INFO, 0, "k_enableMRouter: Enabled mroute socket.");
     fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
 
     return mrouterFD;

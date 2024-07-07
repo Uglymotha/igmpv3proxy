@@ -161,8 +161,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
                        inetFmt(mct->group, 1), IfDp->Name);
 
     // Update the interface group list.
-    if (! imc)
-        for (imc = *list; imc && imc->mct != mct; imc = imc->next);
+    IF_FOR(! imc, imc = *list; imc && imc->mct != mct; imc = imc->next);
     pimc = imc->prev;
     if (imc->next)
         imc->next->prev = imc->prev;
@@ -699,7 +698,7 @@ void clearGroups(void *Dp) {
 
     // Downstream interface transition.
     if (((CONFRELOAD || SSIGHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate))
-                                        || (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)))
+                                 || (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)))
         for (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct) {
             if (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)) {
                 // Transition to disabled / upstream, remove from group.

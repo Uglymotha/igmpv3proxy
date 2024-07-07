@@ -55,7 +55,7 @@ static uint64_t id = 1;
 *   Execute at most CONF->tmQsz expired timers, return time difference to next scheduled timer.
 *   Returns -1,-1 if no timer is scheduled, 0, -1 if next timer has already expired.
 */
-struct timespec timer_ageQueue() {
+struct timespec timer_ageQueue(void) {
     struct timeOutQueue *node = queue;
     uint64_t                i = 1;
 

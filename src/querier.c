@@ -135,13 +135,12 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
         struct qlst *qlst = NULL;
         struct src  *src  = mct->sources;
         nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
-        for (uint32_t i = 0; src && i < nsrcs; src = src->next)
-            if (src->ip >= query->igmp_src[i].s_addr) {
-                // Do not add denied sources to query list.
-                if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct))
-                    qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
-                i++;
-            }
+        FOR_IF(uint32_t i = 0; src && i < nsrcs; src = src->next, src->ip >= query->igmp_src[i].s_addr) {
+            // Do not add denied sources to query list.
+            if (src->ip == query->igmp_src[i].s_addr && checkFilters(IfDp, 1, src, mct))
+                qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
+            i++;
+        }
         LOG(LOG_INFO, 0, "processGroupQuery: Group group and source specific query for %s with %d sources on %s.",
                            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
         startQuery(IfDp, qlst);

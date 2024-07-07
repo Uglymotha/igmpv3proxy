@@ -56,7 +56,13 @@ int openCliFd(void) {
     cli_sa.sun_family = AF_UNIX;
 
     // Open the socket, set permissions and mode.
-    if (   ! strcat(strcpy(cli_sa.sun_path, CONF->runPath), "cli.sock")
+    if (   ! strcpy(cli_sa.sun_path, CONF->runPath)
+#ifdef __linux__
+        || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), PATH_MAX - strlen(cli_sa.sun_path),
+                      mrt_tbl ? "cli-%d.sock" : "cli.sock", mrt_tbl)
+#else
+        || ! strcat(cli_sa.sun_path, "cli.sock")
+#endif
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -70,7 +76,8 @@ int openCliFd(void) {
                || chmod(cli_sa.sun_path, 0660)) {
         LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
         cli_fd = -1;
-    }
+    } else
+        LOG(LOG_INFO, 0, "openCliFd: Opened CLI socket %s.", cli_sa.sun_path);
 
     return cli_fd;
 }
@@ -78,10 +85,11 @@ int openCliFd(void) {
 /**
 *   Close and unlink CLI socket.
 */
-void closeCliFd(int fd) {
+int closeCliFd(int fd) {
     shutdown(fd, SHUT_RDWR);
     close(fd);
     unlink(cli_sa.sun_path);
+    return(-1);
 }
 
 /**
@@ -118,13 +126,13 @@ void acceptCli(int fd)
 
     if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd, addr, mask);
-    } else if (buf[0] == 'i' && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
+    } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
         sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
         send(cli_fd, msg, strlen(msg), MSG_DONTWAIT);
     } else if (buf[0] == 'i') {
         getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, cli_fd);
     } else if (buf[0] == 'f') {
-        getIfFilters(len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
+        getIfFilters(IfDp, len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 't') {
         debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
     } else if (buf[0] == 'm') {
@@ -144,7 +152,7 @@ static int                srv_fd = -1;
 /**
 *   Sends command to daemon and writes response to stdout. Error exit if socket cannot be connected.
 */
-void cliCmd(char *cmd) {
+void cliCmd(char *cmd, int tbl) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
@@ -172,7 +180,10 @@ void cliCmd(char *cmd) {
             strcpy(srv_sa.sun_path, strcat(tpath, "/cli.sock"));
             break;
         }
-        sprintf(tpath, "%s/%s/cli.sock", path, fileName);
+        if (tbl)
+            sprintf(tpath, "%s/%s/cli-%d.sock", path, fileName, tbl);
+        else
+            sprintf(tpath, "%s/%s/cli.sock", path, fileName);
         if (stat(tpath, &st) != -1) {
             strcpy(srv_sa.sun_path, tpath);
             break;
@@ -183,7 +194,7 @@ void cliCmd(char *cmd) {
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0
            || connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un)) != 0) {
-        fprintf(stderr, "Cannot open daemon socket. %s\n", strerror(errno));
+        fprintf(stderr, "Cannot open daemon socket (%s). %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
 

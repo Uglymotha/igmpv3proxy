@@ -58,14 +58,16 @@ static char  msg[TMNAMESZ];
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
 *   Returns pointer to the receive buffer.
 */
-void initIgmp(bool free) {
+int initIgmp(bool activate) {
     // Allocate and initialize send and receive packet buffers.
-    if (rcv_buf)
+    if (!activate) {
         _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
-    if (snd_buf)
         _free(snd_buf, snd, memuse.snd);  // Alloced by Self
-    if (free)
-        return;
+        if (!(sighandled & GOT_SIGURG))
+            k_disableMRouter();
+        return -1;
+    }
+    int fd = k_enableMRouter();
     if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
         LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by Self
     struct ip *ip = (struct ip *)snd_buf;
@@ -98,6 +100,7 @@ void initIgmp(bool free) {
     LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
         memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
         memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd);
+    return fd;
 }
 
 /**
@@ -153,7 +156,7 @@ void acceptIgmp(int recvlen, struct msghdr msgHdr) {
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         case IGMPMSG_BW_UPCALL:
             if (CONF->bwControlInterval)
-                processBwUpcall((struct bw_upcall *)(recv_buf + sizeof(struct igmpmsg)),
+                processBwUpcall((struct bw_upcall *)(rcv_buf + sizeof(struct igmpmsg)),
                                ((recvlen - sizeof(struct igmpmsg)) / sizeof(struct bw_upcall)));
             return;
 #endif
