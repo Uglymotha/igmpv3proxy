@@ -331,14 +331,14 @@ struct IfDesc {
                     sigaction(SIGUSR2, &sa, NULL);            \
                     sigaction(SIGURG,  &sa, NULL);            \
                     sigaction(SIGPIPE, &sa, NULL);            \
-                    sa.sa_flags |= SA_NOCLDWAIT | SA_NODEFER; \
+                    sa.sa_flags |= SA_NOCLDWAIT;              \
                     sigaction(SIGCHLD, &sa, NULL)
-#define BLOCKSIGS   signal(SIGUSR1, SIG_DFL);  \
-                    signal(SIGUSR2, SIG_DFL);  \
-                    signal(SIGHUP, SIG_DFL);   \
+#define BLOCKSIGS   signal(SIGUSR1, SIG_IGN);  \
+                    signal(SIGUSR2, SIG_IGN);  \
+                    signal(SIGHUP, SIG_IGN);   \
                     signal(SIGCHLD, SIG_DFL);  \
-                    signal(SIGURG, SIG_DFL);   \
-                    signal(SIGPIPE, SIG_DFL)
+                    signal(SIGURG, SIG_IGN);   \
+                    signal(SIGPIPE, SIG_IGN)
 
 // CLI Defines.
 #define CLI_CMD_BUF 256

@@ -311,6 +311,19 @@ static void igmpProxyInit(void) {
         LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", CONF->user ? CONF->user->pw_gid : 0);
     unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
 
+#ifdef __linux__
+    if (mrt_tbl < 0) {
+        // Write PID in main daemon process only.
+#endif
+      char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 5];
+      sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
+      remove(pidFile);
+      FILE *pidFilePtr = fopen(pidFile, "w");
+      fprintf(pidFilePtr, "%d\n", getpid());
+      fclose(pidFilePtr);
+#ifdef __linux__
+    }
+#endif
     // Change ownership of run directory.
     if (chown(CONF->runPath, uid, gid) < 0)
         LOG(LOG_ERR, errno, "Failed to change ownership of %s to %s:%s.",
@@ -338,19 +351,7 @@ static void igmpProxyInit(void) {
     // Finally check log file permissions in case we need to run as user.
     if (CONF->logFilePath && (chown(CONF->logFilePath, uid, gid) || chmod(CONF->logFilePath, 0640)))
         LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONF->logFilePath, CONF->user->pw_name);
-
 #ifdef __linux__
-    if (mrt_tbl < 0) {
-#endif
-      // Write PID in main daemon process only.
-      char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 5];
-      sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
-      remove(pidFile);
-      FILE *pidFilePtr = fopen(pidFile, "w");
-      fprintf(pidFilePtr, "%d\n", getpid());
-      fclose(pidFilePtr);
-#ifdef __linux__
-    }
     // When multiple tables are in use, process for default table 0 is forked off here.
     if (chld.c && (pid = fork()) < 0) {
         LOG(LOG_ERR, errno, "igmpProxyInit: Cannot fork().");
@@ -585,8 +586,15 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
 #ifdef __linux__
         IF_FOR_IF(chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid == siginfo->si_pid) {
             int tbl;
-            LOG(siginfo->si_status == 0 ? LOG_NOTICE : LOG_WARNING, 0, "PID: %d (%d) for table: %d exited (%i)",
-                siginfo->si_pid, i + 1, chld.c[i].tbl, (int8_t)siginfo->si_status);
+            LOG(siginfo->si_status == 0 ? LOG_NOTICE : LOG_WARNING, 0, "PID: %d (%d) for table: %d %s (%i)",
+                siginfo->si_pid, i + 1, chld.c[i].tbl, (int8_t)siginfo->si_status == (int8_t)-2 ? "failed to load config" :
+                                                       (int8_t)siginfo->si_status == (int8_t)-1 ? "terminated abnormally" :
+                                                       (int8_t)siginfo->si_status == (int8_t)11 ? "segfaulted" :
+                                                       (int8_t)siginfo->si_status ==  (int8_t)6 ? "aborted" :
+                                                       (int8_t)siginfo->si_status ==  (int8_t)9 ? "was killed" :
+                                                       (int8_t)siginfo->si_status ==  (int8_t)2 ? "was terminated" :
+                                                       (int8_t)siginfo->si_status == (int8_t)15 ? "was terminated" : "gave up",
+                                                       (int8_t)siginfo->si_status);
             tbl = chld.c[i].tbl;
             chld.c[i].pid = chld.c[i].tbl = -1;
             if (tbl > 0)
