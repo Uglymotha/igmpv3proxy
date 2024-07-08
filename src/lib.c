@@ -327,18 +327,17 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     if (lfp && lfp != stderr)
         fclose(lfp);
     if (Severity <= LOG_ERR) {
+        Ln = sigstatus;
+        sigstatus = 0x20;  // SHUTDOWN
 #ifdef __linux__
-        if (mrt_tbl < 0) {
-            sigstatus = 0x20;
-            IF_FOR_IF(chld.c, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid != 0) {
-                LOG(LOG_INFO, 0, "SIGTERM: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
-                kill(chld.c[Ln].pid, SIGTERM);
-                chld.c[Ln].pid = chld.c[Ln].tbl = -1;
-            }
-            igmpProxyCleanUp();
+        IF_FOR_IF(mrt_tbl < 0 && chld.c, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
+            LOG(LOG_INFO, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
+            kill(chld.c[Ln].pid, SIGINT);
+            chld.c[Ln].pid = chld.c[Ln].tbl = -1;
         }
+        igmpProxyCleanUp();
 #endif
-        exit(-1);
+        exit(Ln == 1 ? -2 : -1);
     }
 }
 
@@ -360,7 +359,6 @@ void ipRules(int tbl, bool activate)
                 LOG(LOG_ERR, errno, "ipRules: Cannot fork.");
             } else if (pid == 0) {
                 execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
-                LOG(LOG_WARNING, errno, "Failed to exec: ip mrule %s iif %s table %s.", activate ? "add" : "del", IfDp->Name, msg);
                 exit(-1);
             } else {
                 int status;

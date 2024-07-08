@@ -208,11 +208,11 @@ int k_enableMRouter(void) {
 /**
 *   Disable the mrouted API and relases by this the lock.
 */
-void k_disableMRouter(void) {
+int k_disableMRouter(void) {
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0 || close(mrouterFD) < 0)
         LOG(LOG_WARNING, errno, "MRT_DONE/close");
-
     mrouterFD = -1;
+    return mrouterFD;
 }
 
 /**

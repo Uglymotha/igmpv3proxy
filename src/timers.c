@@ -60,11 +60,16 @@ struct timespec timer_ageQueue(void) {
     uint64_t                i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (size_t n = 0;i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1;
-          n = strlen(node->name), queue = node->next, node->func(node->data, node->id), _free(node, tmr, TMSZ), node = queue, i++)
-         // Alloced by timer_setTimer()
+    for (size_t n = 0; i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
-                          timeDiff(node->time, curtime).tv_nsec / 1000);
+            timeDiff(node->time, curtime).tv_nsec / 1000);
+        n = strlen(node->name);
+        queue = node->next;
+        node->func(node->data, node->id);
+        _free(node, tmr, TMSZ);   // Alloced by timer_setTimer()
+        node = queue;
+    }
+
     if (i > 1)
         DEBUGQUEUE("Age Queue", 1, -1);
 

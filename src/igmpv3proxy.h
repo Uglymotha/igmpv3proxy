@@ -93,12 +93,14 @@ struct memstats {
     int64_t rcv, snd;                 // Buffers
     int64_t qry, tmr;                 // Queries, Timers
 };
-bool            getMemStats(int h, int fd);  // From lib.c
-inline void __free(void *p, int64_t *m, int64_t *f, size_t s) { free(p); if ((*m -= s) < 0 || !++*f) { getMemStats(0, -1); exit(6); }; }
-#define _free(p, m, s)         __free(p, &memuse.m, &memfree.m, s)
-#define _malloc(p, m, s)       (((p = malloc(s))      && (memuse.m += s) > 0           && ++memalloc.m) || getMemStats(0, -1))
-#define _calloc(p, n, m, s)    (((p = calloc(n, s))   && (memuse.m += (n * s)) > 0     && ++memalloc.m) || getMemStats(0, -1))
-#define _realloc(p, m, sp, sm) (((p = realloc(p, sp)) && (memuse.m -= (sm) + (sp)) > 0 && ++memalloc.m) || getMemStats(0, -1))
+
+#define _malloc(p, m, s)        (((p = malloc(s))      && (memuse.m += s) > 0           && (++memalloc.m > 0)) || getMemStats(0, -1))
+#define _calloc(p, n, m, s)     (((p = calloc(n, s))   && (memuse.m += (n * s)) > 0     && (++memalloc.m > 0)) || getMemStats(0, -1))
+#define _realloc(p, m, sp, sm)  (((p = realloc(p, sp)) && (memuse.m -= (sm) + (sp)) > 0 && (++memalloc.m > 0)) || getMemStats(0, -1))
+#define _free(p, m, s)          free(p);                                          \
+                                if ((memuse.m -= s) < 0 || (++memfree.m <= 0)) {  \
+                                    getMemStats(0, -1);                           \
+                                    exit(6); }
 
 // In / output buffering.
 #define BUF_SIZE   9216                                 // Jumbo MTU
@@ -145,7 +147,6 @@ struct Config {
     uint16_t            mcTables;
 #ifdef __linux__
     // Mroute tables only supported on linux
-    int                 maxtbl;
     int                 defaultTable;
     bool                disableIpMrules;
 #endif
@@ -302,7 +303,6 @@ struct IfDesc {
 #define DEFAULT_MAX_ORIGINS    64                       // Maximun nr of group sources.
 #define DEFAULT_HASHTABLE_SIZE 32                       // Default host tracking hashtable size.
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
-#define DEFAULT_MAXTBL         32                       // Maximum nr of mroute tables.
 
 // Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
 #define GOT_SIGHUP  0x02
@@ -317,6 +317,7 @@ struct IfDesc {
 #define SSIGHUP    (sigstatus & GOT_SIGHUP)
 #define NOSIG      (sigstatus ==  0)
 #define STARTUP    (sigstatus ==  1)
+#define RESTART    (sigstatus == 16)
 #define SHUTDOWN   (sigstatus == 32)
 #define STRSIG     const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
 #define SETSIGS     struct sigaction sa = { 0 };              \
@@ -336,6 +337,7 @@ struct IfDesc {
                     signal(SIGUSR2, SIG_DFL);  \
                     signal(SIGHUP, SIG_DFL);   \
                     signal(SIGCHLD, SIG_DFL);  \
+                    signal(SIGURG, SIG_DFL);   \
                     signal(SIGPIPE, SIG_DFL)
 
 // CLI Defines.
@@ -502,6 +504,7 @@ uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
 void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
+bool            getMemStats(int h, int fd);
 #ifdef __linux
 void            ipRules(int tbl, bool activate);
 #endif
@@ -518,7 +521,7 @@ bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, 
 int     k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int     k_getMrouterFD(void);
 int     k_enableMRouter(void);
-void    k_disableMRouter(void);
+int     k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
 void    k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);

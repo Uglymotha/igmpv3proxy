@@ -451,7 +451,6 @@ static uint64_t getGroupBw(struct subnet group, struct IfDesc *IfDp) {
                 bw += mfc->rate;
         }
     }
-
     return bw;
 }
 

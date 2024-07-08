@@ -86,10 +86,13 @@ int openCliFd(void) {
 *   Close and unlink CLI socket.
 */
 int closeCliFd(int fd) {
-    shutdown(fd, SHUT_RDWR);
-    close(fd);
-    unlink(cli_sa.sun_path);
-    return(-1);
+    if (!(sighandled & GOT_SIGURG)) {
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+        unlink(cli_sa.sun_path);
+        return -1;
+    }
+    return fd;
 }
 
 /**
@@ -177,7 +180,10 @@ void cliCmd(char *cmd, int tbl) {
     while (path) {
         sprintf(tpath, "%s/%s/root", path, fileName);
         if (lstat(tpath, &st) == 0 && (S_ISLNK(st.st_mode) || S_ISDIR(st.st_mode))) {
-            strcpy(srv_sa.sun_path, strcat(tpath, "/cli.sock"));
+            if (tbl)
+                sprintf(srv_sa.sun_path, "/%s/%s/root/cli-%d.sock", path, fileName, tbl);
+            else
+                sprintf(srv_sa.sun_path, "/%s/%s/root/cli.sock", path, fileName);
             break;
         }
         if (tbl)

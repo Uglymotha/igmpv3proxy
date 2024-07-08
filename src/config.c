@@ -60,10 +60,11 @@ static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
-struct timers timers = { 0, 0, 0 };
+static struct timers timers = { 0, 0, 0 };
 
+// Keeps the tables seen in the config file.
 #ifdef __linux__
-    int *tbl, ntbl;
+static int *tbl = NULL, ntbl = 0;
 #endif
 
 // Macro to get a token which should be integer.
@@ -88,17 +89,31 @@ void freeConfig(bool old) {
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
         // Remove and free filters and ratelimits.
-        for (; cConf->filters && cConf->filters != dFil;
-               tFil = cConf->filters->next, _free(cConf->filters, fil, FILSZ), cConf->filters = tFil);
-        for (; cConf->rates && cConf->rates != dRate;
-               tRate = cConf->rates->next, _free(cConf->rates, fil, FILSZ), cConf->rates = tRate);
+        while (cConf->filters && cConf->filters != dFil) {
+            tFil = cConf->filters->next;
+            _free(cConf->filters, fil, FILSZ);
+            cConf->filters = tFil;
+        }
+        while (cConf->rates && cConf->rates != dRate) {
+            tRate = cConf->rates->next;
+            _free(cConf->rates, fil, FILSZ);
+            cConf->rates = tRate;
+        }
         _free(cConf, vif, VIFSZ);
     }
 
     if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown.
-        for (; dFil; tFil = dFil->next, _free(dFil, fil, FILSZ), dFil = tFil);
-        for (; dRate; tRate = dRate->next, _free(dRate, fil, FILSZ), dRate = tRate);
+        while (dFil) {
+            tFil = dFil->next;
+            _free(dFil, fil, FILSZ);
+            dFil = tFil;
+        }
+        while (dRate) {
+            tRate = dRate->next;
+            _free(dRate, fil, FILSZ);
+            dRate = tRate;
+        }
     }
     if (SHUTDOWN) {
         // On Shutdown stop any running timers.
@@ -210,7 +225,6 @@ static inline void initCommonConfig(void) {
 
     // Number of (hashed) route tables.
 #ifdef __linux__
-    conf.maxtbl          = DEFAULT_MAXTBL;
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
 #endif
@@ -371,9 +385,7 @@ static inline bool parsePhyintToken(char *token) {
         for (filP = &tmpPtr->filters; *filP && *filP != conf.defaultFilters; filP = &(*filP)->next);
         for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.defaultRates; rateP = &(*rateP)->next);
     }
-#ifdef __linux__
-    tmpPtr->tbl = conf.defaultTable;
-#endif
+
     // Parse the rest of the config.
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpPtr->name);
     while (!logwarning && nextToken(token)) {
@@ -387,18 +399,21 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" table", token) == 0 && INTTOKEN) {
 #ifdef __linux__
-            if (intToken < 0 || intToken > conf.maxtbl)
-                LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and %d.", tmpPtr->name, conf.maxtbl);
+            if (intToken < 0 || intToken > 999999999)
+                LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpPtr->name);
             else {
-                int j;
-                LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
                 tmpPtr->tbl = intToken;
-                if (intToken > 0) {
+                LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
+                if (intToken > 0 && mrt_tbl < 0) {
+                    if (ntbl / 32 == 0 && ! (tbl = realloc(tbl, ((ntbl % 32) + 1) * sizeof(int))))
+                        LOG(LOG_ERR, errno, "Config (%s): Out of Memory", tmpPtr->name);  // Freed by loadConfig()
+                    if (!ntbl)
+                        tbl[ntbl++] = CONF->defaultTable;
+                    for (i = 0; i < ntbl && tbl[i] != intToken; i++);
+                    if (i >= ntbl)
+                        tbl[ntbl++] = intToken;
                     // igmpProxyInit() will fork the process for table 0 after config is loaded
                     igmpProxyFork(intToken);
-                    for (j = 1; j < ntbl && tbl[j] != intToken; j++);
-                    if (j >= ntbl)
-                        tbl[ntbl++] = intToken;
                 }
             }
 #else
@@ -566,11 +581,6 @@ bool loadConfig(char *cfgFile) {
     FILE                    *confFilePtr = NULL, *fp;
     char                    *token       = NULL;
     struct stat              st;
-#ifdef __linux__
-    ntbl = 1;
-    if (! (tbl = calloc((conf.maxtbl + 1), sizeof(int))))   // Freed by self
-        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
-#endif
 
     // Initialize common config on first entry.
     if (conf.cnt++ == 0) {
@@ -639,20 +649,10 @@ bool loadConfig(char *cfgFile) {
             else if (!logwarning)
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
-
-        } else if (strcmp(" defaulttbl", token) == 0 && INTTOKEN) {
-#ifdef __linux__
-            if (intToken < 0 || intToken > conf.maxtbl)
-                LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and %d.", conf.maxtbl);
-            else
-                conf.defaultTable = intToken;
-#else
-            LOG(LOG_NOTICE, 0, "Config: Default table id is only valid on linux.");
-#endif
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.chroot = malloc(strlen(token))))
                 LOG(LOG_ERR, errno, "Config: Out of Memory.");
-            memcpy(conf.chroot, token + 1, strlen(token));   // Freed by igmpProxyInit(), igmpProxyCleanup() or Self.
+            memcpy(conf.chroot, token + 1, strlen(token));   // Freed by signalHandler() or Self
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
                 LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", conf.chroot);
                 free(conf.chroot);
@@ -660,34 +660,38 @@ bool loadConfig(char *cfgFile) {
             } else
                 LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", conf.chroot);
 
+        } else if (strcmp(" defaulttable", token) == 0 && INTTOKEN) {
+#ifdef __linux__
+            if (intToken < 0 || intToken > 999999999)
+                LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and 999999999.");
+            else {
+                conf.defaultTable = intToken;
+                if (mrt_tbl < 0 && !ntbl && ! (tbl = malloc(32 * sizeof(int))))  // Freed by Self
+                    LOG(LOG_ERR, errno, "Config: Out of Memory.");
+                else if (mrt_tbl < 0) {
+                    int i;
+                    for (i = 0; i < ntbl && tbl[i] != conf.defaultTable; i++);
+                    if (i >= ntbl)
+                        tbl[ntbl++] = conf.defaultTable;
+                    if (conf.defaultTable > 0)
+                        igmpProxyFork(conf.defaultTable);
+                }
+                LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
+            }
+#else
+            LOG(LOG_NOTICE, 0, "Config: Default table id is only valid on linux.");
+#endif
+
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
 #ifdef __linux__
             if (! (conf.user = getpwnam(token + 1)))
-                LOG(LOG_WARNING, 0, "Config: User %s does not exist.", token + 1);
+                LOG(LOG_WARNING, 0, "Config: User '%s' does not exist.", token + 1);
             else
-                LOG(LOG_NOTICE, 0, "Config: Running daemon as %s (%d)", conf.user->pw_name, conf.user->pw_uid);
+                LOG(LOG_NOTICE, 0, "Config: Running daemon as '%s' (%d)", conf.user->pw_name, conf.user->pw_uid);
 #else
-            LOG(LOG_NOTICE, 0, "Config: Run as user %s is only valid for linux.", token + 1);
+            LOG(LOG_NOTICE, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
 #endif
-        } else if (strcmp(" maxtbl", token) == 0 && INTTOKEN) {
-#ifdef __linux__
-            if (intToken < 2 || intToken > 999999999)
-                LOG(LOG_NOTICE, 0, "Config: maxtbl should be between 2 and 999999999.");
-            else  {
-                if (!STARTUP && oldconf.maxtbl > intToken)
-                    LOG(LOG_WARNING, 0, "Config: Cannot decrease maxtbl, %d tables in use.", chld.nr);
-                else if (oldconf.maxtbl != intToken) {
-                    conf.maxtbl = intToken;
-                    if (!STARTUP && (   ! (chld.c = realloc(chld.c, (conf.maxtbl + 1) * sizeof(struct pt)))
-                                    || ! (tbl = realloc(tbl, (conf.maxtbl + 1) * sizeof(int)))))
-                        // Freed by igmpProxyCleanUp()
-                        LOG(LOG_ERR, errno, "Config: Out of Memory.");
-                }
-                LOG(LOG_NOTICE, 0, "Config: Setting max route tables to %d.", conf.maxtbl);
-            }
-#else
-            LOG(LOG_NOTICE, 0, "Config: maxtbl is only valid on linux.");
-#endif
+
         } else if (strcmp(" disableipmrules", token) == 0) {
 #ifdef __linux__
             LOG(LOG_NOTICE, 0, "Config: Will disable ip mrules for mc route tables.");
@@ -697,9 +701,9 @@ bool loadConfig(char *cfgFile) {
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.group = getgrnam(token + 1)))
-                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1);
+                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
             else
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", conf.group->gr_name);
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s' (%d).", conf.group->gr_name, conf.group->gr_gid);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             conf.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
@@ -906,16 +910,17 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
 
 #ifdef __linux__
-    if (chld.c && !logwarning) for (int i = 0; i < chld.nr; i++) {
+    IF_FOR_IF(mrt_tbl < 0 && chld.c && !logwarning, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0) {
         // Check if any proxy needs to be stopped because it is no longer used.
-        int j = 0;
-        for (;j < ntbl && chld.c[i].tbl != tbl[j]; j++);
+        int j;
+        for (j = 0; j < ntbl && chld.c[i].tbl != tbl[j]; j++);
         if (j >= ntbl) {
-            kill(chld.c[i].pid, SIGINT);  // SIGINT so process will not ve restarted in SIGCHLD
+            kill(chld.c[i].pid, SIGINT);  // SIGINT so process will not be restarted in SIGCHLD
             LOG(LOG_NOTICE, 0, "Stopping PID: %d (%d) for table %d.", chld.c[i].pid, i, chld.c[i].tbl);
         }
     }
-    free(tbl);  // Alloced by Self
+    free(tbl); // Alloced by Self
+    tbl = NULL, ntbl = 0;
 #endif
     if (--conf.cnt > 0 || logwarning)
         return !logwarning;
@@ -979,7 +984,7 @@ bool loadConfig(char *cfgFile) {
  */
 void reloadConfig(uint64_t *tid) {
     // Check and set sigstatus to what we are actually doing right now.
-    sigstatus       = NOSIG ? GOT_CONFREL : sigstatus;
+    sigstatus       = NOSIG && !(sighandled & GOT_SIGURG) ? GOT_CONFREL : sigstatus;
     ovifConf        = vifConf;
     vifConf         = NULL;
 
@@ -995,7 +1000,8 @@ void reloadConfig(uint64_t *tid) {
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
-        freeConfig(1);
+        if (!(sighandled & GOT_SIGURG))
+            freeConfig(1);
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
     getMemStats(0, -1);

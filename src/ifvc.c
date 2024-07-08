@@ -73,7 +73,7 @@ void rebuildIfVc(uint64_t *tid) {
     sigstatus = NOSIG ? GOT_IFREB : sigstatus;
 
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if ((!CONFRELOAD && !SHUTDOWN) || (sighandled & GOT_SIGURG))
+    if ((!CONFRELOAD && !SHUTDOWN))
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.

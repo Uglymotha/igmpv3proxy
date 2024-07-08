@@ -59,15 +59,17 @@ static char  msg[TMNAMESZ];
 *   Returns pointer to the receive buffer.
 */
 int initIgmp(bool activate) {
+    static int fd = -1;
     // Allocate and initialize send and receive packet buffers.
     if (!activate) {
         _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
         _free(snd_buf, snd, memuse.snd);  // Alloced by Self
-        if (!(sighandled & GOT_SIGURG))
-            k_disableMRouter();
-        return -1;
+        if (fd != -1 && !(sighandled & GOT_SIGURG))
+            fd = k_disableMRouter();
+        return fd;
     }
-    int fd = k_enableMRouter();
+    if (fd == -1)
+        fd = k_enableMRouter();
     if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
         LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by Self
     struct ip *ip = (struct ip *)snd_buf;
