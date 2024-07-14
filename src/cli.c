@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -40,10 +40,11 @@
 #include "igmpv3proxy.h"
 
 // Local Prototypes.
-static void signalHandler(int sig);
+static void cliSignalHandler(int sig);
 
 // Daemon CLI socket address.
-static struct sockaddr_un cli_sa;
+extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
+static struct sockaddr_un    cli_sa;
 
 /**
 *   Opens and binds a socket for cli connections.
@@ -86,7 +87,7 @@ int openCliFd(void) {
 *   Close and unlink CLI socket.
 */
 int closeCliFd(int fd) {
-    if (!(sighandled & GOT_SIGURG)) {
+    if (!RESTART) {
         shutdown(fd, SHUT_RDWR);
         close(fd);
         unlink(cli_sa.sun_path);
@@ -120,7 +121,7 @@ void acceptCli(int fd)
             buf[0] == 'c' ? send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
                           : send(cli_fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
         } else if ((pid = fork()) != 0)
-            pid < 0 ? LOG(LOG_WARNING, errno, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
+            pid < 0 ? LOG(LOG_WARNING, eNOFORK, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
         if (pid != 0 || buf[0] == 'c' || buf[0] == 'b') {
             close(cli_fd);
             return;
@@ -161,7 +162,7 @@ void cliCmd(char *cmd, int tbl) {
     struct sockaddr_un srv_sa;
     char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(RUN_PATHS)] = RUN_PATHS, *path, tpath[128];
 
-    sa.sa_handler = signalHandler;
+    sa.sa_handler = cliSignalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
@@ -215,7 +216,7 @@ void cliCmd(char *cmd, int tbl) {
     close(srv_fd);
 }
 
-static void signalHandler(int sig) {
+static void cliSignalHandler(int sig) {
     switch (sig) {
     case SIGINT:
     case SIGTERM:

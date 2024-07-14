@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -64,7 +64,7 @@ static struct timers timers = { 0, 0, 0 };
 
 // Keeps the tables seen in the config file.
 #ifdef __linux__
-static int *tbl = NULL, ntbl = 0;
+static int *tbl = NULL, ntbl = 0, tblsz = 32 * sizeof(int);
 #endif
 
 // Macro to get a token which should be integer.
@@ -85,7 +85,7 @@ void freeConfig(bool old) {
     struct filters   *fil, *tFil,  *dFil  = old ? oldconf.defaultFilters : conf.defaultFilters,
                            *tRate, *dRate = old ? oldconf.defaultRates   : conf.defaultRates;
 
-    // Free vifconf and filters, Alloced by parsePhyintToken() and parseFilters()
+    // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
     for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
         tConf = cConf->next;
         // Remove and free filters and ratelimits.
@@ -102,8 +102,8 @@ void freeConfig(bool old) {
         _free(cConf, vif, VIFSZ);
     }
 
-    if (old || SHUTDOWN) {
-        // Free default filters when clearing old config, or on shutdown.
+    if (old || SHUTDOWN || RESTART) {
+        // Free default filters when clearing old config, or on shutdown / restart.
         while (dFil) {
             tFil = dFil->next;
             _free(dFil, fil, FILSZ);
@@ -122,7 +122,6 @@ void freeConfig(bool old) {
         timer_clearTimer(timers.bwControl);
         timers = (struct timers){ 0, 0, 0 };
     }
-
     LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
@@ -192,9 +191,12 @@ static inline bool nextToken(char *token) {
 */
 static inline void initCommonConfig(void) {
     // User and group to run daemon process.
-    conf.user   = STARTUP ? NULL : conf.user;
-    conf.chroot = STARTUP ? NULL : conf.chroot;
-    conf.group  = STARTUP ? NULL : conf.group;
+    conf.runPath        = conf.runPath;
+    conf.configFilePath = conf.configFilePath;
+    conf.logFilePath    = STARTUP ? NULL : conf.logFilePath;
+    conf.chroot         = STARTUP ? NULL : conf.chroot;
+    conf.user           = STARTUP ? NULL : conf.user;
+    conf.group          = STARTUP ? NULL : conf.group;
 
     // Defaul Query Parameters.
     conf.robustnessValue = DEFAULT_ROBUSTNESS;
@@ -224,10 +226,8 @@ static inline void initCommonConfig(void) {
     conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
 
     // Number of (hashed) route tables.
-#ifdef __linux__
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
-#endif
     conf.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
 
     // Default interface state and parameters.
@@ -343,7 +343,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
             // Allocate memory for filter and copy from argument.
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
             if (! _calloc(***n, 1, fil, FILSZ))
-                LOG(LOG_ERR, errno, "parseFilters: Out of Memory.");  // Freed by freeConfig()
+                LOG(LOG_ERR, eNOMEM, "parseFilters: Out of Memory.");  // Freed by freeConfig()
             ****n = fil;
 
             **n = &(****n).next;
@@ -369,8 +369,8 @@ static inline bool parsePhyintToken(char *token) {
     // Find existing or create new vifConf.
     for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
     if (! tmpPtr) {
-        if (! _malloc(tmpPtr, vif, VIFSZ))  // Freed by freeConfig
-            LOG(LOG_ERR, errno, "parsePhyintToken: Out of memory.");
+        if (! _calloc(tmpPtr, 1, vif, VIFSZ))  // Freed by freeConfig
+            LOG(LOG_ERR, eNOMEM, "parsePhyintToken: Out of memory.");
         // Insert vifconf in list and set default config and filters pointers.
         *tmpPtr = DEFAULT_VIFCONF;
         vifConf = tmpPtr;
@@ -405,8 +405,8 @@ static inline bool parsePhyintToken(char *token) {
                 tmpPtr->tbl = intToken;
                 LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
                 if (intToken > 0 && mrt_tbl < 0) {
-                    if (ntbl / 32 == 0 && ! (tbl = realloc(tbl, ((ntbl % 32) + 1) * sizeof(int))))
-                        LOG(LOG_ERR, errno, "Config (%s): Out of Memory", tmpPtr->name);  // Freed by loadConfig()
+                    if (ntbl % 32 == 0 && ! _recalloc(tbl, var, ((ntbl / 32) + 1) * tblsz, (ntbl / 32) * tblsz))
+                        LOG(LOG_ERR, eNOMEM, "Config (%s): Out of Memory", tmpPtr->name);  // Freed by loadConfig()
                     if (!ntbl)
                         tbl[ntbl++] = CONF->defaultTable;
                     for (i = 0; i < ntbl && tbl[i] != intToken; i++);
@@ -568,6 +568,7 @@ static inline bool parsePhyintToken(char *token) {
         tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
         tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
         tmpPtr->cksumVerify ? "Enabled" : "Disabled", tmpPtr->quickLeave ? "Enabled" : "Disabled");
+    return true;
 }
 
 /**
@@ -610,9 +611,9 @@ bool loadConfig(char *cfgFile) {
     } else if (!S_ISREG(st_mode) || ! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
         LOG(LOG_WARNING, errno, "Config: Failed to open config file '%s'.", cfgFile);
-    } else if (! (token = malloc(MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t)))) {  // Freed by self
+    } else if (! _malloc(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))) {  // Freed by self
         // Allocate buffer and open config file and initialize common config when loading main config file.
-        LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+        LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
     } else {
         // Increase count and initialize buffer. First char of token is ' ', counters to 0.
         token[0] = ' ';
@@ -650,12 +651,12 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
-            if (! (conf.chroot = malloc(strlen(token))))
-                LOG(LOG_ERR, errno, "Config: Out of Memory.");
-            memcpy(conf.chroot, token + 1, strlen(token));   // Freed by signalHandler() or Self
+            if (! (conf.chroot = malloc(strlen(token))))   // Freed by signalHandler() or Self
+                LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
+            memcpy(conf.chroot, token + 1, strlen(token));
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
                 LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", conf.chroot);
-                free(conf.chroot);
+                free(conf.chroot);  // Alloced by Self
                 conf.chroot = NULL;
             } else
                 LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", conf.chroot);
@@ -666,8 +667,9 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
                 conf.defaultTable = intToken;
-                if (mrt_tbl < 0 && !ntbl && ! (tbl = malloc(32 * sizeof(int))))  // Freed by Self
-                    LOG(LOG_ERR, errno, "Config: Out of Memory.");
+                if (mrt_tbl < 0 && ntbl % 32 == 0 && ! _recalloc(tbl, var, ((ntbl / 32) + 1) * tblsz, (ntbl / 32) * tblsz))
+                    // Freed by Self
+                    LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
                 else if (mrt_tbl < 0) {
                     int i;
                     for (i = 0; i < ntbl && tbl[i] != conf.defaultTable; i++);
@@ -775,7 +777,7 @@ bool loadConfig(char *cfgFile) {
             else {
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
                 if (! _calloc(conf.defaultFilters, 1, fil, FILSZ))  // Freed by freeConfig()
-                    LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+                    LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
                 *conf.defaultFilters = FILTERANY;
             }
 
@@ -877,8 +879,8 @@ bool loadConfig(char *cfgFile) {
             else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (conf.logFilePath = realloc(conf.logFilePath, strlen(token))))
-                // Freed by igmpProxyMonitor() or signalHandler()
-                LOG(LOG_ERR, errno, "loadConfig: Out of Memory.");
+                // Freed by signalHandler()
+                LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
             else {
                 strcpy(conf.logFilePath, t);
                 chmod(conf.logFilePath, 0640);
@@ -905,7 +907,7 @@ bool loadConfig(char *cfgFile) {
     }
 
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
-    free(token);  // Alloced by self
+    _free(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
 
@@ -919,7 +921,7 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Stopping PID: %d (%d) for table %d.", chld.c[i].pid, i, chld.c[i].tbl);
         }
     }
-    free(tbl); // Alloced by Self
+    _free(tbl, var, (((ntbl - 1) / 32) + 1) * tblsz); // Alloced by Self
     tbl = NULL, ntbl = 0;
 #endif
     if (--conf.cnt > 0 || logwarning)
@@ -983,10 +985,11 @@ bool loadConfig(char *cfgFile) {
  *   Reloads the configuration file and removes interfaces which were removed from config.
  */
 void reloadConfig(uint64_t *tid) {
-    // Check and set sigstatus to what we are actually doing right now.
-    sigstatus       = NOSIG && !(sighandled & GOT_SIGURG) ? GOT_CONFREL : sigstatus;
+    // Check and set sigstatus if we are doing a reload confi timer..
     ovifConf        = vifConf;
     vifConf         = NULL;
+    if (tid)
+        sigstatus |= GOT_SIGUSR1;
 
     // Load the new configuration keep reference to the old.
     memcpy(&oldconf, &conf, sizeof(struct Config));
@@ -1000,15 +1003,14 @@ void reloadConfig(uint64_t *tid) {
     } else {
         // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
-        if (!(sighandled & GOT_SIGURG))
-            freeConfig(1);
+        freeConfig(1);
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
-    getMemStats(0, -1);
-
-    if (conf.rescanConf && sigstatus == GOT_CONFREL && tid)
+    if (conf.rescanConf && tid) {
         *tid = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
-    sigstatus = 0;
+        sigstatus &= ~GOT_SIGUSR1;
+    }
+    getMemStats(0, -1);
 }
 
 /**
@@ -1019,44 +1021,45 @@ void reloadConfig(uint64_t *tid) {
 *   - Control querier process and do route maintenance on interface transitions.
 *   - Add and remove vifs from the kernel if needed.
 *   - IfDp->state represents the old and new state of interfaces as below.
-*      1        2           3      4        5       6       7       8
-*      upstream downstream  oldup  olddown  unused  unused  rebuilt removed
+*      8        7         6       5       4       3       2       1
+*      removed  existing  unused  unused  olddown oldup   down    up
 */
-inline void configureVifs(void) {
+void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
-    struct vifConfig *confPtr = NULL, *oconfPtr = NULL;
+    struct vifConfig *vconf = NULL, *oconf = NULL;
     struct filters   *fil, *ofil;
     bool              quickLeave = false;
-    uint32_t          vifcount = 0, upsvifcount = 0, downvifcount = 0;
+    uint32_t          vifcount = 0, upvifcount = 0, downvifcount = 0;
 
+    uVifs = 0;
     if (! vifConf)
-        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Beware, everything will be default.");
-
-    GETIFLIF(IfDp, !IFREBUILD || (!(IfDp->state & 0x40) && (IfDp->state & 0x80))) {
-        // Loop through all (new) interfaces and find matching config.
-        for (confPtr = vifConf; confPtr && strcmp(IfDp->Name, confPtr->name); confPtr = confPtr->next);
-        if (confPtr) {
-            LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
-        } else {
-            // Interface has no matching config, create default config.
-            LOG(LOG_INFO, 0, "configureVifs: Creating default config for %s interface %s.",
-                               IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"
-                             : IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream"
-                             : IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
-            if (! _malloc(confPtr, vif, VIFSZ))
-                LOG(LOG_ERR, errno, "configureVifs: Out of Memory.");   // Freed by freeConfig()
-            *confPtr = DEFAULT_VIFCONF;
-            vifConf  = confPtr;
-            strcpy(confPtr->name, IfDp->Name);
-            confPtr->filters = conf.defaultFilters;
+        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
+    GETIFL(IfDp) {
+        // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
+        oconf = NULL;
+        if (!IFREBUILD || !(IfDp->Flags & 0x40)) {
+            for (oconf = NULL, vconf = vifConf; vconf && strcmp(IfDp->Name, vconf->name); vconf = vconf->next);
+            if (vconf) {
+                LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
+            } else {
+                // Interface has no matching config, create default config.
+                LOG(LOG_INFO, 0, "configureVifs: Creating default config for %s interface %s.",
+                                  IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"
+                                : IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream"
+                                : IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
+                if (! _calloc(vconf, 1, vif, VIFSZ))
+                    LOG(LOG_ERR, eNOMEM, "configureVifs: Out of Memory.");   // Freed by freeConfig()
+                *vconf = DEFAULT_VIFCONF;
+                vifConf  = vconf;
+                strcpy(vconf->name, IfDp->Name);
+                vconf->filters = conf.defaultFilters;
+            }
+            // Link the configuration to the interface. And update the states.
+            oconf = IfDp->conf;
+            IfDp->conf = vconf;
         }
-        // Link the configuration to the interface. And update the states.
-        oconfPtr = IfDp->conf;
-        IfDp->conf = confPtr;
-    }
 
-    for (uVifs = 0, IFL(IfDp)) {
-        // Loop through all interface and configure corresponding MC vifs.
+        // Evaluate to old and new state of interface.
         if (!CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
             if (!(IfDp->state & 0x80))
@@ -1073,8 +1076,7 @@ inline void configureVifs(void) {
             // Check if Interface is in table for current process.
             LOG(LOG_NOTICE, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
-        }
-        if (mrt_tbl < 0)
+        } else if (mrt_tbl < 0)
             // Monitor process only needs config and state.
             continue;
 #endif
@@ -1091,8 +1093,8 @@ inline void configureVifs(void) {
             IfDp->conf->qry.interval = 10, IfDp->conf->qry.responseInterval = 10;
 
         // Check if filters have changed so that ACLs will be reevaluated.
-        if (!IfDp->filCh && (CONFRELOAD || SSIGHUP)) {
-            for (fil = confPtr->filters, ofil = oconfPtr ? oconfPtr->filters : NULL;
+        if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
+            for (fil = vconf->filters, ofil = oconf ? oconf->filters : NULL;
                  fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
             if (fil || ofil) {
@@ -1112,7 +1114,7 @@ inline void configureVifs(void) {
             if (IS_DOWNSTREAM(newstate))
                 downvifcount++;
             if (IS_UPSTREAM(newstate)) {
-                upsvifcount++;
+                upvifcount++;
                 BIT_SET(uVifs, IfDp->index);
             }
         }
@@ -1132,8 +1134,8 @@ inline void configureVifs(void) {
                 vifcount--;
             if (IS_DOWNSTREAM(oldstate) && downvifcount)
                 downvifcount--;
-            if (IS_UPSTREAM(oldstate)   && upsvifcount)
-                upsvifcount--;
+            if (IS_UPSTREAM(oldstate)   && upvifcount)
+                upvifcount--;
         }
     }
 #ifdef __linux__
@@ -1149,13 +1151,13 @@ inline void configureVifs(void) {
     }
 
     // Check if quickleave was enabled or disabled due to config change.
-    if ((CONFRELOAD || SSIGHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize) {
+    if ((CONFRELOAD || SHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize) {
         LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
                              oldconf.dHostsHTSize, conf.dHostsHTSize);
         clearGroups(&conf);
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
-    if (!SHUTDOWN && (vifcount < 2 || upsvifcount == 0 || downvifcount == 0))
-        LOG((STARTUP ? LOG_ERR : LOG_WARNING), 0, "There must be at least 2 interfaces, 1 Vif as upstream and 1 as dowstream.");
+    if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
+        LOG(LOG_ERR, eNOCONF, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }

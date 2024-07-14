@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@ void k_set_rcvbuf(int bufsize) {
                  delta /= 2;
             if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
                 if (bufsize < minsize)
-                    LOG(LOG_ERR, 0, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
+                    LOG(LOG_ERR, eNOMEM, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
                 bufsize -= delta;
             } else {
                 if (delta < 1024)
@@ -94,31 +94,25 @@ inline void k_set_if(struct IfDesc *IfDp) {
 *   closed the membership is dropped.
 */
 inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source) {
-#if defined HAVE_STRUCT_GROUP_REQ_GR_INTERFACE
-    struct group_req grpReq;
-    struct group_source_req grpSReq;
- #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
+    struct group_req        grpReq  = { 0 };
+    struct group_source_req grpSReq = { 0 };
+#ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
     struct sockaddr_in grp = { sizeof(struct sockaddr_in), AF_INET, 0, group };
     struct sockaddr_in src = { sizeof(struct sockaddr_in), AF_INET, 0, source };
- #else
+#else
     struct sockaddr_in grp = { AF_INET, 0, {group}, {0} };
     struct sockaddr_in src = { AF_INET, 0, {source}, {0} };
- #endif
+#endif
     source == (uint32_t)-1 ? (grpReq.gr_interface = IfDp->sysidx) : (grpSReq.gsr_interface = IfDp->sysidx);
     memcpy(source == (uint32_t)-1 ? &grpReq.gr_group : &grpSReq.gsr_group, &grp, sizeof(grp));
     memcpy(&grpSReq.gsr_source, &src, sizeof(src));
-#else
-    struct ip_mreq grpReq;
-    grpReq.imr_multiaddr.s_addr = group;
-    grpReq.imr_interface.s_addr = IfDp->InAdr.s_addr;
-#endif
 
     if (setsockopt(mrouterFD, IPPROTO_IP,
                    source == (uint32_t)-1 ? (join ?        MCAST_JOIN_GROUP     : MCAST_LEAVE_GROUP)
                                           : join ? (mode ? MCAST_BLOCK_SOURCE   : MCAST_JOIN_SOURCE_GROUP)
                                                  : (mode ? MCAST_UNBLOCK_SOURCE : MCAST_LEAVE_SOURCE_GROUP),
                    source == (uint32_t)-1 ? (void *)&grpReq : (void *)&grpSReq,
-                   source == (uint32_t)-1 ? sizeof(grpReq) : sizeof(grpSReq)) < 0) {
+                   source == (uint32_t)-1 ? sizeof(grpReq)  : sizeof(grpSReq)) < 0) {
         LOG(LOG_WARNING, errno, "%s %s%s%s on %s failed",   join ? (source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" :
                                                                     mode ? "MCAST_BLOCK_SOURCE"   : "MCAST_JOIN_SOURCE_GROUP")
                                                                  : (source == (uint32_t)-1 ? "MCAST_LEAVE_GROUP" :
@@ -144,7 +138,7 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
     uint32_t i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
     if (! (ss = malloc(size)))  // Freed by self.
-        LOG(LOG_ERR, errno, "k_setSourceFilter: Out of Memory.");
+        LOG(LOG_ERR, eNOMEM, "k_setSourceFilter: Out of Memory.");
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
     int er = EADDRNOTAVAIL;  // Freebsd errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, group };
@@ -180,18 +174,18 @@ int k_enableMRouter(void) {
     int Va = 1;
 
     if ((mrouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
-        LOG(LOG_ERR, errno, "IGMP socket open Failed");
+        LOG(LOG_ERR, eNOINIT, "IGMP socket open Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, errno, "IGMP socket IP_HDRINCL Failed");
+        LOG(LOG_ERR, eNOINIT, "IGMP socket IP_HDRINCL Failed");
 #ifdef __linux__
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
-        errno == ENOPROTOOPT ? LOG(LOG_ERR, errno, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
-                             : LOG(LOG_ERR, errno, "IGMP socket MRT_TABLE Failed.");
+        errno == ENOPROTOOPT ? LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
+                             : LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed.");
 #endif
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, errno, "IGMP socket MRT_INIT Failed");
+        LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_INIT Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, errno, "IGMP socket IP_IFINFO Failed");
+        LOG(LOG_ERR, eNOINIT, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
           || ! (Va & MRT_MFC_BW_UPCALL)) {
@@ -219,10 +213,9 @@ int k_disableMRouter(void) {
 *   Delete vif when removed from config or disappeared from system.
 */
 void k_delVIF(struct IfDesc *IfDp) {
-    struct vifctl vifCtl;
+    struct vifctl vifCtl = { 0 };
 
     vifCtl.vifc_vifi = IfDp->index;
-
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
                         IfDp->Flags, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->conf->threshold, IfDp->conf->ratelimit);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)

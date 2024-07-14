@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -39,14 +39,16 @@
 
 #include "igmpv3proxy.h"
 
+extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
+
 // Queue definition.
 static struct timeOutQueue {
     uint64_t                id;
-    void             (*func)();    // function to call
-    void                 *data;    // Argument for function.
-    struct timespec       time;    // Time for event
-    struct timeOutQueue  *next;    // Next event in queue
-    char                 *name;    // name of the timer
+    void                (*func)(void *, uint64_t);  // function to call
+    void                 *data;                     // Argument for function.
+    struct timespec       time;                     // Time for event
+    struct timeOutQueue  *next;                     // Next event in queue
+    char                 *name;                     // name of the timer
 }     *queue = NULL;
 #define TMSZ (sizeof(struct timeOutQueue) + n + 1)
 static uint64_t id = 1;
@@ -60,7 +62,7 @@ struct timespec timer_ageQueue(void) {
     uint64_t                i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (size_t n = 0; i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; i++) {
+    for (size_t n = 0; !sighandled && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
             timeDiff(node->time, curtime).tv_nsec / 1000);
         n = strlen(node->name);
@@ -86,7 +88,7 @@ uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data)
 
     // Create and set a new timer.
     if (! _malloc(node, tmr, TMSZ))  // Freed by timer_ageQueue() or timer_clearTimer()
-        LOG(LOG_ERR, errno, "timer_setTimer: Out of memory.");
+        LOG(LOG_ERR, eNOMEM, "timer_setTimer: Out of memory.");
     *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, n + 1) };
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
@@ -134,7 +136,7 @@ void *timer_clearTimer(uint64_t tid) {
 */
 void debugQueue(const char *header, int h, int fd) {
     char                  msg[CLI_CMD_BUF] = "", buf[CLI_CMD_BUF] = "";
-    struct timeOutQueue  *node;
+    struct timeOutQueue  *node = queue;
     uint64_t              i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
@@ -144,10 +146,10 @@ void debugQueue(const char *header, int h, int fd) {
         sprintf(buf, "Active Timers:\n_Nr_|____In____|___ID___|________________Name_______________\n");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
-    for (i = 1, node = queue; node; node = node->next, i++) {
+    for (i = 1; node; node = node->next, i++) {
         struct timespec delay = timeDiff(curtime, node->time);
         if (fd < 0)
-            LOG(LOG_DEBUG, 0, "%3d [%5d.%1ds] - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
+            LOG(LOG_DEBUG, 0, "| %3d %5d.%1ds | - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
         else {
             strcpy(msg, h ? "%3d | %5d.%1ds | %6d | %s" : "%d %d.%d %d %s");
             sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);

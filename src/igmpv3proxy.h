@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -91,16 +91,20 @@ struct memstats {
     int64_t mct, src, mfc, ifm;       // Multicast Forwarding Table
     int64_t ifd, fil, vif;            // Interfaces
     int64_t rcv, snd;                 // Buffers
-    int64_t qry, tmr;                 // Queries, Timers
+    int64_t qry, tmr, var;            // Queries, Timers, various.
 };
 
-#define _malloc(p, m, s)        (((p = malloc(s))      && (memuse.m += s) > 0           && (++memalloc.m > 0)) || getMemStats(0, -1))
-#define _calloc(p, n, m, s)     (((p = calloc(n, s))   && (memuse.m += (n * s)) > 0     && (++memalloc.m > 0)) || getMemStats(0, -1))
-#define _realloc(p, m, sp, sm)  (((p = realloc(p, sp)) && (memuse.m -= (sm) + (sp)) > 0 && (++memalloc.m > 0)) || getMemStats(0, -1))
-#define _free(p, m, s)          free(p);                                          \
-                                if ((memuse.m -= s) < 0 || (++memfree.m <= 0)) {  \
-                                    getMemStats(0, -1);                           \
-                                    exit(6); }
+#define   _malloc(p,m,s)     (((p=malloc(s))     && (memuse.m+=(s)) > 0            && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define   _calloc(p,n,m,s)   (((p=calloc(n,s))   && (memuse.m+=(n * (s))) > 0      && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset(p + (sm), 0, (sp) - (sm))) \
+                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define _free(p, m, s)       if (p) {                                             \
+                                 if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
+                                     getMemStats(0,-1);                           \
+                                     exit(6);                                     \
+                                    }                                             \
+                                 free(p); }
 
 // In / output buffering.
 #define BUF_SIZE   9216                                 // Jumbo MTU
@@ -145,11 +149,9 @@ struct Config {
     uint32_t            dHostsHTSize;
     uint32_t            hashSeed;
     uint16_t            mcTables;
-#ifdef __linux__
     // Mroute tables only supported on linux
     int                 defaultTable;
     bool                disableIpMrules;
-#endif
     // Max origins for route when bw control is disabled.
     uint16_t            maxOrigins;
     // Set default interface status and parameters.
@@ -215,9 +217,7 @@ struct queryParam {
 // Structure to keep configuration for VIFs.
 struct vifConfig {
     char                name[IF_NAMESIZE];
-#ifdef __linux__
     int                 tbl;                            // Mroute Table for Interface.
-#endif
     uint8_t             state;                          // Configured interface state
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
@@ -231,11 +231,7 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#ifdef __linux__
 #define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
-#else
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
-#endif
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -304,21 +300,23 @@ struct IfDesc {
 #define DEFAULT_HASHTABLE_SIZE 32                       // Default host tracking hashtable size.
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
-// Signal Handling. 0 = no signal, 2 = SIGHUP, 4 = SIGUSR1, 8 = SIGUSR2, 5 = Timed Reload, 9 = Timed Rebuild, 32 = SHUTDOWN
+// Signal Handling.
 #define GOT_SIGHUP  0x02
 #define GOT_SIGUSR1 0x04
-#define GOT_CONFREL 0x05
 #define GOT_SIGUSR2 0x08
-#define GOT_IFREB   0x09
 #define GOT_SIGURG  0x10
-#define GOT_SIGTERM 0x20
+#define GOT_SIGCHLD 0x20
+#define GOT_SIGPIPE 0x40
+#define GOT_SIGTERM 0x80
+#define NOSIG      (sigstatus == 0)
+#define STARTUP    (sigstatus & 0x01)
 #define CONFRELOAD (sigstatus & GOT_SIGUSR1)
 #define IFREBUILD  (sigstatus & GOT_SIGUSR2)
-#define SSIGHUP    (sigstatus & GOT_SIGHUP)
-#define NOSIG      (sigstatus ==  0)
-#define STARTUP    (sigstatus ==  1)
-#define RESTART    (sigstatus == 16)
-#define SHUTDOWN   (sigstatus == 32)
+#define SHUP       (sigstatus & GOT_SIGHUP)
+#define RESTART    (sigstatus & GOT_SIGURG)
+#define SCHLD      (sigstatus & GOT_SIGCHLD)
+#define SPIPE      (sigstatus & GOT_SIGPIPE)
+#define SHUTDOWN   (sigstatus & GOT_SIGTERM)
 #define STRSIG     const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
 #define SETSIGS     struct sigaction sa = { 0 };              \
                     sa.sa_sigaction = signalHandler;          \
@@ -331,7 +329,7 @@ struct IfDesc {
                     sigaction(SIGUSR2, &sa, NULL);            \
                     sigaction(SIGURG,  &sa, NULL);            \
                     sigaction(SIGPIPE, &sa, NULL);            \
-                    sa.sa_flags |= SA_NOCLDWAIT;              \
+                    sa.sa_flags |= SA_NOCLDWAIT | SA_NODEFER; \
                     sigaction(SIGCHLD, &sa, NULL)
 #define BLOCKSIGS   signal(SIGUSR1, SIG_IGN);  \
                     signal(SIGUSR2, SIG_IGN);  \
@@ -339,6 +337,13 @@ struct IfDesc {
                     signal(SIGCHLD, SIG_DFL);  \
                     signal(SIGURG, SIG_IGN);   \
                     signal(SIGPIPE, SIG_IGN)
+
+// Some private errnos to use for logging and error exiting.
+#define  eABNRML -1
+#define  eNOINIT -3
+#define  eNOFORK -4
+#define  eNOMEM  -5
+#define  eNOCONF -7
 
 // CLI Defines.
 #define CLI_CMD_BUF 256
@@ -407,14 +412,16 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint8_t          sighandled, sigstatus, logwarning;
+extern uint8_t               sigstatus, logwarning;
 
 #ifdef __linux__
 // MRT route table id. Linux only, not supported on FreeBSD.
 extern struct chld {
     struct pt {
-        pid_t pid;
-        int   tbl;
+                 pid_t   pid;
+                 int     tbl;
+        volatile uint8_t sig;
+        volatile int8_t  st;
     }             *c;
     int            nr;
 }                       chld;
@@ -436,7 +443,7 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 *   igmpproxy.c
 */
 void igmpProxyFork(int tbl);
-void igmpProxyCleanUp(void);
+void igmpProxyCleanUp(int code);
 
 /**
 *   config.c
@@ -465,6 +472,7 @@ void cliCmd(char *cmd, int tbl);
 #define        IFGETIFL(y, x)       if (y) GETIFL(x)
 #define        GETIFLIF(x, y)       GETIFL(x) if (y)
 #define        IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
+void           freeIfDescL(bool force);
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
@@ -484,6 +492,11 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 *   lib.c
 */
 #define         LOG(x, ...) ((logwarning |= (x == LOG_WARNING)) || true) && !(x <= CONF->logLevel) ?: myLog(x, __VA_ARGS__)
+#define         setHash(t, h)   if (h != (uint32_t)-1) BIT_SET(t[h / 64], h % 64)
+#define         clearHash(t, h) if (h != (uint32_t)-1) BIT_CLR(t[h / 64], h % 64)
+#define         testHash(t, h)  (BIT_TST(t[h / 64], h % 64))
+inline bool     noHash(register uint64_t *t) { register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
+                                               while(i < n && t[i] == 0) i++; return (i >= n); }
 const char     *inetFmt(uint32_t addr, int pos);
 const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
 uint16_t        inetChksum(uint16_t *addr, int len);
@@ -493,10 +506,6 @@ struct timespec timeDelay(int delay);
 uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
 bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
-void            setHash(register uint64_t *table, register uint32_t hash);
-void            clearHash(register uint64_t *table, register uint32_t hash);
-bool            testHash(register uint64_t *table, register uint32_t hash);
-bool            noHash(register uint64_t *table);
 uint16_t        sortArr(register uint32_t *arr, register uint16_t nr);
 const char     *igmpPacketKind(unsigned int type, unsigned int code);
 const char     *grecKind(unsigned int type);

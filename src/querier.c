@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -95,9 +95,8 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         // Add to source to the query list. Allocate memory per 32 sources.
         LOG(LOG_DEBUG, 0, "addSrcToQlst: Adding source %s to query list for %s (%d).",
                            inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), nsrcs + 1);
-        if ( (nsrcs & 0x1F) == 0 &&
-            ! _realloc(qlst, qry, QRYSZ(nsrcs), nsrcs == 0 ? QRYSZ(nsrcs) : QRYSZ(nsrcs) - (32 * sizeof(void *))))
-            LOG(LOG_ERR, errno, "addSrcToQlst; Out of Memory.");  // Freed by delQuery().
+        if ((nsrcs % 32) == 0 && ! _realloc(qlst, qry, QRYSZ(nsrcs), QRYSZ(nsrcs - 1)))
+            LOG(LOG_ERR, eNOMEM, "addSrcToQlst; Out of Memory.");  // Freed by delQuery().
         if (nsrcs == 0)
             *qlst = (struct qlst){ NULL, NULL, src->mct, IfDp, 0, 4, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0 };
         BIT_SET(src->vifB.d, IfDp->index);
@@ -157,12 +156,12 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
 
     if (qlst->nsrcs == 0) {
         struct qlst *qlst1;
-        // Check if we should take over a running GSQ. Allocate a new qlst as given may change when new queries are started. 
-        if (! _malloc(qlst1, qry, QLSZ))  // Freed by delQuery().
-            LOG(LOG_ERR, errno, "starQuery: Out of Memory.");
-        memcpy(qlst1, qlst, sizeof(struct qlst));
+        // Check if we should take over a running GSQ. Allocate a new qlst as given may change when new queries are started.
         if (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, qry, IfDp))
             delQuery(IfDp, NULL, qlst->mct, NULL, 2);
+        if (! _malloc(qlst1, qry, QLSZ))  // Freed by delQuery().
+            LOG(LOG_ERR, eNOMEM, "starQuery: Out of Memory.");
+        memcpy(qlst1, qlst, sizeof(struct qlst));
         qlst = qlst1;
         LOG(LOG_INFO, 0, "startQuery #%d: Querying group %s on %s", qC + 1, inetFmt(qlst->mct->group, 1), IfDp->Name);
         BIT_SET(qlst->mct->vifB.qry, IfDp->index);
@@ -211,8 +210,8 @@ void groupSpecificQuery(struct qlst *qlst) {
                 qlst->cnt = qlst->misc + 1;  // Make sure we're done.
         } else if (BIT_TST(qlst->type, 2)) {
             // Age sources in case of GSSQ. Create two queries (1 - sources still last member 2 - active source).
-            if (! (query1 = malloc(size)) || ! (query2 = malloc(size)))  // Freed by self.
-                LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
+            if (! _malloc(query1, var, (size)) || ! _malloc(query2, var, size))  // Freed by self.
+                LOG(LOG_ERR, eNOMEM, "GSQ: Out of Memory.");
             *query1 = (struct igmpv3_query){ qlst->type      , qlst->code, 0, {qlst->mct->group}, qlst->misc, 0, 0 };
             *query2 = (struct igmpv3_query){ qlst->type | 0x1, qlst->code, 0, {qlst->mct->group}, qlst->misc, 0, 0 };
             while (i < qlst->nsrcs) {
@@ -251,13 +250,13 @@ void groupSpecificQuery(struct qlst *qlst) {
     // Send queries if not aging for other querier. Use qlst in case of group query, or first group and source query.
     if (!BIT_TST(qlst->type, 3) && (   (qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 1))
                                     || (qlst->cnt == 1          && BIT_TST(qlst->type, 2)))) {
-        if (! (query = malloc(sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr))))  // Freed by Self
-            LOG(LOG_ERR, errno, "GSQ: Out of Memory.");
+        if (! _malloc(query, var, sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr)))  // Freed by Self
+            LOG(LOG_ERR, eNOMEM, "GSQ: Out of Memory.");
         *query = (struct igmpv3_query){ qlst->type, qlst->code, 0, {qlst->mct->group}, qlst->misc, 0, qlst->nsrcs };
         if (BIT_TST(qlst->type, 2))
             for (uint32_t i = 0; i < qlst->nsrcs; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
         sendIgmp(qlst->IfDp, query);
-        free(query);  // Alloced by Self
+        _free(query, var, sizeof(struct igmpv3_query) + qlst->nsrcs * sizeof(struct in_addr));  // Alloced by Self
     } else if (!BIT_TST(qlst->type, 3) && qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2)) {
         if (query1 && query1->igmp_nsrcs)
             sendIgmp(qlst->IfDp, query1);
@@ -287,8 +286,8 @@ void groupSpecificQuery(struct qlst *qlst) {
         delQuery(qlst->IfDp, qlst, NULL, NULL, 0);
     }
 
-    free(query1);  // Alloced by self.
-    free(query2);  // Alloced by self.
+    _free(query1, var, size);  // Alloced by self.
+    _free(query2, var, size);  // Alloced by self.
     logRouteTable("GSQ", 1, -1, group, (uint32_t)-1);
 }
 

@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -45,15 +45,15 @@ static struct IfDesc *IfDescL = NULL;
 /**
 *   Frees the IfDesc table and cleans up on interface removal.
 */
-static void freeIfDescL() {
+void freeIfDescL(bool force) {
     struct IfDesc *IfDp = IfDescL, *fIfDp;
     while (IfDp) {
-        if ((IfDp->state & 0x80) || (IfDp->next && (IfDp->next->state & 0x80))) {
+        if (force || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
             // Remove interface marked for deletion.
-            LOG(SHUTDOWN ? LOG_NOTICE : LOG_WARNING, 0,
-                "Interface %s was removed.", (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
-            fIfDp = (IfDp->state & 0x80) ? IfDescL : IfDp->next;
-            if (IfDp->state & 0x80)
+            LOG(SHUTDOWN ? LOG_NOTICE : LOG_WARNING, 0, "Interface %s was removed.",
+                      force | (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
+            fIfDp = force || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
+            if (force || IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;
             else
                 IfDp->next = IfDp->next->next;
@@ -69,11 +69,10 @@ static void freeIfDescL() {
 *   Rebuilds the list of interfaces.
 */
 void rebuildIfVc(uint64_t *tid) {
-    // Check and set sigstatus to what we are actually doing right now.
-    sigstatus = NOSIG ? GOT_IFREB : sigstatus;
-
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if ((!CONFRELOAD && !SHUTDOWN))
+    if (tid)
+        sigstatus |= GOT_SIGUSR2;
+    if (!IfDescL || !(CONFRELOAD || SHUTDOWN || RESTART))
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
@@ -81,12 +80,13 @@ void rebuildIfVc(uint64_t *tid) {
     configureVifs();
 
     // Free removed interfaces.
-    freeIfDescL();
+    freeIfDescL(false);
 
     // Restart timer when doing timed reload.
-    if (sigstatus == GOT_IFREB && CONF->rescanVif && tid)
+    if (CONF->rescanVif && tid)
         *tid = timer_setTimer(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
     if (IFREBUILD || STARTUP) {
+        sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
                            memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
         LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
@@ -94,7 +94,6 @@ void rebuildIfVc(uint64_t *tid) {
         LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
                            memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
     }
-    sigstatus = IFREBUILD ? 0 : sigstatus;
 }
 
 /**
@@ -107,7 +106,7 @@ void buildIfVc(void) {
 
     // Get the system interface list.
     if ((getifaddrs(&IfAddrsP)) == -1)
-        LOG((STARTUP ? LOG_ERR : LOG_WARNING), errno, "Cannot enumerate interfaces.");
+        LOG((LOG_ERR), eNOINIT, "Cannot enumerate interfaces.");
     else for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
         unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
@@ -118,7 +117,6 @@ void buildIfVc(void) {
 #endif
             || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0))) {
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
-            LOG(LOG_DEBUG, 0, "buildIfVc: Found unusable interface %s.", tmpIfAddrsP->ifa_name);
             continue;
         }
 
@@ -126,7 +124,7 @@ void buildIfVc(void) {
         if (! IfDp) {
             // New interface, allocate and initialize.
             if (!_malloc(IfDp, ifd, IFSZ))
-                LOG(LOG_ERR, errno, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
+                LOG(LOG_ERR, eNOMEM, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
@@ -147,7 +145,9 @@ void buildIfVc(void) {
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
 
 #ifdef __linux__
-        if (mrt_tbl >= 0) {
+        if (mrt_tbl < 0)
+            IfDp->mtu = 1;
+        else
 #endif
           if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
               LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
@@ -164,10 +164,7 @@ void buildIfVc(void) {
                   LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
               }
           }
-#ifdef __linux__
-        } else
-            IfDp->mtu = 1;
-#endif
+
         // Log the result...
         LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
                           IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);

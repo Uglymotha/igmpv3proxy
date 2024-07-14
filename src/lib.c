@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -67,7 +67,7 @@ static char s[4][19];
 /**
 *   Convert an IP address in u_long (network) format into a printable string.
 */
-inline const char *inetFmt(uint32_t addr, int pos) {
+const char *inetFmt(uint32_t addr, int pos) {
     uint8_t *a = (uint8_t *)&addr;
     sprintf(s[pos - 1], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
     return s[pos - 1];
@@ -76,7 +76,7 @@ inline const char *inetFmt(uint32_t addr, int pos) {
 /**
 *   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
 */
-inline const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
+const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
     uint8_t *a    = (uint8_t *)&addr;
     int      bits = 33 - ffs(ntohl(mask));
 
@@ -104,7 +104,7 @@ int confFilter(const struct dirent *d) {
 /**
 *   Calculate time difference between two timespecs. Return 0,-1 if t1 is already past t2.
 */
-inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
+struct timespec timeDiff(struct timespec t1, struct timespec t2) {
     return t1.tv_sec  > t2.tv_sec || (t1.tv_sec == t2.tv_sec && t1.tv_nsec > t2.tv_nsec) ? (struct timespec){ 0, -1 } :
            t1.tv_nsec > t2.tv_nsec ? (struct timespec){ t2.tv_sec - t1.tv_sec - 1, 1000000000 - t1.tv_nsec + t2.tv_nsec }
                                    : (struct timespec){ t2.tv_sec - t1.tv_sec, t2.tv_nsec - t1.tv_nsec };
@@ -113,7 +113,7 @@ inline struct timespec timeDiff(struct timespec t1, struct timespec t2) {
 /**
 *   Return struct timespec offest by delay (in .1s) from current time.
 */
-inline struct timespec timeDelay(int delay) {
+struct timespec timeDelay(int delay) {
     clock_gettime(CLOCK_REALTIME, &curtime);
     return curtime.tv_nsec + ((delay % 10) * 100000000) >= 1000000000 ?
            (struct timespec){ curtime.tv_sec + delay / 10 + 1, curtime.tv_nsec + ((delay % 10) * 100000000) - 1000000000 } :
@@ -123,14 +123,14 @@ inline struct timespec timeDelay(int delay) {
 /**
 *   Copies s_addr from struct sockaddr to struct sockaddr_in.
 */
-inline uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
+uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
     return ((struct sockaddr_in *)addr)->sin_addr.s_addr;
 }
 
 /**
 *   Parses a subnet address string on the format a.b.c.d/n into a subnet addr and mask.
 */
-inline bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask) {
+bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask) {
     char addrstr[19];
     strncpy(addrstr, str, 18);
     // First get the network part of the address...
@@ -161,7 +161,7 @@ inline bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t 
 *   Our algorithm is simple, using a 32 bit accumulator (sum), we add sequential 16 bit words to it,
 *   and at the end, fold back all the carry bits from the top 16 bits into the lower 16 bits.
 */
-inline uint16_t inetChksum(register uint16_t *addr, register int len) {
+uint16_t inetChksum(register uint16_t *addr, register int len) {
     register int32_t sum = 0;
 
     do sum += *addr++;
@@ -177,42 +177,18 @@ inline uint16_t inetChksum(register uint16_t *addr, register int len) {
 *   Functions for downstream hosts hash table
 *   MurmurHash3 32bit hash function by Austin Appleby, public domain
 */
-inline uint32_t murmurhash3(register uint32_t x) {
+uint32_t murmurhash3(register uint32_t x) {
     x ^= CONF->hashSeed;
     x = (x ^ (x >> 16)) * 0x85ebca6b;
     x = (x ^ (x >> 13)) * 0xc2b2ae35;
     return x ^ (x >> 16);
 }
 
-// Sets hash in table.
-inline void setHash(register uint64_t *table, register uint32_t hash) {
-    if (hash != (uint32_t)-1)
-        BIT_SET(table[hash / 64], hash % 64);
-}
-
-// Clears hash in table.
-inline void clearHash(register uint64_t *table, register uint32_t hash) {
-    if (hash != (uint32_t)-1)
-        BIT_CLR(table[hash / 64], hash % 64);
-}
-
-// Tests if hash is set in table.
-inline bool testHash(register uint64_t *table, register uint32_t hash) {
-    return BIT_TST(table[hash / 64], hash % 64);
-}
-
-// Tests if hash table is empty.
-inline bool noHash(register uint64_t *table) {
-    register uint64_t i, n = CONF->dHostsHTSize / 8;
-    for (i = 0; i < n && table[i] == 0; i++);
-    return i >= n;
-}
-
 /**
 *   Sort array in numerical asceding order, endianess is irrelevant.
 *   Reversed Insertion Sort with duplicates moved to end of list as 0xFFFF and removed (no valid IP).
 */
-inline uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
+uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
     register uint32_t i, j, t, o = 0;
     if (nr > 1) {
         for(i = --nr, j = nr - 1, o = 0; j != (uint32_t )-1; arr[j] = t, j = --i - 1, o++)
@@ -226,7 +202,7 @@ inline uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
 /**
 *   Finds the textual name of the supplied IGMP request.
 */
-inline const char *igmpPacketKind(unsigned int type, unsigned int code) {
+const char *igmpPacketKind(unsigned int type, unsigned int code) {
     switch (type) {
     case IGMP_MEMBERSHIP_QUERY:      return "Membership query  ";
     case IGMP_V1_MEMBERSHIP_REPORT:  return "V1 member report  ";
@@ -243,7 +219,7 @@ inline const char *igmpPacketKind(unsigned int type, unsigned int code) {
 /**
 *   Returns the IGMP group record type in string.
 */
-inline const char *grecKind(unsigned int type) {
+const char *grecKind(unsigned int type) {
     switch (type) {
     case IGMPV3_MODE_IS_INCLUDE:    return "IS_IN";
     case IGMPV3_MODE_IS_EXCLUDE:    return "IS_EX";
@@ -258,7 +234,7 @@ inline const char *grecKind(unsigned int type) {
 /**
 *   Returns the igmpv3 group record normalized type.
 */
-inline uint16_t grecType(struct igmpv3_grec *grec) {
+uint16_t grecType(struct igmpv3_grec *grec) {
     return grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
                            || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT ? IGMPV3_MODE_IS_EXCLUDE
                             : grec->grec_type == IGMP_V2_LEAVE_GROUP       ? IGMPV3_CHANGE_TO_INCLUDE
@@ -268,7 +244,7 @@ inline uint16_t grecType(struct igmpv3_grec *grec) {
 /**
 *   Returns the igmpv3 group record normalized inumber of sources.
 */
-inline uint16_t grecNscrs(struct igmpv3_grec *grec) {
+uint16_t grecNscrs(struct igmpv3_grec *grec) {
     return grec->grec_type == IGMP_V1_MEMBERSHIP_REPORT
                            || grec->grec_type == IGMP_V2_MEMBERSHIP_REPORT
                            || grec->grec_type == IGMP_V2_LEAVE_GROUP       ? 0
@@ -279,7 +255,7 @@ inline uint16_t grecNscrs(struct igmpv3_grec *grec) {
 *   Calculate QQIC / RESV value from given 15 bit integer (RFC Max).
 *   We use our own implementation, as various OS do not provide a common one.
 */
-inline uint16_t getIgmpExp(register int val, register int d) {
+uint16_t getIgmpExp(register int val, register int d) {
     int i, exp;
     if (val <= 0 || val > 32767)
         return 0;
@@ -296,48 +272,45 @@ inline uint16_t getIgmpExp(register int val, register int d) {
 *   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
 */
 void myLog(int Severity, int Errno, const char *FmtSt, ...) {
+    int       Ln, err = errno;
     clock_gettime(CLOCK_REALTIME, &curtime);
     long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
     char      LogMsg[256];
     FILE     *lfp = CONF->logFilePath ? fopen(CONF->logFilePath, "a") : stderr;
     va_list   ArgPt;
-    unsigned  Ln;
 
     va_start(ArgPt, FmtSt);
     Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
-    if (Errno > 0)
-        snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
+    if (Errno != 0)
+        snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; errno(%d): %s", err, strerror(err));
     va_end(ArgPt);
 
     if ((CONF->logFilePath || CONF->log2Stderr) && lfp)
 #ifdef __linux__
-        if (!chld.nr || mrt_tbl < 0)
+        if (mrt_tbl >= 0 && chld.nr)
+            fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
+                          sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
+        else
+#endif
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, LogMsg);
-        else
-            fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
-                    sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
-#else
-        fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
-                                                     sec % 3600 % 60, nsec / 100000, LogMsg);
-#endif
     else
         syslog(Severity, "%s", LogMsg);
 
     if (lfp && lfp != stderr)
         fclose(lfp);
-    if (Severity <= LOG_ERR) {
-        Ln = sigstatus;
-        sigstatus = 0x20;  // SHUTDOWN
+    if (Severity <= LOG_ERR && !SHUTDOWN) {
+        sigstatus = GOT_SIGTERM;
 #ifdef __linux__
         IF_FOR_IF(mrt_tbl < 0 && chld.c, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
             LOG(LOG_INFO, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
             kill(chld.c[Ln].pid, SIGINT);
             chld.c[Ln].pid = chld.c[Ln].tbl = -1;
         }
-        igmpProxyCleanUp();
 #endif
-        exit(Ln == 1 ? -2 : -1);
+        if (Errno < 0)
+            Errno = 0 - Errno;
+        igmpProxyCleanUp(Errno);
     }
 }
 
@@ -356,16 +329,10 @@ void ipRules(int tbl, bool activate)
         LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
         for (int i = 0; i < 2; i++) {
             if ((pid = fork()) < 0) {
-                LOG(LOG_ERR, errno, "ipRules: Cannot fork.");
+                LOG(LOG_ERR, eNOFORK, "ipRules: Cannot fork.");
             } else if (pid == 0) {
                 execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
                 exit(-1);
-            } else {
-                int status;
-                waitpid(pid, &status, 0);
-                if (WEXITSTATUS(status) != 0)
-                    LOG(activate ? LOG_WARNING : LOG_NOTICE, errno, "Failed to ip mrule %s %s %s table %s.",
-                        activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, msg);
             }
         }
     }
@@ -384,17 +351,19 @@ bool getMemStats(int h, int fd) {
     if (fd >= 0) {
         if (h) {
             strcpy(msg, "Current Memory Statistics:\n");
-            strcat(msg, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.\n");
-            strcat(msg, "Timer  Stats: %lldb in use, %lld allocs, %lld frees.\n");
-            strcat(msg, "Config Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n");
-            strcat(msg, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.\n");
-            strcat(msg, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.\n");
-            strcat(msg, "Routes Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.\n");
-            strcat(msg, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
-            strcat(msg, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
+            strcat(msg, "Various: %lldb in use, %lld allocs, %lld frees.\n");
+            strcat(msg, "Buffers: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.\n");
+            strcat(msg, "Timers:  %lldb in use, %lld allocs, %lld frees.\n");
+            strcat(msg, "Config:  %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n");
+            strcat(msg, "         %lld allocs total, %lld interfaces, %lld config, %lld filters.\n");
+            strcat(msg, "         %lld  frees total, %lld interfaces, %lld config, %lld filters.\n");
+            strcat(msg, "Routes:  %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.\n");
+            strcat(msg, "         %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
+            strcat(msg, "         %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
         } else
-            strcpy(msg, "%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld");
-        sprintf(buf, msg, memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
+            strcpy(msg, "%lld, %lld, %lld, %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld");
+        sprintf(buf, msg, memuse.var, memalloc.var, memfree.var,
+                          memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
                           memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd, memuse.tmr, memalloc.tmr, memfree.tmr,
                           memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil,
                           memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil,
@@ -411,14 +380,15 @@ bool getMemStats(int h, int fd) {
     LOG(LOG_DEBUG, 0, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
         memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
         memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd);
-    LOG(LOG_DEBUG, 0, "Timer  Stats: %lldb in use, %lld allocs, %lld frees.", memuse.tmr, memalloc.tmr, memfree.tmr);
-    LOG(LOG_DEBUG, 0, "Config Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
+    LOG(LOG_DEBUG, 0, "Various Stats: %lldb in use, %lld allocs, %lld frees.", memuse.var, memalloc.var, memfree.var);
+    LOG(LOG_DEBUG, 0, "Timer   Stats: %lldb in use, %lld allocs, %lld frees.", memuse.tmr, memalloc.tmr, memfree.tmr);
+    LOG(LOG_DEBUG, 0, "Config  Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
         memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
     LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
         memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
     LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
         memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
-    LOG(LOG_DEBUG, 0, "Routes Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.",
+    LOG(LOG_DEBUG, 0, "Routes  Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.",
         memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry,
         memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry);
     LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
@@ -441,7 +411,7 @@ bool getMemStats(int h, int fd) {
             sprintf(buf, msg, usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
-        LOG(LOG_DEBUG, 0, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
+        LOG(LOG_DEBUG, 0, "System Stats:  resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
                            usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
     }
 

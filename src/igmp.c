@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -64,14 +64,14 @@ int initIgmp(bool activate) {
     if (!activate) {
         _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
         _free(snd_buf, snd, memuse.snd);  // Alloced by Self
-        if (fd != -1 && !(sighandled & GOT_SIGURG))
+        if (fd != -1 && !RESTART)
             fd = k_disableMRouter();
         return fd;
     }
     if (fd == -1)
         fd = k_enableMRouter();
     if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
-        LOG(LOG_ERR, errno, "initIgmp: Out of Memory.");  // Freed by Self
+        LOG(LOG_ERR, eNOMEM, "initIgmp: Out of Memory.");  // Freed by Self
     struct ip *ip = (struct ip *)snd_buf;
 
     k_set_rcvbuf(CONF->kBufsz*1024);  // Set kernel ring buffer size

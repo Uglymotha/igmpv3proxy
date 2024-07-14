@@ -1,6 +1,6 @@
 /*
 **  igmpv3proxy - IGMPv3 Proxy based multicast router
-**  Copyright (C) 2022 Sietse van Zanen <uglymotha@wizdom.nu>
+**  Copyright (C) 2022-2024 Sietse van Zanen <uglymotha@wizdom.nu>
 **
 **  This program is free software; you can redistribute it and/or modify
 **  it under the terms of the GNU General Public License as published by
@@ -63,7 +63,7 @@ struct mcTable *findGroup(register uint32_t group, bool create) {
     if (! MCT && !create)
         return NULL;
     if (! MCT && ! _calloc(MCT, 1, mct, MCTSZ))   // Freed by delGroup())
-        LOG(LOG_ERR, errno, "findGroup: Out of memory.");
+        LOG(LOG_ERR, eNOMEM, "findGroup: Out of memory.");
     else for (mct = MCT[mctHash];; mct = mct->next) {
         // Find the group (or place for new) in the table.
         if (mct && mct->group == group)
@@ -79,7 +79,7 @@ struct mcTable *findGroup(register uint32_t group, bool create) {
     // Create and initialize the new MCT entry. Freed by delGroup()
     LOG(LOG_INFO, 0, "findGroup: Create new group %s in table %d.", inetFmt(group, 1), mctHash);
     if (! _calloc(nmct, 1, mct, MCESZ))   // Freed by delGroup()
-        LOG(LOG_ERR, errno, "findGroup: Out of memory.");
+        LOG(LOG_ERR, eNOMEM, "findGroup: Out of memory.");
     nmct->group = group;
     clock_gettime(CLOCK_REALTIME, &(nmct->stamp));
     if (! MCT[mctHash] || MCT[mctHash]->group > group) {
@@ -110,7 +110,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
 
     if (dir ? NOT_SET(mct, d, IfDp) : NOT_SET(mct, u, IfDp)) {
         if (! _malloc(imc, ifm, IFMSZ))   // Freed by delGroup()
-            LOG(LOG_ERR, errno, "addGroup: Out of Memory.");
+            LOG(LOG_ERR, eNOMEM, "addGroup: Out of Memory.");
         *imc = (struct ifMct){ NULL, mct, *list };
         if (*list)
             (*list)->prev = imc;
@@ -261,7 +261,7 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mcTable *mct, uint3
         }
         LOG(LOG_DEBUG, 0, "addSrc: New source %s (%d) for group %s.", inetFmt(ip, 1), mct->nsrcs, inetFmt(mct->group, 2));
         if (! _calloc(nsrc, 1, src, SRCSZ))
-            LOG(LOG_ERR, errno, "addSrc: Out of memory.");   // Freed by delSrc()
+            LOG(LOG_ERR, eNOMEM, "addSrc: Out of memory.");   // Freed by delSrc()
         nsrc->ip = ip;
         nsrc->mct = mct;
         if (! mct->sources) {
@@ -595,7 +595,7 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
         struct src *src;
         // Build source list for upstream interface.
         if (! (slist = malloc((mct->nsrcs & ~0x80000000) * sizeof(uint32_t))))  // Freed by self
-            LOG(LOG_ERR, errno, "updateSourceFilter: Out of Memory.");
+            LOG(LOG_ERR, eNOMEM, "updateSourceFilter: Out of Memory.");
         for (nsrcs = 0, src = mct->sources; src; src = src->next) {
             BIT_CLR(src->vifB.us, IfDp->index);
             if (mode == MCAST_INCLUDE) {
@@ -663,16 +663,10 @@ void clearGroups(void *Dp) {
                 struct src **src;
                 // Quickleave was enabled or disabled, or hastable size was changed.
                 // Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
-                for (src = &(mct->sources); *src; src = &(*src)->next) {
-                    if (! _realloc(*src, src, SRCSZ, OSRCSZ))
-                        LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                    if (CONF->quickLeave)
-                        memset((*src)->dHostsHT, 0, CONF->dHostsHTSize);
-                }
-                if (! _realloc(mct, mct, MCESZ, OMCESZ))
-                    LOG(LOG_ERR, errno, "clearGroups: Out of memory.");
-                if (CONF->quickLeave)
-                    memset(mct->dHostsHT, 0, CONF->dHostsHTSize);
+                FOR_IF(src = &(mct->sources); *src; src = &(*src)->next, ! _recalloc(*src, src, SRCSZ, OSRCSZ))
+                    LOG(LOG_ERR, eNOMEM, "clearGroups: Out of memory.");
+                if (! _recalloc(mct, mct, MCESZ, OMCESZ))
+                    LOG(LOG_ERR, eNOMEM, "clearGroups: Out of memory.");
                 if (! mct->prev)
                     MCT[iz] = mct;
                 else
@@ -696,7 +690,7 @@ void clearGroups(void *Dp) {
     }
 
     // Downstream interface transition.
-    if (((CONFRELOAD || SSIGHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate))
+    if (((CONFRELOAD || SHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate))
                                  || (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)))
         for (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct) {
             if (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)) {
@@ -716,7 +710,7 @@ void clearGroups(void *Dp) {
         }
 
     // Upstream interface transition.
-    if (((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate))
+    if (((CONFRELOAD || SHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate))
             || (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate)))
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct) {
             if (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate) && IS_SET(imc->mct, u, IfDp)) {
@@ -724,7 +718,7 @@ void clearGroups(void *Dp) {
                                   IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 1));
                 // Transition from upstream to downstream or disabled. Leave group.
                 imc = delGroup(imc->mct, IfDp, imc, 0);
-            } else if ((CONFRELOAD || SSIGHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
+            } else if ((CONFRELOAD || SHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
                 if (NOT_SET(imc->mct, ud, IfDp) && !checkFilters(IfDp, 0, NULL, imc->mct)) {
                     // Check against bl / wl changes on config reload / sighup.
                     LOG(LOG_NOTICE, 0, "Group %s no longer allowed upstream on interface %s.",
@@ -999,7 +993,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     // Create and initialize an upstream source for new sender.
     if (! src->mfc) {
         if (! _malloc(src->mfc, mfc, MFCSZ))
-            LOG(LOG_ERR, errno, "activateRoute: Out of Memory!");  // Freed by Self.
+            LOG(LOG_ERR, eNOMEM, "activateRoute: Out of Memory!");  // Freed by Self.
         *src->mfc = (struct mfc){ NULL, NULL, {0, 0}, src, IfDp, 0, 0 };
         clock_gettime(CLOCK_REALTIME, &src->mfc->stamp);
         if (mct->mfc) {
