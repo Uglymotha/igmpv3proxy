@@ -10,10 +10,6 @@ AC_CANONICAL_HOST
 case $host_os in
 	linux*|uclinux*) os=linux;;
 	freebsd*) os=freebsd;;
-	netbsd*) os=netbsd;;
-	openbsd*) os=openbsd;;
-	nto*) os=qnxnto;;
-	dragonfly*) os=dragonfly;;
 	*) AC_MSG_ERROR([OS $host_os is not supported]);;
 esac
 AC_CONFIG_LINKS([src/os.h:src/os-${os}.h])

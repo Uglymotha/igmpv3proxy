@@ -358,6 +358,7 @@ static void igmpProxyMonitor(void) {
     struct timespec timeout = timer_ageQueue();
     LOG(LOG_NOTICE, 0, "Monitoring %d proxy processes.", chld.nr);
 
+    rebuildIfVc(NULL);
     sigstatus = 0;
     // Simple busy sleeping loop here, it suits our needs.
     do {
@@ -400,10 +401,13 @@ static void igmpProxyMonitor(void) {
             }
         }
         sigstatus = 0;
-        // SIGCHLD or loadConfig() may have forked new process, it will end up here.
-        if (mrt_tbl >= 0 && (sigstatus = 1))
-            // New proxy has config now, sigstatus = startup, so can return to igmpProxyInit().
-            return;
+        // SIGCHLD or loadConfig() may have forked new proxy, set sigstatus to STARTUP.
+        if (mrt_tbl >= 0) {
+            // New proxy can keep using the (universal) config, but needs to create its own interface list.
+            freeIfDescL(true);
+            sigstatus = 1;
+            return;  // To igmpProxyInit()
+        }
         timeout = timer_ageQueue();
         if (timeout.tv_sec < 0)
             timeout = (struct timespec){ 2147483647, 0 };
@@ -484,9 +488,7 @@ static void igmpProxyInit(void) {
         LOG(LOG_INFO, 0, "Forked child: %d PID: %d for table: 0.", chld.nr + 1, pid);
         chld.c[chld.nr].pid = pid;
         chld.c[chld.nr++].tbl = 0;
-        rebuildIfVc(NULL);
         igmpProxyMonitor();
-        freeIfDescL(true);  // If we continue as proxy process empty the interfaes table in use by the monitor.
     } else if (pid == 0)
         // Child (or only process) becomes proxy for default mrt table 0.
         chld.nr++;
@@ -627,6 +629,7 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
         IF_FOR_IF(mrt_tbl < 0 && chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid == siginfo->si_pid) {
             chld.c[i].sig = 1;
             chld.c[i].st  = (int8_t)siginfo->si_status;
+            break;
         }
     }
     // Send SIG to children, except for SIGINT SIGPIPE and SIGCHLD.
