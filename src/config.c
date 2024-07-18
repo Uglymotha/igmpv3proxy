@@ -407,13 +407,16 @@ static inline bool parsePhyintToken(char *token) {
                 if (intToken > 0 && mrt_tbl < 0) {
                     if (ntbl % 32 == 0 && ! _recalloc(tbl, var, ((ntbl / 32) + 1) * tblsz, (ntbl / 32) * tblsz))
                         LOG(LOG_ERR, eNOMEM, "Config (%s): Out of Memory", tmpPtr->name);  // Freed by loadConfig()
-                    if (!ntbl)
+                    if (!ntbl) {
                         tbl[ntbl++] = CONF->defaultTable;
-                    for (i = 0; i < ntbl && tbl[i] != intToken; i++);
-                    if (i >= ntbl)
-                        tbl[ntbl++] = intToken;
-                    // igmpProxyInit() will fork the process for table 0 after config is loaded
-                    igmpProxyFork(intToken);
+                        igmpProxyFork(0);
+                    }
+                    if (mrt_tbl < 0) {  // Check again becasue of fork().
+                        for (i = 0; i < ntbl && tbl[i] != intToken; i++);
+                        if (i >= ntbl)
+                            tbl[ntbl++] = intToken;
+                        igmpProxyFork(intToken);
+                    }
                 }
             }
 #else
@@ -672,11 +675,16 @@ bool loadConfig(char *cfgFile) {
                     LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
                 else if (mrt_tbl < 0) {
                     int i;
+                    if (!ntbl)
+                        tbl[ntbl++] = 0;
                     for (i = 0; i < ntbl && tbl[i] != conf.defaultTable; i++);
                     if (i >= ntbl)
                         tbl[ntbl++] = conf.defaultTable;
-                    if (conf.defaultTable > 0)
-                        igmpProxyFork(conf.defaultTable);
+                    if (conf.defaultTable > 0) {
+                        igmpProxyFork(0);
+                        if (mrt_tbl < 0)  // Check again because of fork().
+                            igmpProxyFork(conf.defaultTable);
+                    }
                 }
                 LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
             }
@@ -1002,7 +1010,8 @@ void reloadConfig(uint64_t *tid) {
         memcpy(&conf, &oldconf, sizeof(struct Config));
     } else {
         // Rebuild the interfaces config, then free the old configuration.
-        rebuildIfVc(NULL);
+        if (!STARTUP)
+            rebuildIfVc(NULL);
         freeConfig(1);
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
@@ -1037,7 +1046,7 @@ void configureVifs(void) {
     GETIFL(IfDp) {
         // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
         oconf = NULL;
-        if (!IFREBUILD || !(IfDp->Flags & 0x40)) {
+        if (!IFREBUILD || ! IfDp->conf) {
             for (oconf = NULL, vconf = vifConf; vconf && strcmp(IfDp->Name, vconf->name); vconf = vconf->next);
             if (vconf) {
                 LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);

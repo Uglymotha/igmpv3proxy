@@ -39,7 +39,8 @@
 
 #include "igmpv3proxy.h"
 
-static int mrouterFD = -1;
+static int      mrouterFD = -1;
+static uint32_t vifBits   =  0;
 
 /**
 *   Set the socket buffer. If we can't set it as large as we want, search around to try to find the highest acceptable
@@ -205,7 +206,8 @@ int k_enableMRouter(void) {
 int k_disableMRouter(void) {
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0 || close(mrouterFD) < 0)
         LOG(LOG_WARNING, errno, "MRT_DONE/close");
-    mrouterFD = -1;
+    else
+        mrouterFD = -1;
     return mrouterFD;
 }
 
@@ -213,7 +215,8 @@ int k_disableMRouter(void) {
 *   Delete vif when removed from config or disappeared from system.
 */
 void k_delVIF(struct IfDesc *IfDp) {
-    struct vifctl vifCtl = { 0 };
+    struct vifctl vifCtl;
+    memset(&vifCtl, 0, sizeof(struct vifctl));
 
     vifCtl.vifc_vifi = IfDp->index;
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
@@ -222,6 +225,7 @@ void k_delVIF(struct IfDesc *IfDp) {
         LOG(LOG_WARNING, errno, "delVIF: Error removing VIF %d:%s", IfDp->index, IfDp->Name);
 
     // Reset vif index.
+    BIT_CLR(vifBits, IfDp->index);
     IfDp->index = (uint8_t)-1;
 }
 
@@ -229,40 +233,34 @@ void k_delVIF(struct IfDesc *IfDp) {
 *   Adds the interface '*IfDp' as virtual interface to the mrouted API
 */
 bool k_addVIF(struct IfDesc *IfDp) {
-    struct vifctl  vifCtl;
-    struct IfDesc *Dp = NULL;
-    uint8_t        Ix = 0;
-    uint32_t       vifBits = 0;
+    struct vifctl   vifCtl;
+    uint8_t         Ix;
 
-    // Find available vifindex.
-    GETIFLIF(Dp, Dp->index != (uint8_t)-1)
-        BIT_SET(vifBits, Dp->index);
-    for (;Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
-    if (Ix >= MAXVIFS) {
+    if (vifBits == (uint32_t)-1) {
         LOG(LOG_WARNING, 0, "Out of VIF space");
         return false;
-    } else
-        IfDp->index = Ix;
+    }
+    for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
+    IfDp->index = Ix;
+    BIT_SET(vifBits, IfDp->index);
+    IfDp->bytes = IfDp->rate = 0;
 
     // Set the vif parameters, reset bw counters.
+    memset(&vifCtl, 0, sizeof(struct vifctl));
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
     vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {{IfDp->InAdr.s_addr}}, {INADDR_ANY} };
 #else
     vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {IfDp->InAdr.s_addr}, {INADDR_ANY} };
 #endif
-    IfDp->bytes = IfDp->rate = 0;
 
-    // Log the VIF information.
+    // Log the VIF information and add.
     LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
                  vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
-
-    // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
         LOG(LOG_WARNING, errno, "Error adding VIF %d:%s", IfDp->index, IfDp->Name);
         IfDp->index = (uint8_t)-1;
         return false;
     }
-
     return true;
 }
 
@@ -272,9 +270,13 @@ bool k_addVIF(struct IfDesc *IfDp) {
 void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
-    struct mfcctl2 CtlReq = { {src}, {group}, vif, {0}, {0}, 0 };
+    struct mfcctl2 CtlReq;
+    memset(&CtlReq, 0, sizeof(struct mfcctl2));
+    CtlReq = (struct mfcctl2){ {src}, {group}, vif, {0}, {0}, 0 };
 #else
-    struct mfcctl CtlReq = { {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+    struct mfcctl CtlReq;
+    memset(&CtlReq, 0, sizeof(struct mfcctl));
+    CtlReq = (struct mfcctl){ {src}, {group}, vif, {0}, 0, 0, 0, 0 };
 #endif
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
@@ -298,9 +300,13 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
 void k_delMRoute(uint32_t src, uint32_t group, int vif) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
-    struct mfcctl2 CtlReq = { {src}, {group}, vif, {0}, {0}, 0 };
+    struct mfcctl2 CtlReq;
+    memset(&CtlReq, 0, sizeof(struct mfcctl2));
+    CtlReq = (struct mfcctl2){ {src}, {group}, vif, {0}, {0}, 0 };
 #else
-    struct mfcctl CtlReq = { {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+    struct mfcctl CtlReq;
+    memset(&CtlReq, 0, sizeof(struct mfcctl));
+    CtlReq =  (struct mfcctl){ {src}, {group}, vif, {0}, 0, 0, 0, 0 };
 #endif
 
     // Remove mfc from kernel.

@@ -50,8 +50,9 @@ void freeIfDescL(bool force) {
     while (IfDp) {
         if (force || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
             // Remove interface marked for deletion.
-            LOG(SHUTDOWN ? LOG_NOTICE : LOG_WARNING, 0, "Interface %s was removed.",
-                      force | (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
+            if (!STARTUP)
+                LOG(SHUTDOWN ? LOG_WARNING : LOG_NOTICE, 0, "Interface %s was removed.",
+                                    force | (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
             fIfDp = force || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
             if (force || IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;

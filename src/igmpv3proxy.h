@@ -75,16 +75,6 @@
 //#################################################################################
 //  Global definitions and declarations.
 //#################################################################################
-#define IF_FOR(x, y)       if  (x) for (y)
-#define FOR_IF(x, y)       for (x) if  (y)
-#define IF_FOR_IF(x, y, z) if  (x) for (y) if (z)
-
-// Set type of control message structure for received socket data.
-#ifdef IP_PKTINFO
-#define IFINFO IP_PKTINFO
-#elif IP_RECVIF
-#define IFINFO IP_RECVIF
-#endif
 
 // Memory statistics.
 struct memstats {
@@ -93,29 +83,6 @@ struct memstats {
     int64_t rcv, snd;                 // Buffers
     int64_t qry, tmr, var;            // Queries, Timers, various.
 };
-
-#define   _malloc(p,m,s)     (((p=malloc(s))     && (memuse.m+=(s)) > 0            && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define   _calloc(p,n,m,s)   (((p=calloc(n,s))   && (memuse.m+=(n * (s))) > 0      && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset(p + (sm), 0, (sp) - (sm))) \
-                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define _free(p, m, s)       if (p) {                                             \
-                                 if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
-                                     getMemStats(0,-1);                           \
-                                     exit(6);                                     \
-                                    }                                             \
-                                 free(p); }
-
-// In / output buffering.
-#define BUF_SIZE   9216                                 // Jumbo MTU
-#define K_BUF_SIZE  512                                 // Default kernel ring buffer size in KB
-#define REQQSZ       16                                 // Default request queue size
-#define TMQSZ         4                                 // Default timer queue size
-
-// Limits of configuration / token.
-#define READ_BUFFER_SIZE      512
-#define MAX_TOKEN_LENGTH      128
-#define MAX_GROUPNAME_SIZE     32
 
 // Keeps common configuration settings.
 #define RUN_PATHS "/run /var/run /tmp /var/tmp"
@@ -281,6 +248,17 @@ struct IfDesc {
 #define IF_OLDSTATE(x)         ((x->state >> 2) & 0x3)
 #define IF_NEWSTATE(x)         (x->state & 0x3)
 
+// In / output buffering.
+#define BUF_SIZE   9216                                 // Jumbo MTU
+#define K_BUF_SIZE  512                                 // Default kernel ring buffer size in KB
+#define REQQSZ       16                                 // Default request queue size
+#define TMQSZ         4                                 // Default timer queue size
+
+// Limits of configuration / token.
+#define READ_BUFFER_SIZE      512
+#define MAX_TOKEN_LENGTH      128
+#define MAX_GROUPNAME_SIZE     32
+
 // Multicast default values.
 #define DEFAULT_ROBUSTNESS  2
 #define DEFAULT_THRESHOLD   1
@@ -317,7 +295,10 @@ struct IfDesc {
 #define SCHLD      (sigstatus & GOT_SIGCHLD)
 #define SPIPE      (sigstatus & GOT_SIGPIPE)
 #define SHUTDOWN   (sigstatus & GOT_SIGTERM)
-#define STRSIG     const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
+
+static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
+static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was terminated", "failed to initialize", "failed to fork", "ran out of memory", "aborted", "failed to load config", "", "was murdered", "", "segfaulted", "", "", "" , "was terminated" };
+
 #define SETSIGS     struct sigaction sa = { 0 };              \
                     sa.sa_sigaction = signalHandler;          \
                     sa.sa_flags = SA_SIGINFO;                 \
@@ -348,14 +329,47 @@ struct IfDesc {
 // CLI Defines.
 #define CLI_CMD_BUF 256
 
+// Memory (de)allocation macro's
+#define   _malloc(p,m,s)     (((p=malloc(s))     && (memuse.m+=(s)) > 0            && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define   _calloc(p,n,m,s)   (((p=calloc(n,s))   && (memuse.m+=(n * (s))) > 0      && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset(p + (sm), 0, (sp) - (sm))) \
+                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define _free(p, m, s)      if (p) {                                             \
+                                if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
+                                    getMemStats(0,-1);                           \
+                                    exit(6); }                                   \
+                            free(p); }
+
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
 #define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
 #define BIT_TST(X,n)     (((X) >> (n)) & 1)
 
+// Conditional loop macro's
+#define IF_FOR(x, y)       if  (x) for (y)
+#define FOR_IF(x, y)       for (x) if  (y)
+#define IF_FOR_IF(x, y, z) if  (x) for (y) if (z)
+
 //#################################################################################
 // Common IGMPv3 includes. Various OS dont provide common structs, so we just use our own.
 //#################################################################################
+
+// Set type of control message structure for received socket data.
+#ifdef IP_PKTINFO
+    #define IFINFO IP_PKTINFO
+#elif IP_RECVIF
+    #define IFINFO IP_RECVIF
+#endif
+//  Socket control message union.
+union cmsg {
+struct cmsghdr cmsgHdr;
+#ifdef IP_PKTINFO
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct in_pktinfo)];
+#elif IP_RECVIF
+    char cmsgData[sizeof(struct msghdr) + sizeof(struct sockaddr_dl)];
+#endif
+};
 
 // IGMP Query Definition.
 struct igmpv3_query {
