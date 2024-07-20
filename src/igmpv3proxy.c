@@ -210,7 +210,7 @@ int main(int ArgCn, char *ArgVc[]) {
         sighandled = sigstatus = 0;
         igmpProxyRun();
         // Clean up
-        igmpProxyCleanUp(0);
+        igmpProxyCleanUp(sighandled & GOT_SIGINT ? 2 : 0);
         // Itialize IGMP buffers.
         pollFD[0].fd = initIgmp(true);
         // Reload config.
@@ -324,7 +324,6 @@ void igmpProxyFork(int tbl) {
         mrt_tbl = tbl;    // Set routing table for process.
         chld.nr = i + 1;  // Just so that we know who we are.
         _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
-        chld.c = NULL;
         sigstatus = 1;
     } else {
         // Parent sets the new child info in table.
@@ -564,6 +563,7 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
 #endif
           if (!CONF->notAsDaemon)
               return;  // Daemon / monitor ignores SIGINT
+        sighandled |= GOT_SIGINT;  // Fallthrough
     case SIGTERM:
         if (SHUTDOWN) {
 #ifdef __linux__

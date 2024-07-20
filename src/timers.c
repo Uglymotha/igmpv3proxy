@@ -114,11 +114,7 @@ void *timer_clearTimer(uint64_t tid) {
     uint64_t i;
 
     // If tid = -1 clear all timers.
-    if (tid == (uint64_t)-1) {
-        while (queue)
-            timer_clearTimer(queue->id);
-        return NULL;
-    }
+    IF_FOR(tid == (uint64_t)-1,; queue; timer_clearTimer(queue->id));
     // Find the timer and remove it if found.
     for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
     if (node) {

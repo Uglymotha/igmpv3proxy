@@ -282,7 +282,7 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
 
     va_start(ArgPt, FmtSt);
     Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
-    if (Errno != 0)
+    if (Errno > 0)
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; errno(%d): %s", err, strerror(err));
     va_end(ArgPt);
 

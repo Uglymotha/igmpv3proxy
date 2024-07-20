@@ -176,7 +176,7 @@ int k_enableMRouter(void) {
 
 #ifdef __linux__
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-        LOG(LOG_ERR, errno, "Failed to open UDP socket.");
+        LOG(LOG_ERR, eNOINIT, "Failed to open UDP socket.");
     else if (mrt_tbl < 0) {
         LOG(LOG_INFO, 0, "k_enableMRouter: Opened UDP socket.");
         return mrouterFD;

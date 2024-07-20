@@ -221,10 +221,8 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
             else if (! (MCT[mctHash] = mct->next)) {
                 uint16_t iz;
                 for (iz = 0; MCT && iz < CONF->mcTables && ! MCT[iz]; iz++);
-                if (iz == CONF->mcTables) {
+                if (iz == CONF->mcTables)
                     _free(MCT, mct, MCTSZ);  // Alloced by findGroup()
-                    MCT = NULL;
-                }
             }
 
             // Remove all sources from group.
@@ -958,7 +956,6 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         if (mct->mfc == src->mfc)
             mct->mfc = src->mfc->next;
         _free(src->mfc, mfc, MFCSZ);  // Alloced by Self
-        src->mfc = NULL;
         return;
     } else if (! src) {
         // Find source or create source in group.

@@ -280,6 +280,7 @@ struct IfDesc {
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
 // Signal Handling.
+#define GOT_SIGINT  0x01
 #define GOT_SIGHUP  0x02
 #define GOT_SIGUSR1 0x04
 #define GOT_SIGUSR2 0x08
@@ -322,9 +323,9 @@ static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was term
 
 // Some private errnos to use for logging and error exiting.
 #define  eABNRML -1
-#define  eNOINIT -3
-#define  eNOFORK -4
-#define  eNOMEM  -5
+#define  eNOINIT  3
+#define  eNOFORK  4
+#define  eNOMEM   5
 #define  eNOCONF -7
 
 // CLI Defines.
@@ -340,7 +341,7 @@ static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was term
                                 if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
                                     getMemStats(0,-1);                           \
                                     exit(6); }                                   \
-                            free(p); }
+                            free(p); p = NULL; }
 
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
