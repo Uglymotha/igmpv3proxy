@@ -70,6 +70,10 @@ int initIgmp(bool activate) {
     }
     if (fd == -1)
         fd = k_enableMRouter();
+#ifdef __linux__
+    if (mrt_tbl < 0)
+        return fd;
+#endif
     if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
         LOG(LOG_ERR, eNOMEM, "initIgmp: Out of Memory.");  // Freed by Self
     struct ip *ip = (struct ip *)snd_buf;

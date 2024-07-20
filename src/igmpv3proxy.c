@@ -79,7 +79,7 @@ int main(int ArgCn, char *ArgVc[]) {
     CONF->logLevel = LOG_WARNING;
 
     // Parse the commandline options and setup basic settings..
-    for (c = getopt(ArgCn, ArgVc, "cvVdnht:"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnht:")) {
+    for (c = getopt(ArgCn, ArgVc, "cvVdnht::"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnht::")) {
         switch (c) {
         case 'v':
             if (CONF->logLevel == LOG_WARNING)
@@ -94,24 +94,24 @@ int main(int ArgCn, char *ArgVc[]) {
             break;
         case 't':
 #ifdef __linux__
-            tbl = atoll(optarg);
+            tbl = ! optarg ? -1 : atoll(optarg);
             break;
 #else
             fprintf(stderr, "Only linux supports multiple tables.\n");
             exit(1);
 #endif
         case 'c':
-            c = getopt(ArgCn, ArgVc, "cbr::i::mf::th");
+            c = getopt(ArgCn, ArgVc, "cbr::i::mf::thp");
             while (c != -1 && c != '?') {
                 uint32_t addr, mask, h = 0;
                 memset(cmd, 0, sizeof(cmd));
                 cmd[0] = c;
-                if (c != 'r' && c != 'i' && c!= 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::th")) == 'h')
+                if (c != 'r' && c != 'i' && c!= 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp")) == 'h')
                     strcat(cmd, "h");
                 else if (h == '?')
                     break;
                 else if ((c == 'r' || c == 'i' || c == 'f') && optarg) {
-                    if (optarg[0] == 'h') {
+                    if (optarg[0] == 'h' && optarg[1] == '\0') {
                         strcat(cmd, "h");
                         optarg++;
                         h = 'h';
@@ -131,11 +131,11 @@ int main(int ArgCn, char *ArgVc[]) {
                     }
                 }
                 cliCmd(cmd, tbl);
-                c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::th") : h;
+                c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp") : h;
                 if (c == -1 && j == 1) {
                     free(opts[1]); // Alloced by Self
                     optind = i, j = 0;
-                    c = getopt(ArgCn, ArgVc, "cbr::i::mf::t");
+                    c = getopt(ArgCn, ArgVc, "cbr::i::mf::tp");
                 }
                 if (c != -1 && c != '?')
                     fprintf(stdout, "\n");
@@ -239,8 +239,8 @@ static void igmpProxyRun(void) {
                 sighandled &= ~GOT_SIGURG & ~GOT_SIGTERM;
                 break;
             } else if (sighandled & GOT_SIGHUP || sighandled & GOT_SIGUSR1) {
-                sigstatus = GOT_SIGHUP ? GOT_SIGHUP : GOT_SIGUSR1;
-                sighandled &= ~GOT_SIGHUP & GOT_SIGUSR1;
+                sigstatus = sighandled & GOT_SIGHUP ? GOT_SIGHUP : GOT_SIGUSR1;
+                sighandled &= ~GOT_SIGHUP & ~GOT_SIGUSR1;
                 LOG(LOG_DEBUG, 0, "%s: Reloading config%s.", SHUP ? "SIGHUP" : "SIGUSR1", SHUP ? " and rebuilding interfaces" : "");
                 reloadConfig(NULL);
             } else if (sighandled & GOT_SIGUSR2) {
@@ -286,7 +286,7 @@ static void igmpProxyRun(void) {
             // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN) {
                 LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV CLI Request %d.", i);
-                acceptCli(pollFD[1].fd);
+                acceptCli();
             }
 
             clock_gettime(CLOCK_REALTIME, &curtime);
@@ -326,7 +326,6 @@ void igmpProxyFork(int tbl) {
         _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
         chld.c = NULL;
         sigstatus = 1;
-        freeIfDescL(true);
     } else {
         // Parent sets the new child info in table.
         chld.c[i].tbl = tbl;
@@ -343,13 +342,13 @@ void igmpProxyFork(int tbl) {
 *   signalHandler will restart processes if the exit. loadConfig may start new procxies if needed.
 */
 static void igmpProxyMonitor(void) {
-    rebuildIfVc(NULL);
-    struct timespec timeout = timer_ageQueue();
+    struct timespec timeout = (struct timespec){ 0, 0 };
+    FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].tbl > 0 && !CONF->disableIpMrules)
+        ipRules(chld.c[i].tbl, true);
     LOG(LOG_NOTICE, 0, "Monitoring %d proxy processes.", chld.nr);
 
     sigstatus = 0;
-    // Simple busy sleeping loop here, it suits our needs.
-    do {
+    while (sighandled || ppoll(&pollFD[1], 1, &timeout, NULL) || true) {
         if (sighandled) {
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
@@ -357,14 +356,12 @@ static void igmpProxyMonitor(void) {
                 FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].sig == 1) {
                     LOG(chld.c[i].st == 0 ? LOG_NOTICE : LOG_WARNING, 0, "Child: %d PID: %d for table: %d %s (%i)",
                         i + 1, chld.c[i].pid, chld.c[i].tbl, exitmsg[chld.c[i].st], chld.c[i].st);
-                    if (chld.c[i].st < 0)
-                        chld.c[i].st = 0 - (chld.c[i].st);
                     chld.c[i].pid = chld.c[i].sig = 0;
-                    if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
-                        ipRules(chld.c[i].tbl, false);
                     if (chld.c[i].st == 15 || chld.c[i].st == 6 || chld.c[i].st == 11 || chld.c[i].st == 9)
                         // Start new proxy in case of unexpected shutdown.
                         igmpProxyFork(chld.c[i].tbl);
+                    else if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
+                        ipRules(chld.c[i].tbl, false);
                 }
             } else if (sighandled & GOT_SIGTERM || sighandled & GOT_SIGURG || sighandled & GOT_SIGHUP || sighandled & GOT_SIGUSR1) {
                 sigstatus    = sighandled & GOT_SIGTERM ? GOT_SIGTERM : sighandled & GOT_SIGURG ? GOT_SIGURG :
@@ -384,16 +381,25 @@ static void igmpProxyMonitor(void) {
                 sighandled &= ~GOT_SIGPIPE;
                 LOG(LOG_WARNING, 0, "Ceci n'est pas une SIGPIPE.");
             }
-            sigstatus = 0;
         }
-        if (mrt_tbl < 0)
+        // Check if any cli connection needs to be handled.
+        if (pollFD[1].revents & POLLIN) {
+            LOG(LOG_DEBUG, 0, "igmpProxyMonitor: RECV CLI Request.");
+            acceptCli();
+        }
+        if (mrt_tbl < 0 && !sighandled)
             timeout = timer_ageQueue();
-        if (mrt_tbl >= 0)
+        if (mrt_tbl >= 0) {
             // SIGCHLD, ageQueue() or loadConfig() may have forked new proxy.
+            pollFD[0].fd = initIgmp(false), pollFD[1].fd = closeCliFd();
+            pollFD[0].fd = initIgmp(true),  pollFD[1].fd = openCliFd();
+            rebuildIfVc(NULL);
             return;  // To igmpProxyInit()
-        if (timeout.tv_sec < 0)
-            timeout = (struct timespec){ 2147483647, 0 };
-    } while (sighandled || timeout.tv_nsec < 0 || nanosleep(&timeout, NULL) >= 0 || true);
+        }
+        if (timeout.tv_nsec < 0)
+            timeout.tv_nsec = 0;
+        errno = sigstatus = pollFD[1].revents = 0;
+    }
 
     LOG(LOG_ERR, eABNRML, "igmpProxyMonitor: Proceses exited.");
 }
@@ -461,20 +467,14 @@ static void igmpProxyInit(void) {
         LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONF->logFilePath, CONF->user->pw_name);
 
     SETSIGS;
-#ifdef __linux__
-    // When multiple tables are in use, process for default table 0 is forked off here.
-    if (mrt_tbl < 0 && chld.nr)
-        igmpProxyMonitor();
-    else if (mrt_tbl < 0)
-        mrt_tbl = 0;
-#endif
     // Enable mroute and open cli socket and add ip mrules while still running as root.
     pollFD[0].fd = initIgmp(true);
     pollFD[1].fd = openCliFd();
     rebuildIfVc(NULL);
 #ifdef __linux__
-    if (!CONF->disableIpMrules)
-        ipRules(mrt_tbl, true);
+    // When multiple tables are in use, process for default table 0 is forked off here.
+    if (mrt_tbl < 0)
+        igmpProxyMonitor();
 #endif
     // Make sure logfile and chroot directory are owned by configured user and switch ids.
     if (CONF->user && geteuid() == 0) {
@@ -503,10 +503,11 @@ void igmpProxyCleanUp(int code) {
         pid_t pid;
         // Wait for all childs. Cli processes are not tracked, their fds are closed.
         LOG(LOG_INFO, 0, "Waiting for %d processes to finish.", chld.nr);
-        while ((pid = wait(NULL)) > 0 && --chld.nr) {
-            FOR_IF(int i = 0; i < chld.nr + 1; i++, chld.c[i].pid == pid && chld.c[i].tbl > 0)
+        while ((pid = wait(NULL)) > 0 && chld.nr) {
+            FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid && chld.c[i].tbl > 0 && --chld.nr) {
                 ipRules(chld.c[i].tbl, false);
-            LOG(LOG_NOTICE, 0, "Still waiting for %d process%s to finish.", chld.nr, chld.nr > 1 ? "es" : "");
+                LOG(LOG_NOTICE, 0, "Still waiting for %d process%s to finish.", chld.nr, chld.nr > 1 ? "es" : "");
+            }
         }
         _free(chld.c, var, size);  // Alloced by igmpProxyFork()
         LOG(LOG_NOTICE, 0, "All processes finished.");
@@ -516,10 +517,7 @@ void igmpProxyCleanUp(int code) {
     rebuildIfVc(NULL);
 
     // Remove MRT, CLI socket and PID file and Config in main daemon only.
-#ifdef __linux__
-    if (mrt_tbl >= 0)
-#endif
-      pollFD[1].fd = closeCliFd(pollFD[1].fd), pollFD[0].fd = initIgmp(false);
+    pollFD[1].fd = closeCliFd(), pollFD[0].fd = initIgmp(false);
 #ifdef __linux__
     if (mrt_tbl < 0)
 #endif
@@ -529,7 +527,7 @@ void igmpProxyCleanUp(int code) {
           remove(rFile);
           sprintf(rFile, "%scli.sock", CONF->runPath);
           remove(rFile);
-          if (CONF->chroot && rmdir(CONF->runPath) < 0)
+          if (rmdir(CONF->runPath) < 0)
               LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONF->runPath);
       }
     if (!RESTART)
@@ -544,6 +542,7 @@ void igmpProxyCleanUp(int code) {
     LOG(LOG_WARNING, 0, "%s on %s. Running since %s (%ds).", RESTART ? "Restarting" : "Shutting down",
                          tE, tS, timeDiff(starttime, endtime).tv_sec);
     if (SHUTDOWN) {
+        timer_clearTimer((uint64_t)-1);
         free(CONF->runPath);         // Alloced by main()
         free(CONF->chroot);          // Alloced by loadConfig()
         free(CONF->logFilePath);     // Alloced by loadConfig()

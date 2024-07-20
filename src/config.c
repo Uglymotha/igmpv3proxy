@@ -49,8 +49,8 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable  disableipmrules";
-static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist";
+static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable defaultdisableipmrules";
+static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules";
 
 // Daemon Configuration.
 static struct Config       conf, oldconf;
@@ -61,11 +61,6 @@ uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
 static struct timers timers = { 0, 0, 0 };
-
-// Keeps the tables seen in the config file.
-#ifdef __linux__
-static int *tbl = NULL, ntbl = 0, tblsz = 32 * sizeof(int);
-#endif
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -404,25 +399,21 @@ static inline bool parsePhyintToken(char *token) {
             else {
                 tmpPtr->tbl = intToken;
                 LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
-                if (intToken > 0 && mrt_tbl < 0) {
-                    if (ntbl % 32 == 0 && ! _recalloc(tbl, var, ((ntbl / 32) + 1) * tblsz, (ntbl / 32) * tblsz))
-                        LOG(LOG_ERR, eNOMEM, "Config (%s): Out of Memory", tmpPtr->name);  // Freed by loadConfig()
-                    if (!ntbl) {
-                        tbl[ntbl++] = CONF->defaultTable;
-                        igmpProxyFork(0);
-                    }
-                    if (mrt_tbl < 0) {  // Check again becasue of fork().
-                        for (i = 0; i < ntbl && tbl[i] != intToken; i++);
-                        if (i >= ntbl)
-                            tbl[ntbl++] = intToken;
-                        igmpProxyFork(intToken);
-                    }
-                }
+                if (intToken > 0 && mrt_tbl < 0)
+                    igmpProxyFork(0);
+                if (mrt_tbl < 0) // Check again becasue of fork().
+                    igmpProxyFork(intToken);
             }
 #else
             LOG(LOG_NOTICE, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
 #endif
-
+        } else if (strcmp(" disableipmrules", token) == 0) {
+#ifdef __linux__
+            LOG(LOG_NOTICE, 0, "Config (%s): Will disable ip mrules.", tmpPtr->name);
+            tmpPtr->disableIpMrules = true;
+#else
+            LOG(LOG_NOTICE, 0, "disableipmrules is ony valid for linux.");
+#endif
         } else if (strcmp(" updownstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPDOWNSTREAM;
             LOG(LOG_NOTICE, 0, "Config (%s): Setting to Updownstream.", tmpPtr->name);
@@ -670,21 +661,10 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
                 conf.defaultTable = intToken;
-                if (mrt_tbl < 0 && ntbl % 32 == 0 && ! _recalloc(tbl, var, ((ntbl / 32) + 1) * tblsz, (ntbl / 32) * tblsz))
-                    // Freed by Self
-                    LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
-                else if (mrt_tbl < 0) {
-                    int i;
-                    if (!ntbl)
-                        tbl[ntbl++] = 0;
-                    for (i = 0; i < ntbl && tbl[i] != conf.defaultTable; i++);
-                    if (i >= ntbl)
-                        tbl[ntbl++] = conf.defaultTable;
-                    if (conf.defaultTable > 0) {
-                        igmpProxyFork(0);
-                        if (mrt_tbl < 0)  // Check again because of fork().
-                            igmpProxyFork(conf.defaultTable);
-                    }
+                if (mrt_tbl < 0 && conf.defaultTable > 0) {
+                    igmpProxyFork(0);
+                    if (mrt_tbl < 0)  // Check again because of fork().
+                        igmpProxyFork(conf.defaultTable);
                 }
                 LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
             }
@@ -702,12 +682,12 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
 #endif
 
-        } else if (strcmp(" disableipmrules", token) == 0) {
+        } else if (strcmp(" defaultdisableipmrules", token) == 0) {
 #ifdef __linux__
             LOG(LOG_NOTICE, 0, "Config: Will disable ip mrules for mc route tables.");
             conf.disableIpMrules = true;
 #else
-            LOG(LOG_NOTICE, 0, "disableipmrules is ony valid for linux.");
+            LOG(LOG_NOTICE, 0, "defaultdisableipmrules is ony valid for linux.");
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.group = getgrnam(token + 1)))
@@ -919,19 +899,6 @@ bool loadConfig(char *cfgFile) {
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
 
-#ifdef __linux__
-    IF_FOR_IF(mrt_tbl < 0 && chld.c && !logwarning, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0) {
-        // Check if any proxy needs to be stopped because it is no longer used.
-        int j;
-        for (j = 0; j < ntbl && chld.c[i].tbl != tbl[j]; j++);
-        if (j >= ntbl) {
-            kill(chld.c[i].pid, SIGINT);  // SIGINT so process will not be restarted in SIGCHLD
-            LOG(LOG_NOTICE, 0, "Stopping PID: %d (%d) for table %d.", chld.c[i].pid, i, chld.c[i].tbl);
-        }
-    }
-    _free(tbl, var, (((ntbl - 1) / 32) + 1) * tblsz); // Alloced by Self
-    tbl = NULL, ntbl = 0;
-#endif
     if (--conf.cnt > 0 || logwarning)
         return !logwarning;
 
@@ -985,7 +952,10 @@ bool loadConfig(char *cfgFile) {
             timers.bwControl = timer_setTimer(conf.bwControlInterval * 10, "Bandwidth Control",
                                               bwControl, &timers.bwControl);
     }
-
+#ifdef __linux__
+    if (mrt_tbl < 0 && !chld.nr)
+        mrt_tbl = 0;
+#endif
     return !logwarning;
 }
 
@@ -1129,11 +1099,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate)   && IS_UPSTREAM(newstate)  )    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
-        else if ( IS_DISABLED(oldstate)   && IS_DOWNSTREAM(newstate))    { ctrlQuerier(1, IfDp);                    }
-        else if (!IS_DISABLED(oldstate)   && IS_DISABLED(newstate)  )    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
-        else if ( oldstate != newstate)                                  { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
-        else if ( oldstate == newstate    && !IS_DISABLED(newstate) )    { if (!IFREBUILD)       clearGroups(IfDp); }
+        if      (             IS_DISABLED(oldstate) && IS_UPSTREAM(newstate))    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
+        else if ((STARTUP ||  IS_DISABLED(oldstate)) && IS_DOWNSTREAM(newstate)) { ctrlQuerier(1, IfDp);                    }
+        else if (!STARTUP && !IS_DISABLED(oldstate) && IS_DISABLED(newstate))    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
+        else if (!STARTUP &&  oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
+        else if (             oldstate == newstate  && !IS_DISABLED(newstate))   { if (!IFREBUILD)       clearGroups(IfDp); }
         IfDp->filCh = false;
 
         // Check if vif needs to be removed.

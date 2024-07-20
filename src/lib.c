@@ -52,6 +52,7 @@ char Usage[] =
 "   -c   Daemon control and statistics.\n"
 "        -c   Reload Configuration.\n"
 "        -b   Rebuild Interfaces.\n"
+"        -p   Display Multiple Routing Table Information.\n"
 "        -r   Display routing table.\n"
 "        -i   Display interface statistics.\n"
 "        -f   Display configured filters.\n"
@@ -323,8 +324,8 @@ void ipRules(int tbl, bool activate)
     struct IfDesc *IfDp;
     char           msg[12];
     sprintf(msg, "%d", tbl);
-    LOG(LOG_INFO, 0, "ipRules: %s mrules%s%s.", activate ? "Adding" : "Removing", activate ? "" : " for table ", activate ? "" : msg);
-    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IS_DISABLED(IfDp->state)) {
+    LOG(LOG_INFO, 0, "ipRules: %s mrules for table %s.", activate ? "Adding" : "Removing", msg);
+    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IS_DISABLED(IfDp->state) && !IfDp->conf->disableIpMrules) {
         pid_t pid;
         LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
         for (int i = 0; i < 2; i++) {
@@ -332,6 +333,7 @@ void ipRules(int tbl, bool activate)
                 LOG(LOG_ERR, eNOFORK, "ipRules: Cannot fork.");
             } else if (pid == 0) {
                 execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
+                LOG(LOG_ERR, eNOFORK, "ipRules: Cannot exec.");
                 exit(-1);
             }
         }

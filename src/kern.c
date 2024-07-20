@@ -174,14 +174,22 @@ inline int k_getMrouterFD(void) {
 int k_enableMRouter(void) {
     int Va = 1;
 
-    if ((mrouterFD  = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
+#ifdef __linux__
+    if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+        LOG(LOG_ERR, errno, "Failed to open UDP socket.");
+    else if (mrt_tbl < 0) {
+        LOG(LOG_INFO, 0, "k_enableMRouter: Opened UDP socket.");
+        return mrouterFD;
+    }
+#endif
+    if ((mrouterFD = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
         LOG(LOG_ERR, eNOINIT, "IGMP socket open Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_ERR, eNOINIT, "IGMP socket IP_HDRINCL Failed");
 #ifdef __linux__
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
-        errno == ENOPROTOOPT ? LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
-                             : LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed.");
+            errno == ENOPROTOOPT ? LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
+                                 : LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed.");
 #endif
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_INIT Failed");
@@ -189,7 +197,7 @@ int k_enableMRouter(void) {
         LOG(LOG_ERR, eNOINIT, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
-          || ! (Va & MRT_MFC_BW_UPCALL)) {
+        || ! (Va & MRT_MFC_BW_UPCALL)) {
         LOG(LOG_WARNING, errno, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
         CONF->bwControlInterval = 0;
     }
@@ -204,10 +212,17 @@ int k_enableMRouter(void) {
 *   Disable the mrouted API and relases by this the lock.
 */
 int k_disableMRouter(void) {
-    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0 || close(mrouterFD) < 0)
-        LOG(LOG_WARNING, errno, "MRT_DONE/close");
-    else
+#ifdef __linux__
+    if (mrt_tbl >= 0 && !STARTUP)
+#endif
+      if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
+          LOG(LOG_WARNING, errno, "k_disableMRouter: MRT_DONE");
+    if (close(mrouterFD) < 0)
+        LOG(LOG_WARNING, errno, "k_disableMRouter: CLOSE");
+    else {
+        LOG(LOG_INFO, 0, "k_disableMRouter: Closed Socket");
         mrouterFD = -1;
+    }
     return mrouterFD;
 }
 
@@ -236,14 +251,13 @@ bool k_addVIF(struct IfDesc *IfDp) {
     struct vifctl   vifCtl;
     uint8_t         Ix;
 
+    // Find available vif index.
     if (vifBits == (uint32_t)-1) {
         LOG(LOG_WARNING, 0, "Out of VIF space");
+        IfDp->state &= ~0x03;
         return false;
     }
     for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
-    IfDp->index = Ix;
-    BIT_SET(vifBits, IfDp->index);
-    IfDp->bytes = IfDp->rate = 0;
 
     // Set the vif parameters, reset bw counters.
     memset(&vifCtl, 0, sizeof(struct vifctl));
@@ -252,15 +266,17 @@ bool k_addVIF(struct IfDesc *IfDp) {
 #else
     vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {IfDp->InAdr.s_addr}, {INADDR_ANY} };
 #endif
-
-    // Log the VIF information and add.
-    LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
-                 vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
+    // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
-        LOG(LOG_WARNING, errno, "Error adding VIF %d:%s", IfDp->index, IfDp->Name);
-        IfDp->index = (uint8_t)-1;
+        LOG(LOG_WARNING, errno, "Error adding VIF %d:%s", Ix, IfDp->Name);
+        IfDp->state &= ~0x03;
         return false;
     }
+    IfDp->bytes = IfDp->rate = 0;
+    IfDp->index = Ix;
+    BIT_SET(vifBits, IfDp->index);
+    LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
+        vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 1), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
     return true;
 }
 

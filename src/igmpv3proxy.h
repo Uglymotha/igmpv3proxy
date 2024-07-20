@@ -189,6 +189,7 @@ struct vifConfig {
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
+    bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
     bool                quickLeave;                     // Fast upstream leave
@@ -198,7 +199,7 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -474,8 +475,8 @@ void           configureVifs(void);
 *   cli.c
 */
 int  openCliFd(void);
-int  closeCliFd(int fd);
-void acceptCli(int fd);
+int  closeCliFd(void);
+void acceptCli(void);
 void cliCmd(char *cmd, int tbl);
 
 /**
@@ -486,7 +487,7 @@ void cliCmd(char *cmd, int tbl);
 #define        IFGETIFL(y, x)       if (y) GETIFL(x)
 #define        GETIFLIF(x, y)       GETIFL(x) if (y)
 #define        IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
-void           freeIfDescL(bool force);
+void           freeIfDescL(void);
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);

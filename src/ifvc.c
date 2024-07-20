@@ -45,16 +45,15 @@ static struct IfDesc *IfDescL = NULL;
 /**
 *   Frees the IfDesc table and cleans up on interface removal.
 */
-void freeIfDescL(bool force) {
+void freeIfDescL(void) {
     struct IfDesc *IfDp = IfDescL, *fIfDp;
     while (IfDp) {
-        if (force || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
+        if (SHUTDOWN || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
             // Remove interface marked for deletion.
             if (!STARTUP)
-                LOG(SHUTDOWN ? LOG_WARNING : LOG_NOTICE, 0, "Interface %s was removed.",
-                                    force | (IfDp->state & 0x80) ? IfDp->Name : IfDp->next->Name);
-            fIfDp = force || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
-            if (force || IfDp->state & 0x80)
+                LOG(LOG_NOTICE, 0, "Interface %s was removed.", IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
+            fIfDp = SHUTDOWN || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
+            if (SHUTDOWN || IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;
             else
                 IfDp->next = IfDp->next->next;
@@ -81,10 +80,10 @@ void rebuildIfVc(uint64_t *tid) {
     configureVifs();
 
     // Free removed interfaces.
-    freeIfDescL(false);
+    freeIfDescL();
 
     // Restart timer when doing timed reload.
-    if (CONF->rescanVif && tid)
+    if (!SHUTDOWN && CONF->rescanVif && tid)
         *tid = timer_setTimer(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
     if (IFREBUILD || STARTUP) {
         sigstatus &= ~GOT_SIGUSR2;
@@ -145,26 +144,21 @@ void buildIfVc(void) {
         memset(&ifr, 0, sizeof(struct ifreq));
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
 
-#ifdef __linux__
-        if (mrt_tbl < 0)
-            IfDp->mtu = 1;
-        else
-#endif
-          if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
-              LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
-              IfDp->mtu = 0;
-          } else
-              IfDp->mtu = ifr.ifr_mtu;
-          // Enable multicast if necessary.
-          if (! (IfDp->Flags & IFF_MULTICAST)) {
-              ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
-              if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
-                  LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
-              else {
-                  IfDp->Flags = ifr.ifr_flags;
-                  LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
-              }
-          }
+        if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
+            LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
+            IfDp->mtu = 0;
+        } else
+            IfDp->mtu = ifr.ifr_mtu;
+        // Enable multicast if necessary.
+        if (! (IfDp->Flags & IFF_MULTICAST)) {
+            ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
+            if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
+                LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
+            else {
+                IfDp->Flags = ifr.ifr_flags;
+                LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
+            }
+        }
 
         // Log the result...
         LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",

@@ -43,16 +43,15 @@
 static void cliSignalHandler(int sig);
 
 // Daemon CLI socket address.
-extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
+static int                   cli_fd = -1;
 static struct sockaddr_un    cli_sa;
+extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
 
 /**
 *   Opens and binds a socket for cli connections.
 */
 int openCliFd(void) {
     struct stat st;
-    int         cli_fd;
-
     memset(&cli_sa, 0, sizeof(struct sockaddr_un));
     cli_sa.sun_family = AF_UNIX;
 
@@ -86,66 +85,90 @@ int openCliFd(void) {
 /**
 *   Close and unlink CLI socket.
 */
-int closeCliFd(int fd) {
-    if (!RESTART) {
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
-        unlink(cli_sa.sun_path);
-        return -1;
+int closeCliFd(void) {
+    if (!RESTART && cli_fd >= 0) {
+        if (!STARTUP)
+            shutdown(cli_fd, SHUT_RDWR);
+        if (close(cli_fd) < 0)
+            LOG(LOG_WARNING, errno, "closeCliFd: CLOSE %s", cli_sa.sun_path);
+        else {
+            LOG(LOG_INFO, 0, "closeCliFd: Closed CLI socket %s.", cli_sa.sun_path);
+            cli_fd = -1;
+        }
+        if (!STARTUP)
+            unlink(cli_sa.sun_path);
     }
-    return fd;
+    return cli_fd;
 }
 
 /**
 *   Processes an incoming cli connection. Requires the fd of the cli socket.
 */
-void acceptCli(int fd)
+void acceptCli(void)
 {
-    int                 pid = 0, cli_fd = -1, len = 0, s = sizeof(struct sockaddr);
+    int                 pid = 0, fd = -1, len = 0, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
     struct IfDesc      *IfDp = NULL;
 
     // Receive and answer the cli request.
-    if ((cli_fd = accept(fd, &cli_sa, (socklen_t *)&s)) < 0) {
+    if ((fd = accept(cli_fd, &cli_sa, (socklen_t *)&s)) < 0) {
         LOG(LOG_WARNING, errno, "acceptCli: Failed accept()");
         return;
     } else {
-        if ((len = recv(cli_fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 || len > CLI_CMD_BUF ||
+        if ((len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 || len > CLI_CMD_BUF ||
             (buf[0] == 'r' && len > 2 &&
             (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
             LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
         } else if (buf[0] == 'c' || buf[0] == 'b') {
             sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
-            buf[0] == 'c' ? send(cli_fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
-                          : send(cli_fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+            buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
+                          : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+#ifdef __linux__
+            IF_FOR_IF(mrt_tbl < 0, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
+                kill(chld.c[i].pid, buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
+#endif
         } else if ((pid = fork()) != 0)
             pid < 0 ? LOG(LOG_WARNING, eNOFORK, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
         if (pid != 0 || buf[0] == 'c' || buf[0] == 'b') {
-            close(cli_fd);
+            close(fd);
             return;
         }
     }
 
     if (buf[0] == 'r') {
-        logRouteTable("", buf[1] == 'h' ? 0 : 1, cli_fd, addr, mask);
+        logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask);
     } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
         sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
-        send(cli_fd, msg, strlen(msg), MSG_DONTWAIT);
+        send(fd, msg, strlen(msg), MSG_DONTWAIT);
     } else if (buf[0] == 'i') {
-        getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, cli_fd);
+        getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, fd);
     } else if (buf[0] == 'f') {
-        getIfFilters(IfDp, len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
+        getIfFilters(IfDp, len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 't') {
-        debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, cli_fd);
+        debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 'm') {
-        getMemStats(buf[1] == 'h' ?  0 : 1, cli_fd);
+        getMemStats(buf[1] == 'h' ?  0 : 1, fd);
+#ifdef __linux__
+    } else if (buf[0] == 'p' && mrt_tbl < 0) {
+        send(fd, "Currently Running Processes:\n", 29, MSG_DONTWAIT);
+        for (int i = 0; i < chld.nr; i++) {
+            if (chld.c[i].pid > 0)
+                sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
+            else
+                sprintf(msg, "Table: %d - %s\n", chld.c[i].tbl, exitmsg[chld.c[i].st]);
+            send(fd, msg, strlen(msg), MSG_DONTWAIT);
+        }
+    } else if (buf[0] == 'p' && mrt_tbl >= 0) {
+        sprintf(msg, "Table: %d - PID: %d\n", mrt_tbl, getppid());
+        send(fd, msg, strlen(msg), MSG_DONTWAIT);
+#endif
     } else
-        send(cli_fd, "GO AWAY\n", 9, MSG_DONTWAIT);
+        send(fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 
     // Close connection.
-    close(cli_fd);
+    close(fd);
     LOG(LOG_DEBUG, 0, "acceptCli: Finished command %s.", buf);
     exit(0);
 }
@@ -181,13 +204,13 @@ void cliCmd(char *cmd, int tbl) {
     while (path) {
         sprintf(tpath, "%s/%s/root", path, fileName);
         if (lstat(tpath, &st) == 0 && (S_ISLNK(st.st_mode) || S_ISDIR(st.st_mode))) {
-            if (tbl)
+            if (tbl != 0)
                 sprintf(srv_sa.sun_path, "/%s/%s/root/cli-%d.sock", path, fileName, tbl);
             else
                 sprintf(srv_sa.sun_path, "/%s/%s/root/cli.sock", path, fileName);
             break;
         }
-        if (tbl)
+        if (tbl != 0)
             sprintf(tpath, "%s/%s/cli-%d.sock", path, fileName, tbl);
         else
             sprintf(tpath, "%s/%s/cli.sock", path, fileName);
