@@ -70,10 +70,9 @@ int initIgmp(bool activate) {
     }
     if (fd == -1)
         fd = k_enableMRouter();
-#ifdef __linux__
     if (mrt_tbl < 0)
         return fd;
-#endif
+
     if (! _calloc(rcv_buf, 1, rcv, CONF->pBufsz) || ! _calloc(snd_buf, 1, snd, CONF->pBufsz))
         LOG(LOG_ERR, eNOMEM, "initIgmp: Out of Memory.");  // Freed by Self
     struct ip *ip = (struct ip *)snd_buf;
@@ -125,7 +124,7 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
                            inetFmt(group,1), IfDp->Name, inetFmt(src, 2));
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_DEBUG, 0, "checkIgmp: The request from %s on %s is from myself. Ignoring.", inetFmt(src, 1), IfDp->Name);
-    else if ((IfDp->state & ifstate) == 0) {
+    else if ((IfDp->state & ifstate) == 0 || IfDp->conf->tbl != mrt_tbl) {
         strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
                               : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
         LOG(LOG_INFO, 0, "checkIgmp: Message for %s from %s was received on %s interface %s. Ignoring.",

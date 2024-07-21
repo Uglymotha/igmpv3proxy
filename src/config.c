@@ -399,8 +399,6 @@ static inline bool parsePhyintToken(char *token) {
             else {
                 tmpPtr->tbl = intToken;
                 LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
-                if (intToken > 0 && mrt_tbl < 0)
-                    igmpProxyFork(0);
                 if (mrt_tbl < 0) // Check again becasue of fork().
                     igmpProxyFork(intToken);
             }
@@ -661,11 +659,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
                 conf.defaultTable = intToken;
-                if (mrt_tbl < 0 && conf.defaultTable > 0) {
-                    igmpProxyFork(0);
-                    if (mrt_tbl < 0)  // Check again because of fork().
-                        igmpProxyFork(conf.defaultTable);
-                }
+                if (mrt_tbl < 0 && conf.defaultTable > 0)
+                    igmpProxyFork(conf.defaultTable);
                 LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
             }
 #else
@@ -952,10 +947,6 @@ bool loadConfig(char *cfgFile) {
             timers.bwControl = timer_setTimer(conf.bwControlInterval * 10, "Bandwidth Control",
                                               bwControl, &timers.bwControl);
     }
-#ifdef __linux__
-    if (mrt_tbl < 0 && !chld.nr)
-        mrt_tbl = 0;
-#endif
     return !logwarning;
 }
 
@@ -1007,7 +998,7 @@ void configureVifs(void) {
     struct IfDesc    *IfDp = NULL;
     struct vifConfig *vconf = NULL, *oconf = NULL;
     struct filters   *fil, *ofil;
-    bool              quickLeave = false;
+    bool              quickLeave = false, tbl0 = false;
     uint32_t          vifcount = 0, upvifcount = 0, downvifcount = 0;
 
     uVifs = 0;
@@ -1037,6 +1028,8 @@ void configureVifs(void) {
             oconf = IfDp->conf;
             IfDp->conf = vconf;
         }
+        if (!SHUTDOWN && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
+            igmpProxyFork(0);
 
         // Evaluate to old and new state of interface.
         if (!CONFRELOAD && !(IfDp->state & 0x40)) {
@@ -1050,15 +1043,15 @@ void configureVifs(void) {
         } else
             // Existing interface, oldstate is current state, newstate is configured state.
             IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
-#ifdef __linux__
-        if (mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) {
+
+        if (IfDp->conf->tbl != mrt_tbl) {
             // Check if Interface is in table for current process.
             LOG(LOG_NOTICE, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
-        } else if (mrt_tbl < 0)
-            // Monitor process only needs config and state.
+        }
+        if (mrt_tbl < 0)
+            // Monitor process only needs config.
             continue;
-#endif
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
         quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
 
@@ -1095,19 +1088,21 @@ void configureVifs(void) {
             if (IS_UPSTREAM(newstate)) {
                 upvifcount++;
                 BIT_SET(uVifs, IfDp->index);
-            }
+            } else
+                BIT_CLR(uVifs, IfDp->index);
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      (             IS_DISABLED(oldstate) && IS_UPSTREAM(newstate))    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
-        else if ((STARTUP ||  IS_DISABLED(oldstate)) && IS_DOWNSTREAM(newstate)) { ctrlQuerier(1, IfDp);                    }
-        else if (!STARTUP && !IS_DISABLED(oldstate) && IS_DISABLED(newstate))    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
-        else if (!STARTUP &&  oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
-        else if (             oldstate == newstate  && !IS_DISABLED(newstate))   { if (!IFREBUILD)       clearGroups(IfDp); }
+        if      (               IS_DISABLED(oldstate)  && IS_UPSTREAM(newstate))    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
+        else if ((STARTUP   ||  IS_DISABLED(oldstate)) && IS_DOWNSTREAM(newstate))  { ctrlQuerier(1, IfDp);                    }
+        else if (!STARTUP   && !IS_DISABLED(oldstate)  && IS_DISABLED(newstate))    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
+        else if (!STARTUP   &&  oldstate != newstate)                               { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
+        else if ( IFREBUILD &&  oldstate == newstate   && !IS_DISABLED(newstate))   {                       clearGroups(IfDp); }
         IfDp->filCh = false;
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
+            BIT_CLR(uVifs, IfDp->index);
             k_delVIF(IfDp);
             if (vifcount)
                 vifcount--;
@@ -1117,11 +1112,10 @@ void configureVifs(void) {
                 upvifcount--;
         }
     }
-#ifdef __linux__
     if (mrt_tbl < 0)
         // Monitor process only needs config and state.
         return;
-#endif
+
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
     if (!quickLeave) {
         LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
@@ -1138,5 +1132,5 @@ void configureVifs(void) {
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
-        LOG(LOG_ERR, eNOCONF, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
+        LOG(LOG_ERR, 0 - eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }

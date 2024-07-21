@@ -71,19 +71,19 @@ void k_set_rcvbuf(int bufsize) {
     LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, i);
 }
 
-inline void k_set_ttl(uint8_t ttl) {
+void k_set_ttl(uint8_t ttl) {
 #ifndef RAW_OUTPUT_IS_RAW
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
 #endif
 }
 
-inline void k_set_loop(bool loop) {
+void k_set_loop(bool loop) {
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
 }
 
-inline void k_set_if(struct IfDesc *IfDp) {
+void k_set_if(struct IfDesc *IfDp) {
     struct in_addr adr = { IfDp ? IfDp->InAdr.s_addr : INADDR_ANY };
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0)
         LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
@@ -94,7 +94,7 @@ inline void k_set_if(struct IfDesc *IfDp) {
 *   The join is bound to the UDP socket 'udpSock', so if this socket is
 *   closed the membership is dropped.
 */
-inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source) {
+bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source) {
     struct group_req        grpReq  = { 0 };
     struct group_source_req grpSReq = { 0 };
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
@@ -138,7 +138,7 @@ inline bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mo
 inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
     uint32_t i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
-    if (! (ss = malloc(size)))  // Freed by self.
+    if (! _malloc(ss, var, size))  // Freed by self.
         LOG(LOG_ERR, eNOMEM, "k_setSourceFilter: Out of Memory.");
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
     int er = EADDRNOTAVAIL;  // Freebsd errno when group is not joined.
@@ -157,7 +157,7 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
                         fmode, nsrcs, ss) < 0 && ((err = errno) != er || nsrcs == 0))
         LOG(LOG_WARNING, err, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
 
-    free(ss);  // Alloced by self.
+    _free(ss, var, size);  // Alloced by self.
     return err ? EADDRNOTAVAIL : 0;
 }
 
@@ -174,14 +174,12 @@ inline int k_getMrouterFD(void) {
 int k_enableMRouter(void) {
     int Va = 1;
 
-#ifdef __linux__
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         LOG(LOG_ERR, eNOINIT, "Failed to open UDP socket.");
     else if (mrt_tbl < 0) {
         LOG(LOG_INFO, 0, "k_enableMRouter: Opened UDP socket.");
         return mrouterFD;
     }
-#endif
     if ((mrouterFD = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
         LOG(LOG_ERR, eNOINIT, "IGMP socket open Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
@@ -212,11 +210,8 @@ int k_enableMRouter(void) {
 *   Disable the mrouted API and relases by this the lock.
 */
 int k_disableMRouter(void) {
-#ifdef __linux__
-    if (mrt_tbl >= 0 && !STARTUP)
-#endif
-      if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
-          LOG(LOG_WARNING, errno, "k_disableMRouter: MRT_DONE");
+    if (!STARTUP && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
+        LOG(LOG_WARNING, errno, "k_disableMRouter: MRT_DONE");
     if (close(mrouterFD) < 0)
         LOG(LOG_WARNING, errno, "k_disableMRouter: CLOSE");
     else {

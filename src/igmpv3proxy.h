@@ -76,14 +76,6 @@
 //  Global definitions and declarations.
 //#################################################################################
 
-// Memory statistics.
-struct memstats {
-    int64_t mct, src, mfc, ifm;       // Multicast Forwarding Table
-    int64_t ifd, fil, vif;            // Interfaces
-    int64_t rcv, snd;                 // Buffers
-    int64_t qry, tmr, var;            // Queries, Timers, various.
-};
-
 // Keeps common configuration settings.
 #define RUN_PATHS "/run /var/run /tmp /var/tmp"
 #define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
@@ -140,6 +132,25 @@ struct Config {
     bool                querierElection;
     // Set if must not validate igmp checksum.
     bool                cksumVerify;
+};
+
+// Memory statistics.
+struct memstats {
+    int64_t mct, src, mfc, ifm;       // Multicast Forwarding Table
+    int64_t ifd, fil, vif;            // Interfaces
+    int64_t rcv, snd;                 // Buffers
+    int64_t qry, tmr, var;            // Queries, Timers, various.
+};
+
+struct pt {
+    pid_t   pid;
+    int     tbl;
+    volatile uint8_t sig;
+    volatile int8_t  st;
+};
+struct chld {
+    int        nr;
+    struct pt *c;
 };
 
 // Timers for proxy control.
@@ -428,21 +439,11 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint8_t               sigstatus, logwarning;
+extern uint8_t          sigstatus, logwarning;
 
-#ifdef __linux__
 // MRT route table id. Linux only, not supported on FreeBSD.
-extern struct chld {
-    struct pt {
-                 pid_t   pid;
-                 int     tbl;
-        volatile uint8_t sig;
-        volatile int8_t  st;
-    }             *c;
-    int            nr;
-}                       chld;
+extern struct chld      chld;
 extern int              mrt_tbl;
-#endif
 
 // Upstream vif mask.
 extern uint32_t         uVifs;
@@ -542,7 +543,7 @@ void    k_set_rcvbuf(int bufsize);
 void    k_set_ttl(uint8_t ttl);
 void    k_set_loop(bool l);
 void    k_set_if(struct IfDesc *IfDp);
-bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t src);
+bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source);
 int     k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int     k_getMrouterFD(void);
 int     k_enableMRouter(void);

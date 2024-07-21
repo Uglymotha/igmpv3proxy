@@ -72,7 +72,7 @@ void rebuildIfVc(uint64_t *tid) {
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
     if (tid)
         sigstatus |= GOT_SIGUSR2;
-    if (!IfDescL || !(CONFRELOAD || SHUTDOWN || RESTART))
+    if (! IfDescL || IFREBUILD || SHUP || STARTUP)
         buildIfVc();
 
     // Call configureVifs to link the new IfDesc table.
@@ -211,11 +211,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             sprintf(buf, "%lu,%lu\n", IfDp->rqCnt, IfDp->sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
-#ifdef __linux__
-    } else for (IFL(IfDp), i++) if (!mrt_tbl || !IS_DISABLED(IfDp->state)) {
-#else
-    } else for (IFL(IfDp), i++) {
-#endif
+    } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || !chld.nr || !IS_DISABLED(IfDp->state)) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->bytes, total.rate + IfDp->rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");

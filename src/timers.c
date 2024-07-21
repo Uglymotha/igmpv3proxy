@@ -50,7 +50,7 @@ static struct timeOutQueue {
     struct timeOutQueue  *next;                     // Next event in queue
     char                 *name;                     // name of the timer
 }     *queue = NULL;
-#define TMSZ (sizeof(struct timeOutQueue) + n + 1)
+#define TMSZ(n) (sizeof(struct timeOutQueue) + strlen(n) + 1)
 static uint64_t id = 1;
 
 /**
@@ -59,19 +59,17 @@ static uint64_t id = 1;
 */
 struct timespec timer_ageQueue(void) {
     struct timeOutQueue *node = queue;
-    uint64_t                i = 1;
+    uint64_t                i = 1, tid;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (size_t n = 0; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; i++) {
+    for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
-            timeDiff(node->time, curtime).tv_nsec / 1000);
-        n = strlen(node->name);
-        node->func(node->data, node->id);
-        queue = node->next;
-        _free(node, tmr, TMSZ);   // Alloced by timer_setTimer()
-        node = queue;
+                          timeDiff(node->time, curtime).tv_nsec / 1000);
+        tid = node->id;
+        node->func(node->data, tid);
+        timer_clearTimer(tid);
+        clock_gettime(CLOCK_REALTIME, &curtime);
     }
-
     if (i > 1)
         DEBUGQUEUE("Age Queue", 1, -1);
 
@@ -84,12 +82,12 @@ struct timespec timer_ageQueue(void) {
 */
 uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
-    uint64_t                i = 1,        n = strlen(name);
+    uint64_t                i = 1;
 
     // Create and set a new timer.
-    if (! _malloc(node, tmr, TMSZ))  // Freed by timer_ageQueue() or timer_clearTimer()
+    if (! _malloc(node, tmr, TMSZ(name)))  // Freed by timer_ageQueue() or timer_clearTimer()
         LOG(LOG_ERR, eNOMEM, "timer_setTimer: Out of memory.");
-    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, n + 1) };
+    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, strlen(name) + 1) };
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
         node->next = queue;
@@ -118,7 +116,6 @@ void *timer_clearTimer(uint64_t tid) {
     // Find the timer and remove it if found.
     for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
     if (node) {
-        size_t n = strlen(node->name);
         if (pnode)
             pnode->next = node->next;
         else
@@ -126,7 +123,7 @@ void *timer_clearTimer(uint64_t tid) {
         DEBUGQUEUE("Clear Timer", 1, -1);
         pnode = (void *)node->data;
         LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", node->id, i, node->name);
-        _free(node, tmr, TMSZ);        // Alloced by timer_setTimer()
+        _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
     }
 
     // If timer was removed, return its data, the caller may need it.

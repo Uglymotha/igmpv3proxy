@@ -56,13 +56,10 @@ int openCliFd(void) {
     cli_sa.sun_family = AF_UNIX;
 
     // Open the socket, set permissions and mode.
-    if (   ! strcpy(cli_sa.sun_path, CONF->runPath)
-#ifdef __linux__
+    if (cli_fd == -1) {
+        if (   ! strcpy(cli_sa.sun_path, CONF->runPath)
         || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), PATH_MAX - strlen(cli_sa.sun_path),
                       mrt_tbl ? "cli-%d.sock" : "cli.sock", mrt_tbl)
-#else
-        || ! strcat(cli_sa.sun_path, "cli.sock")
-#endif
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -74,11 +71,11 @@ int openCliFd(void) {
         ||    listen(cli_fd, CONF->reqQsz) < 0
         ||  (     chown(cli_sa.sun_path, CONF->user ? CONF->user->pw_uid : -1, CONF->group->gr_gid))
                || chmod(cli_sa.sun_path, 0660)) {
-        LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
-        cli_fd = -1;
-    } else
-        LOG(LOG_INFO, 0, "openCliFd: Opened CLI socket %s.", cli_sa.sun_path);
-
+            LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
+            cli_fd = -1;
+        } else
+            LOG(LOG_INFO, 0, "openCliFd: Opened CLI socket %s.", cli_sa.sun_path);
+    }
     return cli_fd;
 }
 
@@ -106,7 +103,7 @@ int closeCliFd(void) {
 */
 void acceptCli(void)
 {
-    int                 pid = 0, fd = -1, len = 0, s = sizeof(struct sockaddr);
+    int                 pid = -1, fd = -1, len = 0, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
@@ -125,10 +122,8 @@ void acceptCli(void)
             sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
             buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
                           : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
-#ifdef __linux__
-            IF_FOR_IF(mrt_tbl < 0, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
+            IF_FOR_IF(mrt_tbl < 0 && chld.nr, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
                 kill(chld.c[i].pid, buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
-#endif
         } else if ((pid = fork()) != 0)
             pid < 0 ? LOG(LOG_WARNING, eNOFORK, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
         if (pid != 0 || buf[0] == 'c' || buf[0] == 'b') {
@@ -150,9 +145,9 @@ void acceptCli(void)
         debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 'm') {
         getMemStats(buf[1] == 'h' ?  0 : 1, fd);
-#ifdef __linux__
     } else if (buf[0] == 'p' && mrt_tbl < 0) {
-        send(fd, "Currently Running Processes:\n", 29, MSG_DONTWAIT);
+        sprintf(msg, "Monitor PID: %d\n", getppid());
+        send(fd, msg, strlen(msg), MSG_DONTWAIT);
         for (int i = 0; i < chld.nr; i++) {
             if (chld.c[i].pid > 0)
                 sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
@@ -163,7 +158,6 @@ void acceptCli(void)
     } else if (buf[0] == 'p' && mrt_tbl >= 0) {
         sprintf(msg, "Table: %d - PID: %d\n", mrt_tbl, getppid());
         send(fd, msg, strlen(msg), MSG_DONTWAIT);
-#endif
     } else
         send(fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 

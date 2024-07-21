@@ -287,12 +287,10 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     va_end(ArgPt);
 
     if ((CONF->logFilePath || CONF->log2Stderr) && lfp)
-#ifdef __linux__
         if (mrt_tbl >= 0 && chld.nr)
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
         else
-#endif
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, LogMsg);
     else
@@ -301,31 +299,27 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
     if (lfp && lfp != stderr)
         fclose(lfp);
     if (Severity <= LOG_ERR && !SHUTDOWN) {
+        BLOCKSIGS;
         sigstatus = GOT_SIGTERM;
-#ifdef __linux__
-        IF_FOR_IF(mrt_tbl < 0 && chld.c, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
+        IF_FOR_IF(mrt_tbl < 0 && chld.nr, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
             LOG(LOG_INFO, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
             kill(chld.c[Ln].pid, SIGINT);
-            chld.c[Ln].pid = chld.c[Ln].tbl = -1;
         }
-#endif
         if (Errno < 0)
             Errno = 0 - Errno;
         igmpProxyCleanUp(Errno);
     }
 }
 
-#ifdef __linux__
 /**
 *   Sets or removes ip mrules for table.
 */
-void ipRules(int tbl, bool activate)
-{
+void ipRules(int tbl, bool activate) {
     struct IfDesc *IfDp;
     char           msg[12];
     sprintf(msg, "%d", tbl);
     LOG(LOG_INFO, 0, "ipRules: %s mrules for table %s.", activate ? "Adding" : "Removing", msg);
-    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IS_DISABLED(IfDp->state) && !IfDp->conf->disableIpMrules) {
+    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
         pid_t pid;
         LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
         for (int i = 0; i < 2; i++) {
@@ -333,13 +327,12 @@ void ipRules(int tbl, bool activate)
                 LOG(LOG_ERR, eNOFORK, "ipRules: Cannot fork.");
             } else if (pid == 0) {
                 execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
-                LOG(LOG_ERR, eNOFORK, "ipRules: Cannot exec.");
+                LOG(LOG_WARNING, eNOFORK, "ipRules: Cannot exec.");
                 exit(-1);
             }
         }
     }
 }
-#endif
 
 /**
 *   Show memory statistics for debugging purposes.

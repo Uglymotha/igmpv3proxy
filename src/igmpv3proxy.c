@@ -54,10 +54,8 @@ char                 *rcv_buf = NULL, *fileName, tS[32], tE[32], RUNPATH[] = RUN
 struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
 static struct pollfd  pollFD[2] = { {-1, POLLIN, 0}, {-1, POLLIN, 0} };
 const struct timespec nto = { 0, 0 };
-#ifdef __linux__
 int                   mrt_tbl = -1;
 struct chld           chld = { 0 };
-#endif
 
 /**
 *   Program main method. Is invoked when the program is started
@@ -297,7 +295,6 @@ static void igmpProxyRun(void) {
     LOG(LOG_WARNING, 0, "%s", SHUTDOWN ? "SIGTERM: Exiting." : "SIGURG: Restarting");
 }
 
-#ifdef __linux__
 /**
 *   Start a new igmpv3proxy process for route table.
 */
@@ -317,7 +314,7 @@ void igmpProxyFork(int tbl) {
         // Do not increase the nr. childs here if an emtpy spot was found and check validity.
         LOG(LOG_ERR, eNOFORK, "igmpProxyFork: Cannot fork() child %d.", chld.nr);
     } else if (pid == 0) {
-        // Child initializes its own start time.
+        // Child initializes its own start time, Closes sockets in use by monitor and opens new ones.
         clock_gettime(CLOCK_REALTIME, &starttime);
         strcpy(tS, asctime(localtime(&starttime.tv_sec)));
         tS[strlen(tS) - 1] = '\0';
@@ -325,6 +322,8 @@ void igmpProxyFork(int tbl) {
         chld.nr = i + 1;  // Just so that we know who we are.
         _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
         sigstatus = 1;
+        pollFD[0].fd = initIgmp(false), pollFD[1].fd = closeCliFd();
+        pollFD[0].fd = initIgmp(true),  pollFD[1].fd = openCliFd();
     } else {
         // Parent sets the new child info in table.
         chld.c[i].tbl = tbl;
@@ -390,8 +389,6 @@ static void igmpProxyMonitor(void) {
             timeout = timer_ageQueue();
         if (mrt_tbl >= 0) {
             // SIGCHLD, ageQueue() or loadConfig() may have forked new proxy.
-            pollFD[0].fd = initIgmp(false), pollFD[1].fd = closeCliFd();
-            pollFD[0].fd = initIgmp(true),  pollFD[1].fd = openCliFd();
             rebuildIfVc(NULL);
             return;  // To igmpProxyInit()
         }
@@ -402,13 +399,11 @@ static void igmpProxyMonitor(void) {
 
     LOG(LOG_ERR, eABNRML, "igmpProxyMonitor: Proceses exited.");
 }
-#endif
 
 /**
 *   Handles the initial startup of the daemon. Contains OS Specics.
 */
 static void igmpProxyInit(void) {
-    pid_t        pid = -1;
     struct stat  st;
     sigstatus = 1;  // STARTUP
 
@@ -425,19 +420,18 @@ static void igmpProxyInit(void) {
         LOG(LOG_WARNING, errno, "Config: Failed to get group for %d.", CONF->user ? CONF->user->pw_gid : 0);
     unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
 
-#ifdef __linux__
     if (mrt_tbl < 0) {
         // Write PID in main daemon process only.
-#endif
-      char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 5];
-      sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
-      remove(pidFile);
-      FILE *pidFilePtr = fopen(pidFile, "w");
-      fprintf(pidFilePtr, "%d\n", getpid());
-      fclose(pidFilePtr);
-#ifdef __linux__
+        if (!chld.nr)
+            mrt_tbl = 0;
+        char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 5];
+        sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
+        remove(pidFile);
+        FILE *pidFilePtr = fopen(pidFile, "w");
+        fprintf(pidFilePtr, "%d\n", getpid());
+        fclose(pidFilePtr);
     }
-#endif
+
     // Change ownership of run directory.
     if (chown(CONF->runPath, uid, gid) < 0)
         LOG(LOG_ERR, eNOINIT, "Failed to change ownership of %s to %s:%s.",
@@ -466,15 +460,13 @@ static void igmpProxyInit(void) {
         LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONF->logFilePath, CONF->user->pw_name);
 
     SETSIGS;
-    // Enable mroute and open cli socket and add ip mrules while still running as root.
-    pollFD[0].fd = initIgmp(true);
-    pollFD[1].fd = openCliFd();
+    // Enable mroute and open cli socket and go to monitor in case of multiple tables..
+    if (mrt_tbl < 0 || !chld.nr)
+        pollFD[0].fd = initIgmp(true), pollFD[1].fd = openCliFd();;
     rebuildIfVc(NULL);
-#ifdef __linux__
-    // When multiple tables are in use, process for default table 0 is forked off here.
     if (mrt_tbl < 0)
         igmpProxyMonitor();
-#endif
+
     // Make sure logfile and chroot directory are owned by configured user and switch ids.
     if (CONF->user && geteuid() == 0) {
         unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
@@ -487,61 +479,58 @@ static void igmpProxyInit(void) {
 }
 
 /**
-*   Clean up all on exit...
+*   Shutdown all interfaces, queriers, remove all routes, close sockets.
 */
 void igmpProxyCleanUp(int code) {
     struct timespec endtime;
-    // Shutdown all interfaces, queriers, remove all routes, close sockets.
-#ifdef __linux__
     int size = (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt);
+
     if (!code && mrt_tbl < 0)
         code = 0;
     else if (!code)
         code = 15;
-    if (mrt_tbl < 0 && chld.c && !RESTART) {
+    if (mrt_tbl < 0 && !RESTART) {
         pid_t pid;
         // Wait for all childs. Cli processes are not tracked, their fds are closed.
         LOG(LOG_INFO, 0, "Waiting for %d processes to finish.", chld.nr);
         while ((pid = wait(NULL)) > 0 && chld.nr) {
-            FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid && chld.c[i].tbl > 0 && --chld.nr) {
-                ipRules(chld.c[i].tbl, false);
+            FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
+                chld.nr--;
+                if (chld.c[i].tbl > 0)
+                    ipRules(chld.c[i].tbl, false);
                 LOG(LOG_NOTICE, 0, "Still waiting for %d process%s to finish.", chld.nr, chld.nr > 1 ? "es" : "");
             }
         }
         _free(chld.c, var, size);  // Alloced by igmpProxyFork()
         LOG(LOG_NOTICE, 0, "All processes finished.");
     }
-#endif
-    // Remove all interfaces.
-    rebuildIfVc(NULL);
 
-    // Remove MRT, CLI socket and PID file and Config in main daemon only.
+    // Remove all interfaces, CLI socket, PID file and Config.
+    rebuildIfVc(NULL);
     pollFD[1].fd = closeCliFd(), pollFD[0].fd = initIgmp(false);
-#ifdef __linux__
-    if (mrt_tbl < 0)
-#endif
-      if (!RESTART && CONF->runPath) {
-          char rFile[strlen(CONF->runPath) + strlen(fileName) + 5];
-          sprintf(rFile, "%s%s.pid", CONF->runPath, fileName);
-          remove(rFile);
-          sprintf(rFile, "%scli.sock", CONF->runPath);
-          remove(rFile);
-          if (rmdir(CONF->runPath) < 0)
-              LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONF->runPath);
-      }
+    if ((mrt_tbl < 0 || !chld.nr) && !RESTART && CONF->runPath) {
+        char rFile[strlen(CONF->runPath) + strlen(fileName) + 5];
+        sprintf(rFile, "%s%s.pid", CONF->runPath, fileName);
+        remove(rFile);
+        sprintf(rFile, "%scli.sock", CONF->runPath);
+        remove(rFile);
+        if (rmdir(CONF->runPath) < 0)
+            LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONF->runPath);
+    }
     if (!RESTART)
         // On SIGURG reloadConfig will clear old config.
         freeConfig(false);
     getMemStats(0, -1);
 
     // Log shutdown.
+    if (SHUTDOWN)
+        timer_clearTimer((uint64_t)-1);
     clock_gettime(CLOCK_REALTIME, &endtime);
     strcpy(tE, asctime(localtime(&endtime.tv_sec)));
     tE[strlen(tE) - 1] = '\0';
     LOG(LOG_WARNING, 0, "%s on %s. Running since %s (%ds).", RESTART ? "Restarting" : "Shutting down",
                          tE, tS, timeDiff(starttime, endtime).tv_sec);
     if (SHUTDOWN) {
-        timer_clearTimer((uint64_t)-1);
         free(CONF->runPath);         // Alloced by main()
         free(CONF->chroot);          // Alloced by loadConfig()
         free(CONF->logFilePath);     // Alloced by loadConfig()
@@ -558,24 +547,19 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
 
     switch (sig) {
     case SIGINT:
-#ifdef __linux__
-        if (mrt_tbl < 0 || !chld.nr)
-#endif
-          if (!CONF->notAsDaemon)
-              return;  // Daemon / monitor ignores SIGINT
+        if ((mrt_tbl < 0 || !chld.nr) && !CONF->notAsDaemon)
+            return;  // Daemon / Monitor ignores SIGINT
         sighandled |= GOT_SIGINT;  // Fallthrough
     case SIGTERM:
+        sighandled |= GOT_SIGTERM;
         if (SHUTDOWN) {
-#ifdef __linux__
             // If SIGTERM received more than once, KILL childs and exit.
-            IF_FOR_IF(mrt_tbl < 0 && chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid > 0) {
+            IF_FOR_IF(mrt_tbl < 0 && chld.nr, i = 0; i < chld.nr; i++, chld.c[i].pid > 0) {
                 kill(chld.c[i].pid, SIGKILL);
             }
-#endif
             exit(sig);
         }
         BLOCKSIGS;
-        sighandled |= GOT_SIGTERM;
         if (sig == SIGINT)
             return;
         break;
@@ -596,8 +580,7 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
         break;
     case SIGCHLD:
         sighandled |= GOT_SIGCHLD;
-#ifdef __linux__
-        IF_FOR_IF(mrt_tbl < 0 && chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid == siginfo->si_pid) {
+        IF_FOR_IF(mrt_tbl < 0 && chld.nr, i = 0; i < chld.nr; i++, chld.c[i].pid == siginfo->si_pid) {
             chld.c[i].sig = 1;
             chld.c[i].st  = (int8_t)siginfo->si_status;
             break;
@@ -606,9 +589,6 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
     }
     // Send SIG to children, except for SIGINT SIGPIPE and SIGCHLD.
     // If monitor is terminating we will end childs with SIGINT.
-    IF_FOR_IF(mrt_tbl < 0 && chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
+    IF_FOR_IF(mrt_tbl < 0 && chld.nr, i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
         kill(chld.c[i].pid, sig == SIGTERM ? SIGINT : sig);
-#else
-    }
-#endif
 }

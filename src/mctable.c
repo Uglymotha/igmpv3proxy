@@ -592,7 +592,7 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
         uint32_t    nsrcs = 0, *slist = NULL, i;
         struct src *src;
         // Build source list for upstream interface.
-        if (! (slist = malloc((mct->nsrcs & ~0x80000000) * sizeof(uint32_t))))  // Freed by self
+        if (! _malloc(slist, var, ((mct->nsrcs & ~0x80000000) + 1) * sizeof(uint32_t)))  // Freed by self
             LOG(LOG_ERR, eNOMEM, "updateSourceFilter: Out of Memory.");
         for (nsrcs = 0, src = mct->sources; src; src = src->next) {
             BIT_CLR(src->vifB.us, IfDp->index);
@@ -641,7 +641,7 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
             if (mct->mode && k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1) && nsrcs > 0)
                 k_setSourceFilter(IfDp, mct->group, mct->mode ? MCAST_EXCLUDE : MCAST_INCLUDE, nsrcs, slist);
 
-        free(slist);  // Alloced by self
+        _free(slist, var, ((mct->nsrcs & ~0x80000000) + 1) * sizeof(uint32_t));  // Alloced by self
     }
 }
 
