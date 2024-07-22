@@ -1028,11 +1028,12 @@ void configureVifs(void) {
             oconf = IfDp->conf;
             IfDp->conf = vconf;
         }
+        // We will fork proxy for default table 0 on seeing the first interface.
         if (!SHUTDOWN && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
             igmpProxyFork(0);
 
         // Evaluate to old and new state of interface.
-        if (!CONFRELOAD && !(IfDp->state & 0x40)) {
+        if (!STARTUP && !CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
             if (!(IfDp->state & 0x80))
                 // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
@@ -1093,11 +1094,11 @@ void configureVifs(void) {
         }
 
         // Do maintenance on vifs according to their old and new state.
-        if      (               IS_DISABLED(oldstate)  && IS_UPSTREAM(newstate))    { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
-        else if ((STARTUP   ||  IS_DISABLED(oldstate)) && IS_DOWNSTREAM(newstate))  { ctrlQuerier(1, IfDp);                    }
-        else if (!STARTUP   && !IS_DISABLED(oldstate)  && IS_DISABLED(newstate))    { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
-        else if (!STARTUP   &&  oldstate != newstate)                               { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
-        else if ( IFREBUILD &&  oldstate == newstate   && !IS_DISABLED(newstate))   {                       clearGroups(IfDp); }
+        if      ( IS_DISABLED(oldstate) && IS_UPSTREAM(newstate))                { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
+        else if ( IS_DISABLED(oldstate) && IS_DOWNSTREAM(newstate))              { ctrlQuerier(1, IfDp);                    }
+        else if (!IS_DISABLED(oldstate) && IS_DISABLED(newstate))                { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
+        else if (!STARTUP  && oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
+        else if (IFREBUILD && oldstate == newstate && !IS_DISABLED(newstate))    {                       clearGroups(IfDp); }
         IfDp->filCh = false;
 
         // Check if vif needs to be removed.

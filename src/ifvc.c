@@ -51,7 +51,7 @@ void freeIfDescL(void) {
         if (SHUTDOWN || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
             // Remove interface marked for deletion.
             if (!STARTUP)
-                LOG(LOG_NOTICE, 0, "Interface %s was removed.", IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
+                LOG(LOG_NOTICE, 0, "Interface %s was removed.", SHUTDOWN || IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
             fIfDp = SHUTDOWN || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
             if (SHUTDOWN || IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;

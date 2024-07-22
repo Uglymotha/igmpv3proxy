@@ -59,15 +59,18 @@ static uint64_t id = 1;
 */
 struct timespec timer_ageQueue(void) {
     struct timeOutQueue *node = queue;
-    uint64_t                i = 1, tid;
+    uint64_t                i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
     for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
                           timeDiff(node->time, curtime).tv_nsec / 1000);
-        tid = node->id;
-        node->func(node->data, tid);
-        timer_clearTimer(tid);
+        node->func(node->data, node->id);
+        // The function may have removed the timeout itself, check before freeing.
+        if (queue == node) {
+            queue = node->next;
+            _free(node, tmr, TMSZ(node->name));
+        }
         clock_gettime(CLOCK_REALTIME, &curtime);
     }
     if (i > 1)
@@ -111,8 +114,6 @@ void *timer_clearTimer(uint64_t tid) {
     struct timeOutQueue *node, *pnode;
     uint64_t i;
 
-    // If tid = -1 clear all timers.
-    IF_FOR(tid == (uint64_t)-1,; queue; timer_clearTimer(queue->id));
     // Find the timer and remove it if found.
     for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
     if (node) {

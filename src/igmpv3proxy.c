@@ -270,22 +270,11 @@ static void igmpProxyRun(void) {
             // Handle incoming IGMP request first.
             if (pollFD[0].revents & POLLIN) {
                 LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV IGMP Request %d.", i);
-                union  cmsg   cmsg;
-                struct iovec  ioVec[1] = { { rcv_buf, CONF->pBufsz } };
-                struct msghdr msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsg, sizeof(cmsg), MSG_DONTWAIT };
-                int recvlen = recvmsg(pollFD[0].fd, &msgHdr, 0);
-                if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC))
-                    LOG(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
-                else if ((msgHdr.msg_flags & MSG_CTRUNC))
-                    LOG(LOG_WARNING, errno, "recvmsg() truncated control message received.");
-                else
-                    acceptIgmp(recvlen, msgHdr);
+                acceptIgmp(pollFD[0].fd);
             }
             // Check if any cli connection needs to be handled.
-            if (pollFD[1].revents & POLLIN) {
-                LOG(LOG_DEBUG, 0, "igmpProxyRun: RECV CLI Request %d.", i);
+            if (pollFD[1].revents & POLLIN)
                 acceptCli();
-            }
 
             clock_gettime(CLOCK_REALTIME, &curtime);
             LOG(LOG_DEBUG, 0, "igmpProxyRun: Fnished request %d in %dus.", i, timeDiff(timeout, curtime).tv_nsec / 1000);
@@ -303,27 +292,26 @@ void igmpProxyFork(int tbl) {
 
     // On first start of new process, initialize the child processes table. Alloc per 32 entries.
     if (chld.nr % 32 == 0 && ! _recalloc(chld.c, var, ((chld.nr / 32) + 1) * size, (chld.nr / 32) * size))
-        // Freed by Self or igmpProxyCleanUp()
-        LOG(LOG_ERR, eNOMEM, "igmpProxyFork: Out of Memory.");
-    // Find a spot for the process in the table, increase child counter.
-    // Child table is not shifted, but pid and tbl set to -1, after child exits.
+        LOG(LOG_ERR, eNOMEM, "igmpProxyFork: Out of Memory.");   // Freed by Self or igmpProxyCleanUp()
+    // Find a spot for the process in the table, table is not shifted, but pid set to 0 after child exits.
     for (i = 0; i < chld.nr && chld.c[i].tbl != tbl; i++);
     if (i < chld.nr && chld.c[i].pid > 0) {
         LOG(LOG_DEBUG, 0, "igmpProxyFork: Proxy for table %d already active.", tbl);
     } else if ((pid = fork()) < 0) {
-        // Do not increase the nr. childs here if an emtpy spot was found and check validity.
         LOG(LOG_ERR, eNOFORK, "igmpProxyFork: Cannot fork() child %d.", chld.nr);
     } else if (pid == 0) {
         // Child initializes its own start time, Closes sockets in use by monitor and opens new ones.
+        _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
         clock_gettime(CLOCK_REALTIME, &starttime);
         strcpy(tS, asctime(localtime(&starttime.tv_sec)));
         tS[strlen(tS) - 1] = '\0';
         mrt_tbl = tbl;    // Set routing table for process.
         chld.nr = i + 1;  // Just so that we know who we are.
-        _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
         sigstatus = 1;
-        pollFD[0].fd = initIgmp(false), pollFD[1].fd = closeCliFd();
-        pollFD[0].fd = initIgmp(true),  pollFD[1].fd = openCliFd();
+        if (pollFD[0].fd != -1) {
+            pollFD[0].fd = initIgmp(false), pollFD[1].fd = closeCliFd();
+            pollFD[0].fd = initIgmp(true),  pollFD[1].fd = openCliFd();
+        }
     } else {
         // Parent sets the new child info in table.
         chld.c[i].tbl = tbl;
@@ -337,7 +325,6 @@ void igmpProxyFork(int tbl) {
 
 /**
 *   Monitor process when multiple proxies are running.
-*   signalHandler will restart processes if the exit. loadConfig may start new procxies if needed.
 */
 static void igmpProxyMonitor(void) {
     struct timespec timeout = (struct timespec){ 0, 0 };
@@ -346,7 +333,7 @@ static void igmpProxyMonitor(void) {
     LOG(LOG_NOTICE, 0, "Monitoring %d proxy processes.", chld.nr);
 
     sigstatus = 0;
-    while (sighandled || ppoll(&pollFD[1], 1, &timeout, NULL) || true) {
+    while (sighandled || ppoll(&pollFD[1], 1, timeout.tv_sec < 0 ? NULL : &timeout, NULL) || true) {
         if (sighandled) {
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
@@ -381,19 +368,17 @@ static void igmpProxyMonitor(void) {
             }
         }
         // Check if any cli connection needs to be handled.
-        if (pollFD[1].revents & POLLIN) {
-            LOG(LOG_DEBUG, 0, "igmpProxyMonitor: RECV CLI Request.");
+        if (mrt_tbl < 0 && pollFD[1].revents & POLLIN)
             acceptCli();
-        }
         if (mrt_tbl < 0 && !sighandled)
             timeout = timer_ageQueue();
+        if (timeout.tv_nsec < 0)
+            timeout.tv_nsec = 0;
         if (mrt_tbl >= 0) {
             // SIGCHLD, ageQueue() or loadConfig() may have forked new proxy.
             rebuildIfVc(NULL);
-            return;  // To igmpProxyInit()
+            return; // To igmpProxyInit()
         }
-        if (timeout.tv_nsec < 0)
-            timeout.tv_nsec = 0;
         errno = sigstatus = pollFD[1].revents = 0;
     }
 
@@ -401,7 +386,7 @@ static void igmpProxyMonitor(void) {
 }
 
 /**
-*   Handles the initial startup of the daemon. Contains OS Specics.
+*   Handles the initial startup of the daemon.
 */
 static void igmpProxyInit(void) {
     struct stat  st;
@@ -446,7 +431,8 @@ static void igmpProxyInit(void) {
             strcpy(CONF->logFilePath, b);
         }
         // Link the root to the run directory and set runpath to /.
-        if (symlink(CONF->chroot, CONF->runPath) != 0 && errno != EEXIST)  // Race with possible childs, it's fine let them win.
+        if (symlink(CONF->chroot, strcat(CONF->runPath, "root")) != 0 && errno != EEXIST)
+            // Race with possible childs, it's fine let them win.
             LOG(LOG_ERR, eNOINIT, "Failed to link chroot directory %s to run directory %s.", CONF->chroot, CONF->runPath);
         strcpy(CONF->runPath, "/");
         // Set permissions and swith root directory.
@@ -460,9 +446,7 @@ static void igmpProxyInit(void) {
         LOG(LOG_WARNING, errno, "Failed to chown log file %s to %s.", CONF->logFilePath, CONF->user->pw_name);
 
     SETSIGS;
-    // Enable mroute and open cli socket and go to monitor in case of multiple tables..
-    if (mrt_tbl < 0 || !chld.nr)
-        pollFD[0].fd = initIgmp(true), pollFD[1].fd = openCliFd();;
+    pollFD[0].fd = initIgmp(true), pollFD[1].fd = openCliFd();
     rebuildIfVc(NULL);
     if (mrt_tbl < 0)
         igmpProxyMonitor();
@@ -482,26 +466,23 @@ static void igmpProxyInit(void) {
 *   Shutdown all interfaces, queriers, remove all routes, close sockets.
 */
 void igmpProxyCleanUp(int code) {
-    struct timespec endtime;
-    int size = (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt);
+    int    nr = chld.nr, pid;
 
     if (!code && mrt_tbl < 0)
         code = 0;
     else if (!code)
         code = 15;
     if (mrt_tbl < 0 && !RESTART) {
-        pid_t pid;
-        // Wait for all childs. Cli processes are not tracked, their fds are closed.
-        LOG(LOG_INFO, 0, "Waiting for %d processes to finish.", chld.nr);
-        while ((pid = wait(NULL)) > 0 && chld.nr) {
-            FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
-                chld.nr--;
-                if (chld.c[i].tbl > 0)
-                    ipRules(chld.c[i].tbl, false);
-                LOG(LOG_NOTICE, 0, "Still waiting for %d process%s to finish.", chld.nr, chld.nr > 1 ? "es" : "");
-            }
+        LOG(LOG_INFO, 0, "Waiting for %d processes to finish.", nr);
+        while ((pid = wait(NULL)) > 0 && nr) FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
+            nr--;
+            if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
+                ipRules(chld.c[i].tbl, false);
+            if (nr)
+                LOG(LOG_NOTICE, 0, "Still waiting for %d process%s to finish.", nr, nr > 1 ? "es" : "");
         }
-        _free(chld.c, var, size);  // Alloced by igmpProxyFork()
+
+        _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt));  // Alloced by igmpProxyFork()
         LOG(LOG_NOTICE, 0, "All processes finished.");
     }
 
@@ -523,13 +504,11 @@ void igmpProxyCleanUp(int code) {
     getMemStats(0, -1);
 
     // Log shutdown.
-    if (SHUTDOWN)
-        timer_clearTimer((uint64_t)-1);
-    clock_gettime(CLOCK_REALTIME, &endtime);
-    strcpy(tE, asctime(localtime(&endtime.tv_sec)));
+    clock_gettime(CLOCK_REALTIME, &curtime);
+    strcpy(tE, asctime(localtime(&curtime.tv_sec)));
     tE[strlen(tE) - 1] = '\0';
     LOG(LOG_WARNING, 0, "%s on %s. Running since %s (%ds).", RESTART ? "Restarting" : "Shutting down",
-                         tE, tS, timeDiff(starttime, endtime).tv_sec);
+                         tE, tS, timeDiff(starttime, curtime).tv_sec);
     if (SHUTDOWN) {
         free(CONF->runPath);         // Alloced by main()
         free(CONF->chroot);          // Alloced by loadConfig()

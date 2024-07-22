@@ -114,6 +114,7 @@ void acceptCli(void)
         LOG(LOG_WARNING, errno, "acceptCli: Failed accept()");
         return;
     } else {
+        LOG(LOG_DEBUG, 0, "acceptCli: RECV CLI Request.");
         if ((len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 || len > CLI_CMD_BUF ||
             (buf[0] == 'r' && len > 2 &&
             (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {

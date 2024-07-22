@@ -501,7 +501,7 @@ void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
 *   igmp.c
 */
 int    initIgmp(bool activate);
-void   acceptIgmp(int recvlen, struct msghdr msgHdr);
+void   acceptIgmp(int fd);
 void   sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 
@@ -531,9 +531,7 @@ uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
 void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
 bool            getMemStats(int h, int fd);
-#ifdef __linux
 void            ipRules(int tbl, bool activate);
-#endif
 
 /**
 *   kern.c

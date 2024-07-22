@@ -139,13 +139,26 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
 /**
 *   Process a newly received IGMP packet that is sitting in the input packet buffer.
 */
-void acceptIgmp(int recvlen, struct msghdr msgHdr) {
+void acceptIgmp(int fd) {
+    struct iovec       ioVec[1] = { { rcv_buf, CONF->pBufsz } };
+    union  cmsg        cmsg;
+    struct msghdr      msgHdr = (struct msghdr){ NULL, 0, ioVec, 1, &cmsg, sizeof(cmsg), MSG_DONTWAIT };
+    struct cmsghdr    *cmsgPtr;
+    struct IfDesc     *IfDp = NULL;
+
+    // Receive the IGMP packet.
+    int recvlen = recvmsg(fd, &msgHdr, 0);
+    if (recvlen < 0 || recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) {
+        LOG(LOG_WARNING, errno, "recvmsg() truncated datagram received.");
+        return;
+    } else if ((msgHdr.msg_flags & MSG_CTRUNC)) {
+        LOG(LOG_WARNING, errno, "recvmsg() truncated control message received.");
+        return;
+    }
     struct ip         *ip = (struct ip *)rcv_buf;
     register uint32_t  src = ip->ip_src.s_addr, dst = ip->ip_dst.s_addr;
     register int       ipdatalen = IPDATALEN, iphdrlen = ip->ip_hl << 2, ifindex = 0;
     struct igmp       *igmp = (struct igmp *)(rcv_buf + iphdrlen);
-    struct cmsghdr    *cmsgPtr;
-    struct IfDesc     *IfDp = NULL;
 
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
