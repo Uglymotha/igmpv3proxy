@@ -53,7 +53,8 @@ static const char *options = " include phyint user group chroot defaultquickleav
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules";
 
 // Daemon Configuration.
-static struct Config       conf, oldconf;
+static struct Config         conf, oldconf;
+extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
@@ -360,7 +361,6 @@ static inline bool parsePhyintToken(char *token) {
         LOG(LOG_WARNING, 0, "Config: You should at least name your interfeces.");
         return false;
     }
-
     // Find existing or create new vifConf.
     for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
     if (! tmpPtr) {
@@ -539,7 +539,6 @@ static inline bool parsePhyintToken(char *token) {
     // Return false if error in interface config was detected. freeConfig will cleanup.
     if (logwarning)
         return false;
-
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10
                           > tmpPtr->qry.interval) {
@@ -551,7 +550,6 @@ static inline bool parsePhyintToken(char *token) {
         LOG(LOG_NOTICE, 0, "Config (%s): Setting default query interval to %ds. Default response interval %.1fs",
                             tmpPtr->name, tmpPtr->qry.interval, f);
     }
-
     if (!tmpPtr->noDefaultFilter)
         *filP = conf.defaultFilters;
 
@@ -575,14 +573,13 @@ bool loadConfig(char *cfgFile) {
     char                    *token       = NULL;
     struct stat              st;
 
-    // Initialize common config on first entry.
     if (conf.cnt++ == 0) {
+        // Initialize common config on first entry.
         logwarning = 0;
         initCommonConfig();
         filP  = &conf.defaultFilters;
         rateP = &conf.defaultRates;
     }
-
     if (conf.cnt == 0xFF) {
         // Check recursion and return if exceeded.
         LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", 0xFF, cfgFile);
@@ -599,7 +596,6 @@ bool loadConfig(char *cfgFile) {
             free(d[n]);
         }
         free(d);
-        //return !logwarning;
     } else if (!S_ISREG(st_mode) || ! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
         LOG(LOG_WARNING, errno, "Config: Failed to open config file '%s'.", cfgFile);
@@ -643,7 +639,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
-            if (! (conf.chroot = malloc(strlen(token))))   // Freed by signalHandler() or Self
+            if (! (conf.chroot = malloc(strlen(token))))   // Freed by igmpProxyCleanUp() or Self
                 LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
             memcpy(conf.chroot, token + 1, strlen(token));
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
@@ -726,8 +722,8 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 8 || intToken > 131072)
                 LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
             else {
-                conf.dHostsHTSize = (intToken - intToken % 8) * 8;
-                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", conf.dHostsHTSize / 8);
+                conf.dHostsHTSize = intToken % 8 == 0 ? intToken : intToken + (8 - (intToken % 8));
+                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", conf.dHostsHTSize);
             }
 
         } else if (strcmp(" defaultupdown", token) == 0) {
@@ -862,7 +858,7 @@ bool loadConfig(char *cfgFile) {
             else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
                 LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (conf.logFilePath = realloc(conf.logFilePath, strlen(token))))
-                // Freed by signalHandler()
+                // Freed by igmpProxyCleanUp() or igmpProxyInit()
                 LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
             else {
                 strcpy(conf.logFilePath, t);
@@ -888,12 +884,10 @@ bool loadConfig(char *cfgFile) {
             // Token may be " " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
     }
-
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     _free(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
-
     if (--conf.cnt > 0 || logwarning)
         return !logwarning;
 
@@ -911,9 +905,10 @@ bool loadConfig(char *cfgFile) {
     }
 
     // Check if buffer sizes have changed.
-    if (CONFRELOAD && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
+    if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz)) {
         initIgmp(false);
-
+        initIgmp(true);
+    }
     // Check rescanvif status and start or clear timers if necessary.
     if (conf.rescanVif && timers.rescanVif == 0) {
         timers.rescanVif = timer_setTimer(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
@@ -921,7 +916,6 @@ bool loadConfig(char *cfgFile) {
         timer_clearTimer(timers.rescanVif);
         timers.rescanVif = 0;
     }
-
     // Check rescanconf status and start or clear timers if necessary.
     if (conf.rescanConf && timers.rescanConf == 0) {
         timers.rescanConf = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
@@ -929,7 +923,6 @@ bool loadConfig(char *cfgFile) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
-
     // Check bwcontrol status and start or clear timers if necessary..
     if (oldconf.bwControlInterval != conf.bwControlInterval) {
         timer_clearTimer(timers.bwControl);
@@ -941,7 +934,7 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             conf.bwControlInterval = 0;
         } else if (!STARTUP)
-            clearGroups(getConfig);
+            clearGroups(CONF);
 #endif
         if (conf.bwControlInterval)
             timers.bwControl = timer_setTimer(conf.bwControlInterval * 10, "Bandwidth Control",
@@ -1125,10 +1118,10 @@ void configureVifs(void) {
     }
 
     // Check if quickleave was enabled or disabled due to config change.
-    if ((CONFRELOAD || SHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize) {
-        LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, reinitializing group tables.",
+    if ((CONFRELOAD || SHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize && mrt_tbl >= 0) {
+        LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, restarting.",
                              oldconf.dHostsHTSize, conf.dHostsHTSize);
-        clearGroups(&conf);
+        sighandled |= GOT_SIGURG;
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.

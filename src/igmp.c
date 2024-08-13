@@ -64,7 +64,7 @@ int initIgmp(bool activate) {
     if (!activate) {
         _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
         _free(snd_buf, snd, memuse.snd);  // Alloced by Self
-        if (fd != -1 && !RESTART)
+        if (fd != -1 && !RESTART && !SHUP && !CONFRELOAD)
             fd = k_disableMRouter();
         return fd;
     }
@@ -180,12 +180,12 @@ void acceptIgmp(int fd) {
 #endif
 #ifdef IGMPMSG_WRONGVIF
         case IGMPMSG_WRONGVIF:
-            LOG(LOG_NOTICE, 0, "Received WRONGVIF Upcall for Src %s Dst %s on %s.",
+            LOG(LOG_NOTICE, 0, "WRONGVIF Upcall for Src %s Dst %s on %s.",
                                 inetFmt(igmpMsg->im_src.s_addr, 1), inetFmt(igmpMsg->im_dst.s_addr, 2), IfDp->Name);
             return;
 #endif
         default:
-            LOG(LOG_NOTICE, 0, "Received unsupported upcall %d.", igmpMsg->im_msgtype);
+            LOG(LOG_NOTICE, 0, "Unsupported upcall %d.", igmpMsg->im_msgtype);
             return;
         }
     } else for (cmsgPtr = CMSG_FIRSTHDR(&msgHdr); cmsgPtr; cmsgPtr = CMSG_NXTHDR(&msgHdr, cmsgPtr))
@@ -211,14 +211,14 @@ void acceptIgmp(int fd) {
     register uint16_t cksum = igmp->igmp_cksum;
     igmp->igmp_cksum = 0;
     if (iphdrlen + ipdatalen != recvlen)
-        LOG(LOG_NOTICE, 0, "acceptIgmp: received packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
-                             inetFmt(src, 1), recvlen, iphdrlen, ipdatalen);
+        LOG(LOG_NOTICE, 0, "Packet from %s shorter (%u bytes) than hdr+data length (%u+%u).",
+                            inetFmt(src, 1), recvlen, iphdrlen, ipdatalen);
     else if ((ipdatalen < IGMP_MINLEN) || (igmp->igmp_type == IGMP_V3_MEMBERSHIP_REPORT && ipdatalen <= IGMPV3_MINLEN))
-        LOG(LOG_NOTICE, 0, "acceptIgmp: received IP data field too short (%u bytes) for IGMP, from %s.",
-                             ipdatalen, inetFmt(src, 1));
+        LOG(LOG_NOTICE, 0, "IP data field too short (%u bytes) for IGMP, from %s.",
+                            ipdatalen, inetFmt(src, 1));
     else if (IfDp->conf->cksumVerify && cksum != inetChksum((uint16_t *)igmp, ipdatalen))
-        LOG(LOG_NOTICE, 0, "acceptIgmp: Received packet from: %s for: %s on: %s checksum incorrect.",
-                             inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
+        LOG(LOG_NOTICE, 0, "Packet from: %s for: %s on: %s checksum incorrect.",
+                            inetFmt(src, 1), inetFmt(dst, 2), IfDp->Name);
     else {
         struct igmpv3_query  *igmpv3   = (struct igmpv3_query *)(rcv_buf + iphdrlen);
         struct igmpv3_report *igmpv3gr = (struct igmpv3_report *)(rcv_buf + iphdrlen);
@@ -272,12 +272,14 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
     int                  len    = 0;
     struct sockaddr_in   sdst;
 
-    if (IS_DISABLED(IfDp->state) || !IQUERY) {
+    if (IfDp->conf->tbl != mrt_tbl)
+        LOG(LOG_ERR, eABNRML, "Requested to send packet on table %d interface %s.", IfDp->conf->tbl, IfDp->Name);
+    else if (IS_DISABLED(IfDp->state) || !IQUERY) {
         LOG(LOG_NOTICE, 0, "Not sending query for %s on %s interface %s.", inetFmt(query->igmp_group.s_addr, 1),
                             IS_DISABLED(IfDp->state) ? "disabled" : "non querier", IfDp->Name);
         return;
     } else if (query && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && query->igmp_nsrcs > 0))) {
-        LOG(LOG_NOTICE, 0, "Request to send group specific query on %s while in v%d mode, not sending.",
+        LOG(LOG_NOTICE, 0, "Not sending group and source specific query on %s while in v%d mode.",
                             IfDp->Name, IfDp->querier.ver);
         return;
     }
@@ -360,10 +362,8 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                                                 : ((getIgmpExp(IfDp->querier.qqi, 1) * IfDp->querier.qrv) * 10)
                                                   + getIgmpExp(IfDp->querier.mrc, 1) / 2;
             else if (ver == 2)
-                timeout = dst == allhosts_group ? (IfDp->conf->qry.interval * IfDp->conf->qry.robustness * 10)
-                                                  + igmpv3->igmp_code / 2
-                                                : ((IfDp->querier.qqi * IfDp->querier.qrv * 10) * 10)
-                                                  + IfDp->querier.mrc / 2;
+                timeout = dst == allhosts_group ? (IfDp->conf->qry.interval*IfDp->conf->qry.robustness*10) + igmpv3->igmp_code / 2
+                                                : ((IfDp->querier.qqi*IfDp->querier.qrv*10) * 10) + IfDp->querier.mrc / 2;
             else
                 timeout = (100 * IfDp->conf->qry.robustness) + 5;
             // Set timeout for other querier.

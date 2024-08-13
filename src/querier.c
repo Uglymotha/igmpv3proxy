@@ -48,7 +48,8 @@ static uint32_t     qC = 0;       // Querier count.
 */
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (IfDp->conf->tbl != mrt_tbl)
-        return;
+        LOG(LOG_ERR, eABNRML, "Requested to %s querier on table %d interface %s.",
+                              !start ? "stop" : start == 1 ? "start" : "restart", IfDp->conf->tbl, IfDp->Name);
     if (start == 0 || start == 2) {
         // Remove all queries, timers and reset all IGMP status for interface.
         LOG(LOG_INFO, 0, "ctrlQuerier: Stopping querier process on %s", IfDp->Name);

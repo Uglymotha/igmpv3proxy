@@ -74,11 +74,9 @@ void rebuildIfVc(uint64_t *tid) {
         sigstatus |= GOT_SIGUSR2;
     if (! IfDescL || IFREBUILD || SHUP || STARTUP)
         buildIfVc();
-
     // Call configureVifs to link the new IfDesc table.
     LOG(LOG_INFO,0,"rebuildIfVc: Configuring MC vifs.");
     configureVifs();
-
     // Free removed interfaces.
     freeIfDescL();
 

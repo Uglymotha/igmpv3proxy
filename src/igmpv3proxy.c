@@ -50,7 +50,7 @@ static void igmpProxyRun(void);
 volatile sig_atomic_t sighandled;  // Should be as private as possible.
 uint8_t               sigstatus, logwarning;
 struct timespec       curtime, utcoff, starttime;
-char                 *rcv_buf = NULL, *fileName, tS[32], tE[32], RUNPATH[] = RUN_PATHS, CFGPATH[] = CFG_PATHS;
+char                 *rcv_buf = NULL, *fileName, tS[32], tE[32];
 struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
 static struct pollfd  pollFD[2] = { {-1, POLLIN, 0}, {-1, POLLIN, 0} };
 const struct timespec nto = { 0, 0 };
@@ -64,7 +64,7 @@ struct chld           chld = { 0 };
 */
 int main(int ArgCn, char *ArgVc[]) {
     int          c = 0, i = 0, j = 0, tbl = 0;
-    char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "", *path = NULL;
+    char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "", *path;
     struct stat  st;
     fileName = basename(ArgVc[0]);
 
@@ -154,7 +154,7 @@ int main(int ArgCn, char *ArgVc[]) {
         fprintf(stderr, "%s: Must be started as root.\n", fileName);
         exit(-1);
     } else if (! (CONF->configFilePath = calloc(1, sizeof(CFG_PATHS) + strlen(ArgVc[optind - !(optind == ArgCn - 1)])))) {
-        // Freed by signalHandler()
+        // Freed by igmpProxyInit() or igmpProxyCleanUp()
         fprintf(stderr, "%s. Out of Memory.\n", fileName);
         exit(-1);
     } else if (optind == ArgCn - 1 && !(stat(ArgVc[optind], &st) == 0 && (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)))) {
@@ -164,23 +164,28 @@ int main(int ArgCn, char *ArgVc[]) {
     } else if (optind == ArgCn - 1) {
         strcpy(CONF->configFilePath, ArgVc[optind]);
     } else {
-        for (path = strtok(CFGPATH, " "); path && strcpy(CONF->configFilePath, path); path = strtok(NULL, " ")) {
+        fprintf(stderr, "%s: Looking for %s.conf config in default locations:", fileName, fileName);
+        for (i = 0, path = strtok(CFG_PATHS, " "); path && strcpy(CONF->configFilePath, path); path = strtok(NULL, " ")) {
             // Search for config in default locations.
             if (stat(strcat(strcat(CONF->configFilePath, fileName), ".conf"), &st) == 0)
                 break;
-            path[strlen(CONF->configFilePath) - 5] = '/';
-            path[strlen(CONF->configFilePath) - 4] = '\0';
+            fprintf(stderr, " %s", CONF->configFilePath);
+            CONF->configFilePath[strlen(CONF->configFilePath) - 5] = '/';
+            CONF->configFilePath[strlen(CONF->configFilePath) - 4] = '\0';
             if (stat(strcat(strcat(CONF->configFilePath, fileName), ".conf"), &st) == 0)
                 break;
+            fprintf(stderr, " %s", CONF->configFilePath);
         }
-        if (! path) {
-            fprintf(stderr, "%s. Config file path not found in %s.\n", fileName, CFG_PATHS);
+        if (path)
+            fprintf(stderr, "\n%s: Found %s\n", fileName, CONF->configFilePath);
+        else {
+            fprintf(stderr, "\n%s: None found\n", fileName);
             exit(-1);
         }
     }
 
     // Check for valid location to place socket and PID file.
-    for (path = strtok(RUNPATH, " "); path; path = strtok(NULL, " ")) {
+    for (path = strtok(RUN_PATHS, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) >= 0) {
             if (! (CONF->runPath = malloc(strlen(path) + strlen(fileName) + 8)))
                 fprintf(stderr, "Out of memory.");   // Freed by igmpProxyCleanup()
@@ -424,11 +429,16 @@ static void igmpProxyInit(void) {
     // Switch root if chroot is configured. The config file must be placed there.
     if (CONF->chroot) {
         // Truncate config and log file path to /.
-        char *b = basename(CONF->configFilePath);
-        strcpy(CONF->configFilePath, b);
+        char *b, *c;
+        if (! (b = basename(CONF->configFilePath)) || ! (c = calloc(1, strlen(b) + 1)) || ! strcpy(c, b))
+            LOG(LOG_ERR, eNOMEM, "Out of Memory.");
+        free(CONF->configFilePath);  // Alloced by main()
+        CONF->configFilePath = c;
         if (CONF->logFilePath) {
-            b = basename(CONF->logFilePath);
-            strcpy(CONF->logFilePath, b);
+            if (! (b = basename(CONF->logFilePath)) || ! (c = calloc(1, strlen(b) + 1)) || ! strcpy(c, b))
+                LOG(LOG_ERR, eNOMEM, "Out of Memory.");
+            free(CONF->logFilePath);  // Alloced by loadConfig()
+            CONF->logFilePath = c;
         }
         // Link the root to the run directory and set runpath to /.
         if (symlink(CONF->chroot, strcat(CONF->runPath, "root")) != 0 && errno != EEXIST)
@@ -495,7 +505,7 @@ void igmpProxyCleanUp(int code) {
         remove(rFile);
         sprintf(rFile, "%scli.sock", CONF->runPath);
         remove(rFile);
-        if (rmdir(CONF->runPath) < 0)
+        if (! CONF->chroot && rmdir(CONF->runPath) < 0)
             LOG(LOG_WARNING, errno, "Cannot remove run dir %s.", CONF->runPath);
     }
     if (!RESTART)

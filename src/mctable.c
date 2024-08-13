@@ -207,7 +207,6 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *i
         } else {
             // Group can be removed from table.
             uint32_t mctHash = murmurhash3(mct->group) % CONF->mcTables;
-
             LOG(LOG_DEBUG, 0, "delGroup: Deleting group %s from table %d.",inetFmt(mct->group, 1), mctHash);
             // Send Leave requests upstream.
             GETIFLIF(IfDp, IS_SET(mct, u, IfDp))
@@ -653,37 +652,24 @@ void clearGroups(void *Dp) {
     struct ifMct      *imc;
     struct mcTable    *mct;
     struct IfDesc     *IfDp     = Dp != CONF && Dp != getConfig ? Dp : NULL;
-    register uint8_t   oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
+    register uint8_t   oldstate = IfDp ? IF_OLDSTATE(IfDp) : 0, newstate = IfDp ? IF_NEWSTATE(IfDp) : 0;
 
-    if (Dp == CONF || Dp == getConfig || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
+    if (Dp == CONF || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
         GETMRT(mct) {
-            if (Dp == CONF) {
-                struct src **src;
-                // Quickleave was enabled or disabled, or hastable size was changed.
-                // Reallocate appriopriate amount of memory and reinitialize downstreahosts tracking.
-                FOR_IF(src = &(mct->sources); *src; src = &(*src)->next, ! _recalloc(*src, src, SRCSZ, OSRCSZ))
-                    LOG(LOG_ERR, eNOMEM, "clearGroups: Out of memory.");
-                if (! _recalloc(mct, mct, MCESZ, OMCESZ))
-                    LOG(LOG_ERR, eNOMEM, "clearGroups: Out of memory.");
-                if (! mct->prev)
-                    MCT[iz] = mct;
-                else
-                    mct->prev->next = mct;
-                if (mct->next)
-                    mct->next->prev = mct;
+            if (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate) && addGroup(mct, IfDp, 0, 1, (uint32_t)-1)) {
+                // New upstream interface join all relevant groups and sources.
+                for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-            } else if (Dp == getConfig) {
+            } else if (Dp == CONF) {
                 // BW control interval was changed. Reinitialize all bw_upcalls.
                 for (struct mfc *mfc = mct->mfc; mfc; mfc = mfc->next) {
                     k_deleteUpcalls(mfc->src->ip, mct->group);
                     activateRoute(mfc->IfDp, mfc->src, 0, 0, true);
                 }
 #endif
-            } else if (!IS_UPSTREAM(oldstate) && addGroup(mct, IfDp, 0, 1, (uint32_t)-1))
-                // New upstream interface join all relevant groups and sources.
-                for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
+            }
         }
-        if (Dp == CONF || Dp == getConfig)
+        if (Dp == CONF || !IS_DOWNSTREAM(oldstate) || IFREBUILD)
             return;
     }
 
@@ -896,7 +882,6 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
     }
 
     startQuery(IfDp, qlst);
-
     LOG(LOG_DEBUG, 0, "Updated group entry for %s on VIF #%d", inetFmt(group, 1), IfDp->index);
     logRouteTable("Update Group", 1, -1, group, (uint32_t)-1);
 }

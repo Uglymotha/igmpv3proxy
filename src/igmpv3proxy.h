@@ -77,8 +77,8 @@
 //#################################################################################
 
 // Keeps common configuration settings.
-#define RUN_PATHS "/run /var/run /tmp /var/tmp"
-#define CFG_PATHS "/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/"
+static char RUN_PATHS[]="/run /var/run /tmp /var/tmp";
+static char CFG_PATHS[]="/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/";
 struct Config {
     uint8_t             cnt;
     // Daemon parameters.
@@ -345,9 +345,11 @@ static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was term
 // Memory (de)allocation macro's
 #define   _malloc(p,m,s)     (((p=malloc(s))     && (memuse.m+=(s)) > 0            && (++memalloc.m > 0)) || getMemStats(0,-1))
 #define   _calloc(p,n,m,s)   (((p=calloc(n,s))   && (memuse.m+=(n * (s))) > 0      && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset(p + (sm), 0, (sp) - (sm))) \
-                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0)) || getMemStats(0,-1))
+#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0) && (++memfree.m > 0)) \
+                                                 || getMemStats(0,-1))
+#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset((char *)p + (sm), 0, (sp) - (sm)))                     \
+                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0) && (++memfree.m > 0)) \
+                                                 || getMemStats(0,-1))
 #define _free(p, m, s)      if (p) {                                             \
                                 if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
                                     getMemStats(0,-1);                           \

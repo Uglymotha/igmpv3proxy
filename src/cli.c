@@ -132,7 +132,6 @@ void acceptCli(void)
             return;
         }
     }
-
     if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask);
     } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
@@ -178,7 +177,7 @@ void cliCmd(char *cmd, int tbl) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    char               buf[CLI_CMD_BUF+1] = "", paths[sizeof(RUN_PATHS)] = RUN_PATHS, *path, tpath[128];
+    char               buf[CLI_CMD_BUF+1] = "", *path, tpath[128];
 
     sa.sa_handler = cliSignalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
@@ -195,7 +194,7 @@ void cliCmd(char *cmd, int tbl) {
 #endif
 
     // Check for daemon socket location.
-    path = strtok(paths, " ");
+    path = strtok(RUN_PATHS, " ");
     while (path) {
         sprintf(tpath, "%s/%s/root", path, fileName);
         if (lstat(tpath, &st) == 0 && (S_ISLNK(st.st_mode) || S_ISDIR(st.st_mode))) {
@@ -222,15 +221,12 @@ void cliCmd(char *cmd, int tbl) {
         fprintf(stderr, "Cannot open daemon socket (%s). %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
-
     if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
         fprintf(stderr, "Cannot send command. %s\n", strerror(errno));
         exit(-1);
     }
-
     // Receive the daemon's answer. It will be closed by one single byte.
     for (int len = 0; (len = recv(srv_fd, &buf, CLI_CMD_BUF, 0)) > 0; buf[len] = '\0', fprintf(stdout, "%s", buf));
-
     close(srv_fd);
 }
 
