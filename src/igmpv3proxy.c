@@ -414,7 +414,7 @@ static void igmpProxyInit(void) {
         // Write PID in main daemon process only.
         if (!chld.nr)
             mrt_tbl = 0;
-        char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 5];
+        char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 6];
         sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
         remove(pidFile);
         FILE *pidFilePtr = fopen(pidFile, "w");

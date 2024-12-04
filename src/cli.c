@@ -58,7 +58,7 @@ int openCliFd(void) {
     // Open the socket, set permissions and mode.
     if (cli_fd == -1) {
         if (   ! strcpy(cli_sa.sun_path, CONF->runPath)
-        || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), PATH_MAX - strlen(cli_sa.sun_path),
+        || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), sizeof(cli_sa.sun_path) - strlen(cli_sa.sun_path),
                       mrt_tbl ? "cli-%d.sock" : "cli.sock", mrt_tbl)
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
