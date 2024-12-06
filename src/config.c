@@ -841,9 +841,9 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
             }
 
-        } else if (strcmp(" defaultrouteunknownmc", token) == 0 && INTTOKEN) {
+        } else if (strcmp(" defaultrouteunknownmc", token) == 0) {
             conf.routeUnknownMc = true;
-            LOG(LOG_NOTICE, 0, "Config: Will add routes for unknown MC groups.", intToken);
+            LOG(LOG_NOTICE, 0, "Config: Will add routes for unknown MC groups.");
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
             conf.bwControlInterval = intToken < 3 ? 3 : intToken;
