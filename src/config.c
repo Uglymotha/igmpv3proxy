@@ -49,8 +49,8 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable defaultdisableipmrules";
-static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules";
+static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable defaultdisableipmrules defaultrouteunknownmc";
+static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules routeunknownmc norouteunknownmc";
 
 // Daemon Configuration.
 static struct Config         conf, oldconf;
@@ -235,6 +235,9 @@ static inline void initCommonConfig(void) {
 
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
+
+    // Do not add routes for unknown groups by default.
+    conf.routeUnknownMc = false;
 
     // Default no timed rebuild interfaces / reload config.
     conf.rescanVif  = 0;
@@ -487,6 +490,14 @@ static inline bool parsePhyintToken(char *token) {
         } else if (strcmp(" cksumverify", token) == 0) {
             tmpPtr->cksumVerify = true;
             LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpPtr->name);
+
+        } else if (strcmp(" routeunknownmc", token) == 0) {
+            tmpPtr->routeUnknownMc = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will add routes for unknown groups.", tmpPtr->name);
+
+        } else if (strcmp(" norouteunknownmc", token) == 0) {
+            tmpPtr->routeUnknownMc = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not add routes for unknown groups.", tmpPtr->name);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -829,6 +840,10 @@ bool loadConfig(char *cfgFile) {
                 conf.lastMemberQueryCount = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
             }
+
+        } else if (strcmp(" defaultrouteunknownmc", token) == 0 && INTTOKEN) {
+            conf.routeUnknownMc = true;
+            LOG(LOG_NOTICE, 0, "Config: Will add routes for unknown MC groups.", intToken);
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
             conf.bwControlInterval = intToken < 3 ? 3 : intToken;

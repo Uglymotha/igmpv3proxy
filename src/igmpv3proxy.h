@@ -122,6 +122,8 @@ struct Config {
     uint8_t             logLevel;
     char               *logFilePath;
     bool                log2Stderr;                     // Log to stderr instead of to syslog / file
+    // Set if mc route needs to be added for unknown groups.
+    bool                routeUnknownMc;
     // Set if nneed to detect new interface.
     uint32_t            rescanVif;
     // Set if nneed to detect config change.
@@ -205,12 +207,13 @@ struct vifConfig {
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
     bool                quickLeave;                     // Fast upstream leave
     bool                proxyLocalMc;                   // Forward local multicast
+    bool                routeUnknownMc;                 // Add routes for unknown (not requested downstream) groups
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, conf.routeUnknownMc, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface

@@ -923,7 +923,7 @@ inline bool toInclude(struct mcTable *mct, struct IfDesc *IfDp) {
 */
 inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate) {
     struct src      *src = _src;
-    struct mcTable  *mct = src ? src->mct : findGroup(group, false);
+    struct mcTable  *mct = src ? src->mct : findGroup(group, IfDp->conf->routeUnknownMc);
     if (! mct) {
         LOG(LOG_DEBUG, 0, "activateRoute: Group %s not found, ignoring activation.", inetFmt(group, 1), inetFmt(group, 2));
         return;
