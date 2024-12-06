@@ -117,7 +117,7 @@ int main(int ArgCn, char *ArgVc[]) {
                     if (strlen(optarg) > 0) {
                         if (c == 'r' && !parseSubnetAddress(optarg, &addr, &mask)) {
                             i = optind, j = optind = 1;
-                            if (! (opts[1] = malloc(strlen(optarg) + 1))) {  // Freed by Self
+                            if (! (opts[1] = malloc(strlen(optarg) + 2))) {  // Freed by Self
                                 fprintf(stderr, "Out of Memory!");
                                 exit(-1);
                             }
