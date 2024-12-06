@@ -946,7 +946,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         // Find source or create source in group.
         for (src = mct->sources; src && src->ip < ip; src = src->next);
         if (! src || src->ip > ip) {
-            if (!mct->mode) {
+            if (!mct->mode && !IfDp->conf->routeUnknownMc) {
                 // For include mode group, ignore any senders which have not been explicitely requested downstream.
                 LOG(LOG_DEBUG, 0, "activateRoute: Ignoring unrequested sender %s for include mode group %s on %s.",
                                    inetFmt(ip, 1), inetFmt(group, 2), IfDp->Name);
