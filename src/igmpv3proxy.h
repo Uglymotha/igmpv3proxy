@@ -229,6 +229,12 @@ struct querier {                                        // igmp querier status f
 #define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 // Interfaces configuration.
+struct ifStats {
+    uint64_t                      bytes;                 // Total bytes sent/received on interface
+    uint64_t                      rate;                  // Rate in bytes / s
+    uint64_t                      rqCnt;                 // IGMP Received Query Count
+    uint64_t                      sqCnt;                 // IGMP Sent Query Count
+};
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
     struct in_addr                InAdr;                 // Primary IP
@@ -238,10 +244,7 @@ struct IfDesc {
     struct vifConfig             *conf;                  // Pointer to interface configuraion
     bool                          filCh;                 // Flag for filter change during config reload
     struct querier                querier;               // igmp querier for interface
-    uint64_t                      bytes;                 // Total bytes sent/received on interface
-    uint64_t                      rate;                  // Rate in bytes / s
-    uint64_t                      rqCnt;                 // IGMP Received Query Count
-    uint64_t                      sqCnt;                 // IGMP Sent Query Count
+    struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
     void                         *dMct;                  // Pointers to active downstream groups for vif
@@ -249,7 +252,7 @@ struct IfDesc {
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, {0, 0, 0, 0}, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.

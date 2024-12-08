@@ -267,7 +267,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
         IfDp->state &= ~0x03;
         return false;
     }
-    IfDp->bytes = IfDp->rate = 0;
+    IfDp->stats.bytes = IfDp->stats.rate = 0;
     IfDp->index = Ix;
     BIT_SET(vifBits, IfDp->index);
     LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,

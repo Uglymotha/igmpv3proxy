@@ -59,7 +59,7 @@ int openCliFd(void) {
     if (cli_fd == -1) {
         if (   ! strncpy(cli_sa.sun_path, CONF->runPath, sizeof(cli_sa.sun_path))
         || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), sizeof(cli_sa.sun_path) - strlen(cli_sa.sun_path),
-                      mrt_tbl ? "cli-%d.sock" : "cli.sock", mrt_tbl)
+                      mrt_tbl > 0 ? "cli-%d.sock" : "cli.sock", mrt_tbl)
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -103,7 +103,7 @@ int closeCliFd(void) {
 */
 void acceptCli(void)
 {
-    int                 pid = -1, fd = -1, len = 0, s = sizeof(struct sockaddr);
+    int                 pid = -1, fd = -1, len = 0, i = 0, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
@@ -115,10 +115,12 @@ void acceptCli(void)
         return;
     } else {
         LOG(LOG_DEBUG, 0, "acceptCli: RECV CLI Request.");
-        if ((len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 || len > CLI_CMD_BUF ||
+        while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
+            nanosleep(&(struct timespec){0, 900000000}, NULL);
+        if (len <= 0 || len > CLI_CMD_BUF ||
             (buf[0] == 'r' && len > 2 &&
             (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-            LOG(LOG_DEBUG, 0, "acceptCli: Invalid command received.");
+            LOG(LOG_WARNING, errno, "acceptCli: Error receiving command.");
         } else if (buf[0] == 'c' || buf[0] == 'b') {
             sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
             buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
@@ -221,7 +223,7 @@ void cliCmd(char *cmd, int tbl) {
         fprintf(stderr, "Cannot open daemon socket (%s). %s\n", srv_sa.sun_path, strerror(errno));
         exit(-1);
     }
-    if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
+    if (send(srv_fd, cmd, strlen(cmd) + 1, 0) < 0) {
         fprintf(stderr, "Cannot send command. %s\n", strerror(errno));
         exit(-1);
     }
@@ -236,9 +238,11 @@ static void cliSignalHandler(int sig) {
     case SIGTERM:
     case SIGURG:
     case SIGPIPE:
+        if (sig == SIGPIPE)
+            fprintf(stderr, "Connection closed by daemon. ");
         if (srv_fd != -1)
             close(srv_fd);
-        fprintf(stdout, "Terminated.\n");
+        fprintf(stderr, "Terminated.\n");
         exit(1);
     }
 }

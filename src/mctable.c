@@ -137,9 +137,9 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
     } else {
         // Set upstream status and join group if it is in exclude mode upstream.
         BIT_SET(mct->vifB.u, IfDp->index);
-        if (mct->mode && CONF->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->rate > IfDp->conf->ratelimit)
+        if (mct->mode && CONF->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->stats.rate > IfDp->conf->ratelimit)
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
-                                IfDp->Name, IfDp->rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
+                                IfDp->Name, IfDp->stats.rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
         else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1)) {
             BIT_SET(mct->vifB.us, IfDp->index);
             LOG(LOG_INFO, 0, "addGroup: Joined group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
@@ -475,9 +475,9 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
                                bwUpc->bu_measured.b_bytes, inetFmt(mfc->src->ip, 1), inetFmt(mct->group, 2), mfc->bytes, mfc->rate);
             GETIFLIF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
                 // Find the incoming and outgoing interfaces and add to counter.
-                IfDp->bytes += bwUpc->bu_measured.b_bytes;
+                IfDp->stats.bytes += bwUpc->bu_measured.b_bytes;
                 LOG(LOG_DEBUG, 0, "BW_UPCALL: Added %lld bytes to interface %s (%lld B/s), total %lld.",
-                                   bwUpc->bu_measured.b_bytes, IfDp->Name, IfDp->rate, IfDp->bytes);
+                                   bwUpc->bu_measured.b_bytes, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
             }
         }
     }
@@ -494,7 +494,7 @@ void bwControl(uint64_t *tid) {
 
     // Reset all interface rate counters.
     GETIFL(IfDp)
-        IfDp->rate = 0;
+        IfDp->stats.rate = 0;
 
     // Go over all MCT.
     GETMRT(mct) {
@@ -515,9 +515,9 @@ void bwControl(uint64_t *tid) {
 #else
             // On BSD systems go over all interfaces.
             GETIFLIF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
-                IfDp->rate += mfc->rate;
+                IfDp->stats.rate += mfc->rate;
                 LOG(LOG_DEBUG, 0, "BW_CONTROL: Added %lld B/s to interface %s (%lld B/s), total %lld.",
-                                   mfc->rate, IfDp->Name, IfDp->rate, IfDp->bytes);
+                                   mfc->rate, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
             }
 #endif
         }
@@ -531,11 +531,11 @@ void bwControl(uint64_t *tid) {
             LOG(LOG_WARNING, errno, "BW_CONTROL: ioctl failed.");
             continue;
         }
-        uint64_t bytes = (IS_UPSTREAM(IfDp->state) ? siocVReq.ibytes : siocVReq.obytes) - IfDp->bytes;
-        IfDp->bytes += bytes;
-        IfDp->rate = bytes / CONF->bwControlInterval;
+        uint64_t bytes = (IS_UPSTREAM(IfDp->state) ? siocVReq.ibytes : siocVReq.obytes) - IfDp->stats.bytes;
+        IfDp->stats.bytes += bytes;
+        IfDp->stats.rate = bytes / CONF->bwControlInterval;
         LOG(LOG_DEBUG, 0, "BW_CONTROL: Added %lld bytes to interface %s (%lld B/s), total %lld.",
-                           bytes, IfDp->Name, IfDp->rate, IfDp->bytes);
+                           bytes, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
     }
 #endif
 
