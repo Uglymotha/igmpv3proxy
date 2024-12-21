@@ -48,18 +48,35 @@ static struct sockaddr_un    cli_sa;
 extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
 
 /**
-*   Opens and binds a socket for cli connections.
+*   Opens, closes and binds a socket for cli connections.
+*   mode - 0: close, 1: open, 2: reopen.
 */
-int openCliFd(void) {
+int initCli(int mode) {
     struct stat st;
-    memset(&cli_sa, 0, sizeof(struct sockaddr_un));
-    cli_sa.sun_family = AF_UNIX;
 
-    // Open the socket, set permissions and mode.
-    if (cli_fd == -1) {
+    // Do not reopen socket if it is not open.
+    if (mode == 2 && cli_fd < 0)
+        return cli_fd;
+    // Close and unlink CLI socket.
+    if (mode != 1 && cli_fd >= 0) {
+        if (mode == 0)
+            shutdown(cli_fd, SHUT_RDWR);
+        if (close(cli_fd) < 0)
+            LOG(LOG_ERR, 1, "CLI socket close %s failed", cli_sa.sun_path);
+        else {
+            LOG(LOG_NOTICE, 0, "Closed CLI socket %s.", cli_sa.sun_path);
+            cli_fd = -1;
+        }
+        if (mode == 0)
+            unlink(cli_sa.sun_path);
+    }
+    // Open the socket, set permissions and mode.1
+    if (mode > 0 && cli_fd == -1) {
+        memset(&cli_sa, 0, sizeof(struct sockaddr_un));
+        cli_sa.sun_family = AF_UNIX;
         if (   ! strncpy(cli_sa.sun_path, CONF->runPath, sizeof(cli_sa.sun_path))
         || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), sizeof(cli_sa.sun_path) - strlen(cli_sa.sun_path),
-                      mrt_tbl > 0 ? "cli-%d.sock" : "cli.sock", mrt_tbl)
+                      mrt_tbl >= 0 && chld.onr > 0 ? "cli-%d.sock" : "cli.sock", mrt_tbl)
         ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
         || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
@@ -71,29 +88,10 @@ int openCliFd(void) {
         ||    listen(cli_fd, CONF->reqQsz) < 0
         ||  (     chown(cli_sa.sun_path, CONF->user ? CONF->user->pw_uid : -1, CONF->group->gr_gid))
                || chmod(cli_sa.sun_path, 0660)) {
-            LOG(LOG_WARNING, errno, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
+            LOG(LOG_ERR, 1, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
             cli_fd = -1;
         } else
-            LOG(LOG_INFO, 0, "openCliFd: Opened CLI socket %s.", cli_sa.sun_path);
-    }
-    return cli_fd;
-}
-
-/**
-*   Close and unlink CLI socket.
-*/
-int closeCliFd(void) {
-    if (!RESTART && cli_fd >= 0) {
-        if (!STARTUP)
-            shutdown(cli_fd, SHUT_RDWR);
-        if (close(cli_fd) < 0)
-            LOG(LOG_WARNING, errno, "closeCliFd: CLOSE %s", cli_sa.sun_path);
-        else {
-            LOG(LOG_INFO, 0, "closeCliFd: Closed CLI socket %s.", cli_sa.sun_path);
-            cli_fd = -1;
-        }
-        if (!STARTUP)
-            unlink(cli_sa.sun_path);
+            LOG(LOG_NOTICE, 0, "Opened CLI socket %s.", cli_sa.sun_path);
     }
     return cli_fd;
 }
@@ -103,7 +101,7 @@ int closeCliFd(void) {
 */
 void acceptCli(void)
 {
-    int                 pid = -1, fd = -1, len = 0, i = 0, s = sizeof(struct sockaddr);
+    int                 pid, len, i = 0, fd = -1, s = sizeof(struct sockaddr);
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
     struct sockaddr     cli_sa;
@@ -111,30 +109,27 @@ void acceptCli(void)
 
     // Receive and answer the cli request.
     if ((fd = accept(cli_fd, &cli_sa, (socklen_t *)&s)) < 0) {
-        LOG(LOG_WARNING, errno, "acceptCli: Failed accept()");
+        LOG(errno == EAGAIN ? LOG_NOTICE : LOG_WARNING, 1, "acceptCli: Failed accept()");
         return;
-    } else {
-        LOG(LOG_DEBUG, 0, "acceptCli: RECV CLI Request.");
-        while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
-            nanosleep(&(struct timespec){0, 900000000}, NULL);
-        if (len <= 0 || len > CLI_CMD_BUF ||
-            (buf[0] == 'r' && len > 2 &&
-            (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-            LOG(LOG_WARNING, errno, "acceptCli: Error receiving command.");
-        } else if (buf[0] == 'c' || buf[0] == 'b') {
-            sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
-            buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
-                          : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
-            IF_FOR_IF(mrt_tbl < 0 && chld.nr, int i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
-                kill(chld.c[i].pid, buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
-        } else if ((pid = fork()) != 0)
-            pid < 0 ? LOG(LOG_WARNING, eNOFORK, "Cannot fork().") : LOG(LOG_DEBUG, 0, "acceptCli: Forked PID: %d", pid);
-        if (pid != 0 || buf[0] == 'c' || buf[0] == 'b') {
-            close(fd);
-            return;
-        }
+    } else if ((pid = igmpProxyFork(-1)) != 0) {
+        if (pid < 0)
+            send(fd, "error\n", 6, MSG_DONTWAIT);
+        close(fd);
+        return;
     }
-    if (buf[0] == 'r') {
+    LOG(LOG_INFO, 0, "(%d): RECV CLI Request.", chld.onr);
+    while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
+        nanosleep(&(struct timespec){0, 10000000}, NULL);
+    if ((errno = 0) || len <= 0 || len > CLI_CMD_BUF ||
+        (buf[0] == 'r' && len > 2 &&
+        (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
+        LOG(LOG_WARNING, 1, "acceptCli (%d): Error receiving command.", chld.onr);
+    } else if (buf[0] == 'c' || buf[0] == 'b') {
+        sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
+        buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
+                      : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+        kill(getppid(), buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
+    } else if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask);
     } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
         sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
@@ -150,7 +145,7 @@ void acceptCli(void)
     } else if (buf[0] == 'p' && mrt_tbl < 0) {
         sprintf(msg, "Monitor PID: %d\n", getppid());
         send(fd, msg, strlen(msg), MSG_DONTWAIT);
-        for (int i = 0; i < chld.nr; i++) {
+        FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].tbl >= 0) {
             if (chld.c[i].pid > 0)
                 sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
             else
@@ -164,9 +159,8 @@ void acceptCli(void)
         send(fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 
     // Close connection.
-    close(fd);
-    LOG(LOG_DEBUG, 0, "acceptCli: Finished command %s.", buf);
-    exit(0);
+    LOG(LOG_DEBUG, 0, "(%d): Finished command %s.", chld.onr, buf);
+    exit(-errno);
 }
 
 // Below are functions and definitions for client connections.
@@ -200,13 +194,13 @@ void cliCmd(char *cmd, int tbl) {
     while (path) {
         sprintf(tpath, "%s/%s/root", path, fileName);
         if (lstat(tpath, &st) == 0 && (S_ISLNK(st.st_mode) || S_ISDIR(st.st_mode))) {
-            if (tbl != 0)
+            if (tbl >= 0)
                 sprintf(srv_sa.sun_path, "/%s/%s/root/cli-%d.sock", path, fileName, tbl);
             else
                 sprintf(srv_sa.sun_path, "/%s/%s/root/cli.sock", path, fileName);
             break;
         }
-        if (tbl != 0)
+        if (tbl >= 0)
             sprintf(tpath, "%s/%s/cli-%d.sock", path, fileName, tbl);
         else
             sprintf(tpath, "%s/%s/cli.sock", path, fileName);
@@ -220,7 +214,7 @@ void cliCmd(char *cmd, int tbl) {
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0
            || connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un)) != 0) {
-        fprintf(stderr, "Cannot open daemon socket (%s). %s\n", srv_sa.sun_path, strerror(errno));
+        fprintf(stderr, "Cannot open daemon socket. %s\n", strerror(errno));
         exit(-1);
     }
     if (send(srv_fd, cmd, strlen(cmd) + 1, 0) < 0) {
@@ -243,6 +237,6 @@ static void cliSignalHandler(int sig) {
         if (srv_fd != -1)
             close(srv_fd);
         fprintf(stderr, "Terminated.\n");
-        exit(1);
+        exit(sig);
     }
 }

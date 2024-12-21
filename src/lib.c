@@ -195,7 +195,7 @@ uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
         for(i = --nr, j = nr - 1, o = 0; j != (uint32_t )-1; arr[j] = t, j = --i - 1, o++)
             for (t = arr[j]; j < nr && arr[j + 1] <= t; t = arr[j + 1] == t ? (uint32_t)-1 : t, arr[j] = arr[j + 1], j++, o++);
         for (i = nr++; nr >= 1 && arr[i] == (uint32_t)-1; i--, nr--, o++);
-        LOG(LOG_DEBUG, 0, "sortArr: Sorted array of %d elements in %d operations.", nr, o);
+        LOG(LOG_DEBUG, 0, "Sorted array of %d elements in %d operations.", nr, o);
     }
     return nr;
 }
@@ -272,22 +272,24 @@ uint16_t getIgmpExp(register int val, register int d) {
 /**
 *   Logging function. Logs to file (if specified in config), stderr (-d option) or syslog (default).
 */
-void myLog(int Severity, int Errno, const char *FmtSt, ...) {
-    int       Ln, err = errno;
+bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
+    int       Ln = 0, err = errno;
     clock_gettime(CLOCK_REALTIME, &curtime);
     long      sec = curtime.tv_sec + utcoff.tv_sec, nsec = curtime.tv_nsec;
-    char      LogMsg[256];
+    char      LogMsg[512];
     FILE     *lfp = CONF->logFilePath ? fopen(CONF->logFilePath, "a") : stderr;
     va_list   ArgPt;
 
     va_start(ArgPt, FmtSt);
-    Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
+    if (CONF->logLevel == LOG_DEBUG && Severity >= LOG_NOTICE)
+        Ln = snprintf(LogMsg, sizeof(LogMsg), "%s: ", func);
+    Ln += vsnprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, FmtSt, ArgPt);
     if (Errno > 0)
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; errno(%d): %s", err, strerror(err));
     va_end(ArgPt);
 
     if ((CONF->logFilePath || CONF->log2Stderr) && lfp)
-        if (mrt_tbl >= 0 && chld.nr)
+        if (mrt_tbl >= 0 && chld.onr > 0)
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
         else
@@ -298,17 +300,21 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
 
     if (lfp && lfp != stderr)
         fclose(lfp);
-    if (Severity <= LOG_ERR && !SHUTDOWN) {
+    if (Severity <= LOG_CRIT && !SHUTDOWN) {
         BLOCKSIGS;
         sigstatus = GOT_SIGTERM;
         IF_FOR_IF(mrt_tbl < 0 && chld.nr, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
-            LOG(LOG_INFO, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
+            LOG(LOG_NOTICE, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
             kill(chld.c[Ln].pid, SIGINT);
         }
         if (Errno < 0)
             Errno = 0 - Errno;
+        if (Errno == 6 || Errno == 11)
+            exit(Errno);
         igmpProxyCleanUp(Errno);
     }
+
+    return true;
 }
 
 /**
@@ -317,19 +323,15 @@ void myLog(int Severity, int Errno, const char *FmtSt, ...) {
 void ipRules(int tbl, bool activate) {
     struct IfDesc *IfDp;
     char           msg[12];
+
     sprintf(msg, "%d", tbl);
-    LOG(LOG_INFO, 0, "ipRules: %s mrules for table %s.", activate ? "Adding" : "Removing", msg);
-    GETIFLIF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
-        pid_t pid;
-        LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
-        for (int i = 0; i < 2; i++) {
-            if ((pid = fork()) < 0) {
-                LOG(LOG_ERR, eNOFORK, "ipRules: Cannot fork.");
-            } else if (pid == 0) {
-                execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
-                LOG(LOG_WARNING, eNOFORK, "ipRules: Cannot exec.");
-                exit(-1);
-            }
+    LOG(LOG_NOTICE, 0, "%s mrules for table %d.", activate ? "Adding" : "Removing", tbl);
+    GETIFL_IF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
+        LOG(LOG_INFO, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
+        FOR_IF(int i = 0; i < 2; i++, igmpProxyFork(-2) == 0) {
+            execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
+            LOG(LOG_ERR, eNOFORK, "ipRules: Cannot exec.");
+            exit(1);
         }
     }
 }
@@ -337,13 +339,11 @@ void ipRules(int tbl, bool activate) {
 /**
 *   Show memory statistics for debugging purposes.
 */
-bool getMemStats(int h, int fd) {
+void getMemStats(int h, int cli_fd) {
     char buf[1280], msg[1024];
     struct rusage usage;
-    if (fd < 0 && CONF->logLevel < LOG_DEBUG)
-        return false;
 
-    if (fd >= 0) {
+    if (cli_fd >= 0) {
         if (h) {
             strcpy(msg, "Current Memory Statistics:\n");
             strcat(msg, "Various: %lldb in use, %lld allocs, %lld frees.\n");
@@ -369,7 +369,7 @@ bool getMemStats(int h, int fd) {
                           memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry,
                           memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
                           memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
-        send(fd, buf, strlen(buf), MSG_DONTWAIT);
+        send(cli_fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
     LOG(LOG_DEBUG, 0, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
@@ -394,21 +394,19 @@ bool getMemStats(int h, int fd) {
         memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
 
     if (getrusage(RUSAGE_SELF, &usage) < 0) {
-        if (fd && !h)
-            send(fd, "\n", 1, MSG_DONTWAIT);
-        LOG(LOG_WARNING, 0, "getMemStats: rusage() failed.");
+        if (cli_fd && !h)
+            send(cli_fd, "\n", 1, MSG_DONTWAIT);
+        LOG(LOG_WARNING, 1, "getMemStats: rusage() failed.");
     } else {
-        if (fd >= 0) {
+        if (cli_fd >= 0) {
             if (h)
                 strcpy(msg, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.\n");
             else
                 strcpy(msg, " %lld %lld %lld %lld %lld\n");
             sprintf(buf, msg, usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
-            send(fd, buf, strlen(buf), MSG_DONTWAIT);
+            send(cli_fd, buf, strlen(buf), MSG_DONTWAIT);
         }
         LOG(LOG_DEBUG, 0, "System Stats:  resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
                            usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
     }
-
-    return false;  // Needed for _alloc macros.
 }

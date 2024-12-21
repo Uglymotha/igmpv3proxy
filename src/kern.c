@@ -57,7 +57,7 @@ void k_set_rcvbuf(int bufsize) {
                  delta /= 2;
             if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
                 if (bufsize < minsize)
-                    LOG(LOG_ERR, eNOMEM, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
+                    LOG(LOG_CRIT, eNOMEM, "OS-allowed buffer size %u < app min %u",  bufsize, minsize);
                 bufsize -= delta;
             } else {
                 if (delta < 1024)
@@ -74,19 +74,19 @@ void k_set_rcvbuf(int bufsize) {
 void k_set_ttl(uint8_t ttl) {
 #ifndef RAW_OUTPUT_IS_RAW
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0)
-        LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_TTL %u", ttl);
+        LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_TTL %u", ttl);
 #endif
 }
 
 void k_set_loop(bool loop) {
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&loop, sizeof(loop)) < 0)
-        LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_LOOP %u", loop);
+        LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_LOOP %u", loop);
 }
 
 void k_set_if(struct IfDesc *IfDp) {
     struct in_addr adr = { IfDp ? IfDp->InAdr.s_addr : INADDR_ANY };
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0)
-        LOG(LOG_WARNING, errno, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
+        LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 1));
 }
 
 /**
@@ -114,12 +114,12 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
                                                  : (mode ? MCAST_UNBLOCK_SOURCE : MCAST_LEAVE_SOURCE_GROUP),
                    source == (uint32_t)-1 ? (void *)&grpReq : (void *)&grpSReq,
                    source == (uint32_t)-1 ? sizeof(grpReq)  : sizeof(grpSReq)) < 0) {
-        LOG(LOG_WARNING, errno, "%s %s%s%s on %s failed",   join ? (source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" :
-                                                                    mode ? "MCAST_BLOCK_SOURCE"   : "MCAST_JOIN_SOURCE_GROUP")
-                                                                 : (source == (uint32_t)-1 ? "MCAST_LEAVE_GROUP" :
-                                                                    mode ? "MCAST_UNBLOCK_SOURCE" : "MCAST_LEAVE_SOURCE_GROUP"),
-                                                          inetFmt(group, 1), source == (uint32_t)-1 ? "" : ":",
-                                                          source == (uint32_t)-1 ? "" : inetFmt(source, 2), IfDp->Name);
+        LOG(LOG_WARNING, 1, "%s %s%s%s on %s failed", join ? (source == (uint32_t)-1 ? "MCAST_JOIN_GROUP" :
+                                                                 mode ? "MCAST_BLOCK_SOURCE"   : "MCAST_JOIN_SOURCE_GROUP")
+                                                           : (source == (uint32_t)-1 ? "MCAST_LEAVE_GROUP" :
+                                                                 mode ? "MCAST_UNBLOCK_SOURCE" : "MCAST_LEAVE_SOURCE_GROUP"),
+                                                      inetFmt(group, 1), source == (uint32_t)-1 ? "" : ":",
+                                                      source == (uint32_t)-1 ? "" : inetFmt(source, 2), IfDp->Name);
         if (errno == ENOBUFS) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups or sources was exceeded");
 #ifdef __linux__
@@ -138,8 +138,8 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
 inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
     uint32_t i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
-    if (! _malloc(ss, var, size))  // Freed by self.
-        LOG(LOG_ERR, eNOMEM, "k_setSourceFilter: Out of Memory.");
+
+    _malloc(ss, var, size);  // Freed by self.
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
     int er = EADDRNOTAVAIL;  // Freebsd errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, group };
@@ -151,11 +151,11 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
 #endif
-    LOG(LOG_INFO, 0, "setSourceFilter: Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
+    LOG(LOG_INFO, 0, "Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 1),
                       fmode ? "IN" : "EX", nsrcs);
     if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
                         fmode, nsrcs, ss) < 0 && ((err = errno) != er || nsrcs == 0))
-        LOG(LOG_WARNING, err, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
+        LOG(LOG_WARNING, 1, "Failed to update source filter list for %s on %s.", inetFmt(group, 1), IfDp->Name);
 
     _free(ss, var, size);  // Alloced by self.
     return err ? EADDRNOTAVAIL : 0;
@@ -175,32 +175,31 @@ int k_enableMRouter(void) {
     int Va = 1;
 
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-        LOG(LOG_ERR, eNOINIT, "Failed to open UDP socket.");
-    else if (mrt_tbl < 0) {
-        LOG(LOG_INFO, 0, "k_enableMRouter: Opened UDP socket.");
-        return mrouterFD;
-    }
-    if ((mrouterFD = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
-        LOG(LOG_ERR, eNOINIT, "IGMP socket open Failed");
-    else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, eNOINIT, "IGMP socket IP_HDRINCL Failed");
+        LOG(LOG_CRIT, eNOINIT, "Failed to open UDP socket.");
+    else if (mrt_tbl < 0)
+        LOG(LOG_NOTICE, 0, "Opened UDP socket.");
+    else if ((mrouterFD = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket open Failed");
 #ifdef __linux__
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
-            errno == ENOPROTOOPT ? LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
-                                 : LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_TABLE Failed.");
+            errno == ENOPROTOOPT ? LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has"
+                                                           "CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
+                                 : LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_TABLE Failed.");
 #endif
+    else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_HDRINCL Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, eNOINIT, "IGMP socket MRT_INIT Failed");
-    else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_ERR, eNOINIT, "IGMP socket IP_IFINFO Failed");
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_INIT Failed");
+    else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0) {
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
+    else if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
         || ! (Va & MRT_MFC_BW_UPCALL)) {
-        LOG(LOG_WARNING, errno, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
+        LOG(LOG_WARNING, 1, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
         CONF->bwControlInterval = 0;
-    }
 #endif
-    LOG(LOG_INFO, 0, "k_enableMRouter: Enabled mroute socket.");
+    } else
+        LOG(LOG_NOTICE, 0, "Opened IGMP socket.");
     fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
 
     return mrouterFD;
@@ -211,11 +210,11 @@ int k_enableMRouter(void) {
 */
 int k_disableMRouter(void) {
     if (!STARTUP && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
-        LOG(LOG_WARNING, errno, "k_disableMRouter: MRT_DONE");
+        LOG(LOG_WARNING, 1, "IGMP socket MRT_DONE failed.");
     if (close(mrouterFD) < 0)
-        LOG(LOG_WARNING, errno, "k_disableMRouter: CLOSE");
+        LOG(LOG_WARNING, 1, "%s socket CLOSE failed.", mrt_tbl < 0 ? "UDP" : "IGMP");
     else {
-        LOG(LOG_INFO, 0, "k_disableMRouter: Closed Socket");
+        LOG(LOG_NOTICE, 0, "Closed %s Socket.", mrt_tbl < 0 ? "UDP" : "IGMP");
         mrouterFD = -1;
     }
     return mrouterFD;
@@ -232,7 +231,7 @@ void k_delVIF(struct IfDesc *IfDp) {
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
                         IfDp->Flags, inetFmt(IfDp->InAdr.s_addr, 1), IfDp->conf->threshold, IfDp->conf->ratelimit);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)
-        LOG(LOG_WARNING, errno, "delVIF: Error removing VIF %d:%s", IfDp->index, IfDp->Name);
+        LOG(LOG_ERR, 1, "Error removing VIF %d:%s", IfDp->index, IfDp->Name);
 
     // Reset vif index.
     BIT_CLR(vifBits, IfDp->index);
@@ -263,7 +262,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
 #endif
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
-        LOG(LOG_WARNING, errno, "Error adding VIF %d:%s", Ix, IfDp->Name);
+        LOG(LOG_ERR, 1, "Error adding VIF %d:%s", Ix, IfDp->Name);
         IfDp->state &= ~0x03;
         return false;
     }
@@ -292,15 +291,15 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
     // Add the mfc to the kernel.
-    LOG(LOG_INFO, 0, "k_addMRoute: Adding MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+    LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d.", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
                       inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
-        LOG(LOG_WARNING, errno, "MRT_ADD_MFC %d - %s", vif, inetFmt(group, 1));
+        LOG(LOG_WARNING, 1, "MRT_ADD_MFC %d - %s failed.", vif, inetFmt(group, 1));
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (CONF->bwControlInterval) {
         struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ, { {CONF->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
         if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
-            LOG(LOG_WARNING, errno, "MRT_ADD_BW_UPCALL %d - %s", vif, inetFmt(group, 1));
+            LOG(LOG_WARNING, 1, "MRT_ADD_BW_UPCALL %d - %s failed.", vif, inetFmt(group, 1));
     }
 #endif
 }
@@ -321,10 +320,10 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #endif
 
     // Remove mfc from kernel.
-    LOG(LOG_INFO, 0, "k_delMRoute: Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
+    LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
                       inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
-        LOG(LOG_WARNING, errno, "MRT_DEL_MFC %d - %s", vif, inetFmt(group, 1));
+        LOG(LOG_WARNING, 1, "MRT_DEL_MFC %d - %s failed.", vif, inetFmt(group, 1));
 }
 
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -336,6 +335,6 @@ void k_deleteUpcalls(uint32_t src, uint32_t group) {
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
         LOG(LOG_WARNING, 0, "Failed to delete BW upcall for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
     else
-        LOG(LOG_INFO, 0, "k_deleteUpcalls: Deleted BW upcalls for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
+        LOG(LOG_INFO, 0, "Deleted BW upcalls for Src %s, Dst %s.", inetFmt(src, 1), inetFmt(group, 2));
 }
 #endif

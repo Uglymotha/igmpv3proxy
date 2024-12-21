@@ -118,7 +118,7 @@ void freeConfig(bool old) {
         timer_clearTimer(timers.bwControl);
         timers = (struct timers){ 0, 0, 0 };
     }
-    LOG(LOG_DEBUG, 0, "freeConfig: %s cleared.", (old ? "Old configuration" : "Configuration"));
+    LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
 /**
@@ -341,8 +341,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
                                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
-            if (! _calloc(***n, 1, fil, FILSZ))
-                LOG(LOG_ERR, eNOMEM, "parseFilters: Out of Memory.");  // Freed by freeConfig()
+            _calloc(***n, 1, fil, FILSZ);  // Freed by freeConfig()
             ****n = fil;
 
             **n = &(****n).next;
@@ -367,8 +366,7 @@ static inline bool parsePhyintToken(char *token) {
     // Find existing or create new vifConf.
     for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
     if (! tmpPtr) {
-        if (! _calloc(tmpPtr, 1, vif, VIFSZ))  // Freed by freeConfig
-            LOG(LOG_ERR, eNOMEM, "parsePhyintToken: Out of memory.");
+        _calloc(tmpPtr, 1, vif, VIFSZ);  // Freed by freeConfig
         // Insert vifconf in list and set default config and filters pointers.
         *tmpPtr = DEFAULT_VIFCONF;
         vifConf = tmpPtr;
@@ -401,19 +399,19 @@ static inline bool parsePhyintToken(char *token) {
                 LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpPtr->name);
             else {
                 tmpPtr->tbl = intToken;
-                LOG(LOG_INFO, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
-                if (mrt_tbl < 0) // Check again becasue of fork().
+                LOG(LOG_NOTICE, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
+                if (mrt_tbl < 0)
                     igmpProxyFork(intToken);
             }
 #else
-            LOG(LOG_NOTICE, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
+            LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
 #endif
         } else if (strcmp(" disableipmrules", token) == 0) {
 #ifdef __linux__
             LOG(LOG_NOTICE, 0, "Config (%s): Will disable ip mrules.", tmpPtr->name);
             tmpPtr->disableIpMrules = true;
 #else
-            LOG(LOG_NOTICE, 0, "disableipmrules is ony valid for linux.");
+            LOG(LOG_WARNING, 0, "Config (%s): disableipmrules is ony valid for linux.");
 #endif
         } else if (strcmp(" updownstream", token) == 0) {
             tmpPtr->state = IF_STATE_UPDOWNSTREAM;
@@ -456,11 +454,11 @@ static inline bool parsePhyintToken(char *token) {
             tmpPtr->quickLeave = false;
 
         } else if (strcmp(" proxylocalmc", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicase.", tmpPtr->name);
+            LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicast.", tmpPtr->name);
             tmpPtr->proxyLocalMc = true;
 
         } else if (strcmp(" noproxylocalmc", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicase.", tmpPtr->name);
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicast.", tmpPtr->name);
             tmpPtr->proxyLocalMc = false;
 
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
@@ -564,7 +562,7 @@ static inline bool parsePhyintToken(char *token) {
     if (!tmpPtr->noDefaultFilter)
         *filP = conf.defaultFilters;
 
-    LOG(LOG_INFO, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
+    LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
         tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
         tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
         tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
@@ -593,9 +591,9 @@ bool loadConfig(char *cfgFile) {
     }
     if (conf.cnt == 0xFF) {
         // Check recursion and return if exceeded.
-        LOG(LOG_WARNING, 0, "Config: Too many includes (%d) while loading '%s'.", 0xFF, cfgFile);
+        LOG(LOG_ERR, 0, "Config: Too many includes (%d) while loading '%s'.", 0xFF, cfgFile);
     } else if (stat(cfgFile, &st) != 0 || !(st_mode = st.st_mode)) {
-        LOG(LOG_WARNING, errno, "Config: Cannot stat '%s'.", cfgFile);
+        LOG(LOG_ERR, 1, "Config: Cannot stat '%s'.", cfgFile);
     } else if (S_ISDIR(st_mode)) {
         // Include all .conf files in include directory.
         struct dirent **d;
@@ -603,22 +601,19 @@ bool loadConfig(char *cfgFile) {
         if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (n--) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
             if ((sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file)) && !logwarning)
-                LOG(LOG_WARNING, 0, "Config: Failed to load config from '%s' %d.", file, logwarning);
+                LOG(LOG_ERR, 0, "Config: Failed to load config from '%s' %d.", file, logwarning);
             free(d[n]);
         }
         free(d);
     } else if (!S_ISREG(st_mode) || ! (confFilePtr = configFile(cfgFile, 1))) {
         // Open config file.
-        LOG(LOG_WARNING, errno, "Config: Failed to open config file '%s'.", cfgFile);
-    } else if (! _malloc(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t))) {  // Freed by self
-        // Allocate buffer and open config file and initialize common config when loading main config file.
-        LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
-    } else {
-        // Increase count and initialize buffer. First char of token is ' ', counters to 0.
-        token[0] = ' ';
-        *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
-        LOG(LOG_INFO, 0, "Config: Loading config (%d) from '%s'.", conf.cnt, cfgFile);
-    }
+        LOG(LOG_ERR, 1, "Config: Failed to open config file '%s'.", cfgFile);
+    } else
+        LOG(LOG_NOTICE, 0, "Config: Loading config (%d) from '%s'.", conf.cnt, cfgFile);
+
+    _malloc(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Freed by self
+    token[0] = ' ';
+    *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
 
     // Loop though file tokens until all configuration is read or error encounterd.
     if (S_ISREG(st_mode)) while (!logwarning && nextToken(token)) {
@@ -651,10 +646,10 @@ bool loadConfig(char *cfgFile) {
             configFile(confFilePtr, 2);
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.chroot = malloc(strlen(token))))   // Freed by igmpProxyCleanUp() or Self
-                LOG(LOG_ERR, eNOMEM, "Config: Out of Memory.");
+                LOG(LOG_CRIT, eNOMEM, "Config: Out of Memory.");
             memcpy(conf.chroot, token + 1, strlen(token));
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
-                LOG(LOG_WARNING, errno, "Config: Could not find or create %s.", conf.chroot);
+                LOG(LOG_WARNING, 1, "Config: Could not find or create %s.", conf.chroot);
                 free(conf.chroot);  // Alloced by Self
                 conf.chroot = NULL;
             } else
@@ -663,15 +658,14 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" defaulttable", token) == 0 && INTTOKEN) {
 #ifdef __linux__
             if (intToken < 0 || intToken > 999999999)
-                LOG(LOG_NOTICE, 0, "Config: Default table id should be between 0 and 999999999.");
+                LOG(LOG_WARNING, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
                 conf.defaultTable = intToken;
-                if (mrt_tbl < 0 && conf.defaultTable > 0)
-                    igmpProxyFork(conf.defaultTable);
-                LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
+                if (mrt_tbl < 0 && igmpProxyFork(conf.defaultTable) > 0)
+                    LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
             }
 #else
-            LOG(LOG_NOTICE, 0, "Config: Default table id is only valid on linux.");
+            LOG(LOG_WARNING, 0, "Config: Default table id is only valid on linux.");
 #endif
 
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
@@ -681,7 +675,7 @@ bool loadConfig(char *cfgFile) {
             else
                 LOG(LOG_NOTICE, 0, "Config: Running daemon as '%s' (%d)", conf.user->pw_name, conf.user->pw_uid);
 #else
-            LOG(LOG_NOTICE, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
+            LOG(LOG_WARNING, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
 #endif
 
         } else if (strcmp(" defaultdisableipmrules", token) == 0) {
@@ -689,11 +683,11 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Will disable ip mrules for mc route tables.");
             conf.disableIpMrules = true;
 #else
-            LOG(LOG_NOTICE, 0, "defaultdisableipmrules is ony valid for linux.");
+            LOG(LOG_WARNING, 0, "Config: defaultdisableipmrules is ony valid for linux.");
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.group = getgrnam(token + 1)))
-                LOG(LOG_WARNING, errno, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
+                LOG(LOG_WARNING, 1, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
             else
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s' (%d).", conf.group->gr_name, conf.group->gr_gid);
 
@@ -766,8 +760,7 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
-                if (! _calloc(conf.defaultFilters, 1, fil, FILSZ))  // Freed by freeConfig()
-                    LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
+                _calloc(conf.defaultFilters, 1, fil, FILSZ);  // Freed by freeConfig()
                 *conf.defaultFilters = FILTERANY;
             }
 
@@ -871,10 +864,10 @@ bool loadConfig(char *cfgFile) {
             if (conf.log2Stderr || (conf.logFilePath && strcmp(conf.logFilePath, t) == 0))
                 continue;
             else if ((! ((fp = fopen(token + 1, "w")) && (t = token + 1)) && ! (fp = fopen(t, "w"))) || fclose(fp) != 0)
-                LOG(LOG_WARNING, errno, "Config: Cannot open log file '%s'.", token + 1);
+                LOG(LOG_ERR, 1, "Config: Cannot open log file '%s'.", token + 1);
             else if (! (conf.logFilePath = realloc(conf.logFilePath, strlen(token))))
                 // Freed by igmpProxyCleanUp() or igmpProxyInit()
-                LOG(LOG_ERR, eNOMEM, "loadConfig: Out of Memory.");
+                LOG(LOG_CRIT, eNOMEM, "Config: Out of Memory.");
             else {
                 strcpy(conf.logFilePath, t);
                 chmod(conf.logFilePath, 0640);
@@ -902,7 +895,7 @@ bool loadConfig(char *cfgFile) {
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     _free(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
-        LOG(LOG_WARNING, errno, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
+        LOG(LOG_ERR, 1, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
     if (--conf.cnt > 0 || logwarning)
         return !logwarning;
 
@@ -920,10 +913,8 @@ bool loadConfig(char *cfgFile) {
     }
 
     // Check if buffer sizes have changed.
-    if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz)) {
-        initIgmp(false);
-        initIgmp(true);
-    }
+    if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
+        initIgmp(2);
     // Check rescanvif status and start or clear timers if necessary.
     if (conf.rescanVif && timers.rescanVif == 0) {
         timers.rescanVif = timer_setTimer(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
@@ -946,7 +937,7 @@ bool loadConfig(char *cfgFile) {
         int Va, len = sizeof(Va);
         if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0
                          || ! (Va & MRT_MFC_BW_UPCALL))) {
-            LOG(LOG_WARNING, errno, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
+            LOG(LOG_WARNING, 1, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             conf.bwControlInterval = 0;
         } else if (!STARTUP)
             clearGroups(CONF);
@@ -982,7 +973,7 @@ void reloadConfig(uint64_t *tid) {
         if (!STARTUP)
             rebuildIfVc(NULL);
         freeConfig(1);
-        LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
+        LOG(LOG_NOTICE, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
     if (conf.rescanConf && tid) {
         *tid = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
@@ -1018,15 +1009,14 @@ void configureVifs(void) {
         if (!IFREBUILD || ! IfDp->conf) {
             for (oconf = NULL, vconf = vifConf; vconf && strcmp(IfDp->Name, vconf->name); vconf = vconf->next);
             if (vconf) {
-                LOG(LOG_INFO, 0, "Found config for %s", IfDp->Name);
+                LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
             } else {
                 // Interface has no matching config, create default config.
-                LOG(LOG_INFO, 0, "configureVifs: Creating default config for %s interface %s.",
+                LOG(LOG_NOTICE, 0, "Creating default config for %s interface %s.",
                                   IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"
                                 : IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream"
                                 : IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
-                if (! _calloc(vconf, 1, vif, VIFSZ))
-                    LOG(LOG_ERR, eNOMEM, "configureVifs: Out of Memory.");   // Freed by freeConfig()
+                _calloc(vconf, 1, vif, VIFSZ);  // Freed by freeConfig()
                 *vconf = DEFAULT_VIFCONF;
                 vifConf  = vconf;
                 strcpy(vconf->name, IfDp->Name);
@@ -1055,7 +1045,7 @@ void configureVifs(void) {
 
         if (IfDp->conf->tbl != mrt_tbl) {
             // Check if Interface is in table for current process.
-            LOG(LOG_NOTICE, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
+            LOG(LOG_INFO, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
         }
         if (mrt_tbl < 0)
@@ -1079,7 +1069,7 @@ void configureVifs(void) {
                  fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
             if (fil || ofil) {
-                LOG(LOG_DEBUG, 0, "configureVifs: Filters changed for %s.", IfDp->Name);
+                LOG(LOG_INFO, 0, "Filters changed for %s.", IfDp->Name);
                 IfDp->filCh = true;
             }
         }
@@ -1126,7 +1116,7 @@ void configureVifs(void) {
         return;
 
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
-    if (!quickLeave) {
+    if (!quickLeave && !RESTART) {
         LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
         conf.quickLeave = false;
         conf.dHostsHTSize = 0;
@@ -1134,12 +1124,12 @@ void configureVifs(void) {
 
     // Check if quickleave was enabled or disabled due to config change.
     if ((CONFRELOAD || SHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize && mrt_tbl >= 0) {
-        LOG(LOG_WARNING, 0, "configureVifs: Downstream host hashtable size changed from %d to %d, restarting.",
+        LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
                              oldconf.dHostsHTSize, conf.dHostsHTSize);
         sighandled |= GOT_SIGURG;
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
-        LOG(LOG_ERR, 0 - eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
+        LOG(LOG_CRIT, 0 - eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }

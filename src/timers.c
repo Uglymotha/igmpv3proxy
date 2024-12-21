@@ -88,8 +88,7 @@ uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data)
     uint64_t                i = 1;
 
     // Create and set a new timer.
-    if (! _malloc(node, tmr, TMSZ(name)))  // Freed by timer_ageQueue() or timer_clearTimer()
-        LOG(LOG_ERR, eNOMEM, "timer_setTimer: Out of memory.");
+    _malloc(node, tmr, TMSZ(name));  // Freed by timer_ageQueue() or timer_clearTimer()
     *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, strlen(name) + 1) };
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
@@ -139,6 +138,8 @@ void debugQueue(const char *header, int h, int fd) {
     struct timeOutQueue  *node = queue;
     uint64_t              i;
 
+    if (fd < 0 && CONF->logLevel < LOG_DEBUG)
+        return;
     clock_gettime(CLOCK_REALTIME, &curtime);
     if (fd < 0)
         LOG(LOG_DEBUG, 0, "----------------------%s-----------------------", header);

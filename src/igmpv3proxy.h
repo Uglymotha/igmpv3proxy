@@ -144,13 +144,14 @@ struct memstats {
     int64_t qry, tmr, var;            // Queries, Timers, various.
 };
 
+// Forked child processes.
 struct pt {
     pid_t   pid;
     int     tbl;
-    volatile uint8_t sig;
-    volatile int8_t  st;
+    int8_t  st;
 };
 struct chld {
+    int        onr;
     int        nr;
     struct pt *c;
 };
@@ -316,7 +317,7 @@ struct IfDesc {
 #define SHUTDOWN   (sigstatus & GOT_SIGTERM)
 
 static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
-static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was terminated", "failed to initialize", "failed to fork", "ran out of memory", "aborted", "failed to load config", "", "was murdered", "", "segfaulted", "", "", "" , "was terminated" };
+static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed to initialize", "failed to fork", "ran out of memory", "aborted", "failed to load config", "", "was murdered", "", "segfaulted", "", "", "" , "was terminated" };
 
 #define SETSIGS     struct sigaction sa = { 0 };              \
                     sa.sa_sigaction = signalHandler;          \
@@ -329,7 +330,6 @@ static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was term
                     sigaction(SIGUSR2, &sa, NULL);            \
                     sigaction(SIGURG,  &sa, NULL);            \
                     sigaction(SIGPIPE, &sa, NULL);            \
-                    sa.sa_flags |= SA_NOCLDWAIT | SA_NODEFER; \
                     sigaction(SIGCHLD, &sa, NULL)
 #define BLOCKSIGS   signal(SIGUSR1, SIG_IGN);  \
                     signal(SIGUSR2, SIG_IGN);  \
@@ -348,26 +348,34 @@ static const char *exitmsg[16] = { "gave up", "terminated abnormally", "was term
 // CLI Defines.
 #define CLI_CMD_BUF 256
 
-// Memory (de)allocation macro's
-#define   _malloc(p,m,s)     (((p=malloc(s))     && (memuse.m+=(s)) > 0            && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define   _calloc(p,n,m,s)   (((p=calloc(n,s))   && (memuse.m+=(n * (s))) > 0      && (++memalloc.m > 0)) || getMemStats(0,-1))
-#define  _realloc(p,m,sp,sm) (((p=realloc(p,sp)) && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0) && (++memfree.m > 0)) \
-                                                 || getMemStats(0,-1))
-#define _recalloc(p,m,sp,sm) (((p=realloc(p,sp)) && (sp <= sm || memset((char *)p + (sm), 0, (sp) - (sm)))                     \
-                                                 && (memuse.m+=(-(sm) + (sp))) > 0 && (++memalloc.m > 0) && (++memfree.m > 0)) \
-                                                 || getMemStats(0,-1))
-#define _free(p, m, s)      if (p) {                                             \
-                                if ((memuse.m-=(s)) < 0 || (++memfree.m <= 0)) { \
-                                    getMemStats(0,-1);                           \
-                                    exit(6); }                                   \
-                            free(p); p = NULL; }
+// Memory (de)allocation macro's, which check for valid size and counts.
+#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) { \
+                                getMemStats(0, -1);                                                                  \
+                                LOG(LOG_CRIT, 6, "Invalid malloc() in %s() (%s:%d)",  __func__, __FILE__, __LINE__); }
+#define _calloc(p,n,m,s)    if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {  \
+                                getMemStats(0, -1);                                                                            \
+                                LOG(LOG_CRIT, 6, "Invalid calloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                    \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                        \
+                                getMemStats(0, -1);                                                                   \
+                                LOG(LOG_CRIT, 6, "Invalid realloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                    \
+                                || (sp <= sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                           \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                        \
+                                getMemStats(0,-1);                                                                    \
+                                LOG(LOG_CRIT, 6, "Invalid rcealloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+#define _free(p, m, s)     {if ((p) && ((errno = 0) || s <= 0 || (memuse.m -=s) < 0 || (++memfree.m) <= 0)) {                 \
+                                getMemStats(0, -1);                                                                           \
+                                LOG(LOG_CRIT, 6, "Invalid free() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }           \
+                            if (p) { free(p); p = NULL; }                                                                     \
+                            else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
 #define BIT_CLR(X,n)     ((X) &= ~(1 << (n)))
 #define BIT_TST(X,n)     (((X) >> (n)) & 1)
 
-// Conditional loop macro's
+// Conditional loop macro's.
 #define IF_FOR(x, y)       if  (x) for (y)
 #define FOR_IF(x, y)       for (x) if  (y)
 #define IF_FOR_IF(x, y, z) if  (x) for (y) if (z)
@@ -431,7 +439,7 @@ struct igmpv3_report {
 #define IGMPV3_ALLOW_NEW_SOURCES  5
 #define IGMPV3_BLOCK_OLD_SOURCES  6
 #define IGMPV3_MINLEN            12
-#define IGMP_LOCAL(x) ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
+#define IGMP_LOCAL(x)            ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
 
 //##################################################################################
 //  Global Variables.
@@ -467,7 +475,10 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 /**
 *   igmpproxy.c
 */
-void igmpProxyFork(int tbl);
+#define       TIME_STR(x,y) clock_gettime(CLOCK_REALTIME, &y); \
+                            strcpy(x, asctime(localtime(&y.tv_sec))); \
+                            x[strlen(x) - 1] = '\0'
+int  igmpProxyFork(int tbl);
 void igmpProxyCleanUp(int code);
 
 /**
@@ -484,7 +495,7 @@ void           configureVifs(void);
 /**
 *   cli.c
 */
-int  openCliFd(void);
+int  initCli(int mode);
 int  closeCliFd(void);
 void acceptCli(void);
 void cliCmd(char *cmd, int tbl);
@@ -492,11 +503,11 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define        IFL(x)               x = getIfL(); x; x = x->next
-#define        GETIFL(x)            for (IFL(x))
-#define        IFGETIFL(y, x)       if (y) GETIFL(x)
-#define        GETIFLIF(x, y)       GETIFL(x) if (y)
-#define        IFGETIFLIF(x, y, z)  if (x) GETIFLIF(y, z)
+#define        IFL(x)                x = getIfL(); x; x = x->next
+#define        GETIFL(x)             for (IFL(x))
+#define        IF_GETIFL(y, x)       if (y) GETIFL(x)
+#define        GETIFL_IF(x, y)       GETIFL(x) if (y)
+#define        IF_GETIFL_IF(x, y, z) if (x) GETIFL_IF(y, z)
 void           freeIfDescL(void);
 void           rebuildIfVc(uint64_t *tid);
 void           buildIfVc(void);
@@ -508,7 +519,7 @@ void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
 /**
 *   igmp.c
 */
-int    initIgmp(bool activate);
+int    initIgmp(int mode);
 void   acceptIgmp(int fd);
 void   sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void   sendGeneralMemberQuery(struct IfDesc *IfDp);
@@ -516,7 +527,9 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
-#define         LOG(x, ...) ((logwarning |= (x == LOG_WARNING)) || true) && !(x <= CONF->logLevel) ?: myLog(x, __VA_ARGS__)
+#define         LOG(x, ...) (   ((logwarning |= ((x) <= LOG_WARNING)) || true)                \
+                             && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
+                             && !(errno = 0))
 #define         setHash(t, h)   if (h != (uint32_t)-1) BIT_SET(t[h / 64], h % 64)
 #define         clearHash(t, h) if (h != (uint32_t)-1) BIT_CLR(t[h / 64], h % 64)
 #define         testHash(t, h)  (BIT_TST(t[h / 64], h % 64))
@@ -537,8 +550,8 @@ const char     *grecKind(unsigned int type);
 uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
-void            myLog(int Serverity, int Errno, const char *FmtSt, ...);
-bool            getMemStats(int h, int fd);
+bool            myLog(int Serverity, const char *func, int Errno, const char *FmtSt, ...);
+void            getMemStats(int h, int cli_fd);
 void            ipRules(int tbl, bool activate);
 
 /**

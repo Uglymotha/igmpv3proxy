@@ -62,7 +62,7 @@ void freeIfDescL(void) {
             IfDp = IfDp->next;
     }
 
-    LOG(LOG_DEBUG, 0, "freeIfDescL: Interfaces List cleared.");
+    LOG(LOG_DEBUG, 0, "Interfaces List cleared.");
 }
 
 /**
@@ -75,7 +75,7 @@ void rebuildIfVc(uint64_t *tid) {
     if (! IfDescL || IFREBUILD || SHUP || STARTUP)
         buildIfVc();
     // Call configureVifs to link the new IfDesc table.
-    LOG(LOG_INFO,0,"rebuildIfVc: Configuring MC vifs.");
+    LOG(LOG_INFO, 0, "Configuring MC vifs.");
     configureVifs();
     // Free removed interfaces.
     freeIfDescL();
@@ -104,8 +104,8 @@ void buildIfVc(void) {
 
     // Get the system interface list.
     if ((getifaddrs(&IfAddrsP)) == -1)
-        LOG((LOG_ERR), eNOINIT, "Cannot enumerate interfaces.");
-    else for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
+        LOG(LOG_CRIT, eNOINIT, "Cannot enumerate interfaces.");
+    for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
         unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
             || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
@@ -121,16 +121,15 @@ void buildIfVc(void) {
         uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
         if (! IfDp) {
             // New interface, allocate and initialize.
-            if (!_malloc(IfDp, ifd, IFSZ))
-                LOG(LOG_ERR, eNOMEM, "builfIfVc: Out of memory.");  // Freed by freeIfDescL()
+            _malloc(IfDp, ifd, IFSZ);  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
             memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-            LOG(LOG_DEBUG, 0, "buildIfVc: Found new interface %s.", IfDp->Name);
+            LOG(LOG_INFO, 0, "Found new interface %s.", IfDp->Name);
         } else {
             // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
             IfDp->state |= 0x40;
-            LOG(LOG_DEBUG, 0, "buildIfVc: Found existing interface %s.", IfDp->Name);
+            LOG(LOG_INFO, 0, "Found existing interface %s.", IfDp->Name);
         }
 
         // Set the interface flags, index and IP.
@@ -143,7 +142,7 @@ void buildIfVc(void) {
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
 
         if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
-            LOG(LOG_WARNING, errno, "Failed to get MTU for %s, disabling.", IfDp->Name);
+            LOG(LOG_ERR, 1, "Failed to get MTU for %s, disabling.", IfDp->Name);
             IfDp->mtu = 0;
         } else
             IfDp->mtu = ifr.ifr_mtu;
@@ -151,7 +150,7 @@ void buildIfVc(void) {
         if (! (IfDp->Flags & IFF_MULTICAST)) {
             ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
             if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
-                LOG(LOG_WARNING, errno, "Failed to enable multicast on %s, disabling.", IfDp->Name);
+                LOG(LOG_ERR, 1, "Failed to enable multicast on %s, disabling.", IfDp->Name);
             else {
                 IfDp->Flags = ifr.ifr_flags;
                 LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
@@ -159,7 +158,7 @@ void buildIfVc(void) {
         }
 
         // Log the result...
-        LOG(LOG_INFO, 0, "buildIfVc: Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
+        LOG(LOG_INFO, 0, "Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
                           IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
     }
 
@@ -209,7 +208,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             sprintf(buf, "%lu,%lu\n", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
-    } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || !chld.nr || !IS_DISABLED(IfDp->state)) {
+    } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->stats.bytes, total.rate + IfDp->stats.rate, total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
@@ -229,22 +228,22 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
 /**
 *   Outputs configured filters to socket specified in arguments.
 */
-void getIfFilters(struct IfDesc *IfDp, int h, int fd) {
+void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
     char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "", s[10] = "";
-    struct IfDesc *IfDp2 = NULL;
+    struct IfDesc *IfDp = NULL;
     int            i = 1;
 
     if (h) {
-        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp ? IfDp->Name : "");
+        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp2 ? IfDp2->Name : "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
-    for (IFL(IfDp2), i++) {
+    for (IFL(IfDp), i++) {
         struct filters *filter;
         int             i = 1;
-        if (IfDp && IfDp != IfDp2)
+        if ((mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) || (IfDp2 && IfDp != IfDp2))
             continue;
-        for (filter = IfDp2->conf->filters; filter; filter = filter->next, i++) {
+        for (filter = IfDp->conf->filters; filter; filter = filter->next, i++) {
             if (filter->action > ALLOW) {
                 strcpy(msg, h ? "%10lld B/s" : "%lld");
                 sprintf(s, msg, filter->action);
@@ -253,7 +252,7 @@ void getIfFilters(struct IfDesc *IfDp, int h, int fd) {
                 strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
             else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
-            sprintf(buf, msg, !h || i == 1 ? IfDp2->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
+            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
                     inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
                     filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
