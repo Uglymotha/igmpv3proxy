@@ -7,12 +7,12 @@ on:
     branches: [ master ]
 
 jobs:
-  build:
-    name: Test Ubuntu Latest
+  build-gcc:
+    name: Test Ubuntu - gcc
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: autogen
       run: ./autogen.sh
     - name: configure
@@ -20,15 +20,43 @@ jobs:
     - name: make
       run: make
 
-  build2:
-    name: Test Ubuntu 18.04
-    runs-on: ubuntu-18.04
+  build-clang:
+    name: Test Ubuntu - clang
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: autogen
       run: ./autogen.sh
     - name: configure
-      run: ./configure
+      run: CC=clang LD=ld.lld ./configure
     - name: make
       run: make
+
+  build-freebsd:
+    runs-on: ubuntu-latest
+    name: Test FreeBSD - clang
+    steps:
+    - uses: actions/checkout@v4
+    - name: Start FreeBSD VM
+      id: freebsd-test
+      uses: vmactions/freebsd-vm@v1
+      with:
+        usesh: true
+        prepare: |
+          pkg install -y curl m4 automake autoconf
+    - name: autogen
+      shell: freebsd {0}
+      run: |
+        cd $GITHUB_WORKSPACE
+        ./autogen.sh
+    - name: configure
+      shell: freebsd {0}
+      run: |
+        cd $GITHUB_WORKSPACE
+        ./configure
+    - name: make
+      shell: freebsd {0}
+      run: |
+        cd $GITHUB_WORKSPACE
+        make
