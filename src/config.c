@@ -49,8 +49,21 @@ static inline void  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable defaultdisableipmrules defaultrouteunknownmc";
-static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules routeunknownmc norouteunknownmc";
+static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables"
+                             " defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver"
+                             " defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval"
+                             " defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile"
+                             " defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream"
+                             " disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval"
+                             " lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection"
+                             " querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany"
+                             " nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable"
+                             " defaultdisableipmrules defaultrouteunknownmc";
+static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
+                               " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
+                               " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
+                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules routeunknownmc"
+                               " norouteunknownmc";
 
 // Daemon Configuration.
 static struct Config         conf, oldconf;
@@ -336,9 +349,9 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
             // Correct filter, add and reset fil to process next entry.
             LOG(LOG_NOTICE, 0, "Config (%s): Adding filter Src: %15s, Dst: %15s, Dir: %6s, Action: %5s.", in,
-                                inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
-                                fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
-                                fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
+                inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
+                fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
+                fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
             _calloc(***n, 1, fil, FILSZ);  // Freed by freeConfig()
@@ -557,7 +570,7 @@ static inline bool parsePhyintToken(char *token) {
             tmpPtr->qry.responseInterval = getIgmpExp(tmpPtr->qry.interval * 10, 1);
         float f = (tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10;
         LOG(LOG_NOTICE, 0, "Config (%s): Setting default query interval to %ds. Default response interval %.1fs",
-                            tmpPtr->name, tmpPtr->qry.interval, f);
+            tmpPtr->name, tmpPtr->qry.interval, f);
     }
     if (!tmpPtr->noDefaultFilter)
         *filP = conf.defaultFilters;
@@ -601,7 +614,7 @@ bool loadConfig(char *cfgFile) {
         if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (n--) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
             if ((sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file)) && !logwarning)
-                LOG(LOG_ERR, 0, "Config: Failed to load config from '%s' %d.", file, logwarning);
+                LOG(LOG_ERR, 0, "Config: Failed to load config from '%s'", file);
             free(d[n]);
         }
         free(d);
@@ -901,15 +914,14 @@ bool loadConfig(char *cfgFile) {
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((conf.querierVer != 3 ? conf.queryResponseInterval
-                                      : getIgmpExp(conf.queryResponseInterval, 0)) / 10 > conf.queryInterval) {
+                              : getIgmpExp(conf.queryResponseInterval, 0)) / 10 > conf.queryInterval) {
         if (conf.querierVer != 3)
             conf.queryResponseInterval = conf.queryInterval * 10;
         else
             conf.queryResponseInterval = getIgmpExp(conf.queryInterval * 10, 1);
         float f = (conf.querierVer != 3 ? conf.queryResponseInterval
-                                                : getIgmpExp(conf.queryResponseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs",
-                            conf.queryInterval, f);
+                                        : getIgmpExp(conf.queryResponseInterval, 0)) / 10;
+        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", conf.queryInterval, f);
     }
 
     // Check if buffer sizes have changed.
@@ -936,7 +948,7 @@ bool loadConfig(char *cfgFile) {
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         int Va, len = sizeof(Va);
         if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0
-                         || ! (Va & MRT_MFC_BW_UPCALL))) {
+                     || ! (Va & MRT_MFC_BW_UPCALL))) {
             LOG(LOG_WARNING, 1, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
             conf.bwControlInterval = 0;
         } else if (!STARTUP)
@@ -1013,9 +1025,9 @@ void configureVifs(void) {
             } else {
                 // Interface has no matching config, create default config.
                 LOG(LOG_NOTICE, 0, "Creating default config for %s interface %s.",
-                                  IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"
-                                : IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream"
-                                : IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
+                    IS_DISABLED(conf.defaultInterfaceState)     ? "disabled"     :
+                    IS_UPDOWNSTREAM(conf.defaultInterfaceState) ? "updownstream" :
+                    IS_UPSTREAM(conf.defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
                 _calloc(vconf, 1, vif, VIFSZ);  // Freed by freeConfig()
                 *vconf = DEFAULT_VIFCONF;
                 vifConf  = vconf;
@@ -1125,11 +1137,11 @@ void configureVifs(void) {
     // Check if quickleave was enabled or disabled due to config change.
     if ((CONFRELOAD || SHUP) && oldconf.dHostsHTSize != conf.dHostsHTSize && mrt_tbl >= 0) {
         LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
-                             oldconf.dHostsHTSize, conf.dHostsHTSize);
+            oldconf.dHostsHTSize, conf.dHostsHTSize);
         sighandled |= GOT_SIGURG;
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
-        LOG(LOG_CRIT, 0 - eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
+        LOG(LOG_CRIT, -eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }

@@ -74,20 +74,20 @@ int initCli(int mode) {
     if (mode > 0 && cli_fd == -1) {
         memset(&cli_sa, 0, sizeof(struct sockaddr_un));
         cli_sa.sun_family = AF_UNIX;
-        if (   ! strncpy(cli_sa.sun_path, CONF->runPath, sizeof(cli_sa.sun_path))
-        || ! snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), sizeof(cli_sa.sun_path) - strlen(cli_sa.sun_path),
-                      mrt_tbl >= 0 && chld.onr > 0 ? "cli-%d.sock" : "cli.sock", mrt_tbl)
-        ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
-        || ! (cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
+        if (   !strncpy(cli_sa.sun_path, CONF->runPath, sizeof(cli_sa.sun_path))
+            || !snprintf(cli_sa.sun_path + strlen(cli_sa.sun_path), sizeof(cli_sa.sun_path) - strlen(cli_sa.sun_path),
+                          mrt_tbl >= 0 && chld.onr > 0 ? "cli-%d.sock" : "cli.sock", mrt_tbl)
+            ||   (stat(cli_sa.sun_path, &st) == 0 && unlink(cli_sa.sun_path) < 0)
+            || !(cli_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0))
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-        || ! (cli_sa.sun_len = SUN_LEN(&cli_sa))
-        ||    bind(cli_fd, (struct sockaddr *)&cli_sa, cli_sa.sun_len) < 0
+            || !(cli_sa.sun_len = SUN_LEN(&cli_sa))
+            ||  bind(cli_fd, (struct sockaddr *)&cli_sa, cli_sa.sun_len) < 0
 #else
-        ||    bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
+            ||  bind(cli_fd, (struct sockaddr *)&cli_sa, sizeof(struct sockaddr_un)) < 0
 #endif
-        ||    listen(cli_fd, CONF->reqQsz) < 0
-        ||  (     chown(cli_sa.sun_path, CONF->user ? CONF->user->pw_uid : -1, CONF->group->gr_gid))
-               || chmod(cli_sa.sun_path, 0660)) {
+            ||  listen(cli_fd, CONF->reqQsz) < 0
+            ||  (   chown(cli_sa.sun_path, CONF->user ? CONF->user->pw_uid : -1, CONF->group->gr_gid))
+                 || chmod(cli_sa.sun_path, 0660)) {
             LOG(LOG_ERR, 1, "Cannot open CLI Socket %s. CLI connections will not be available.", cli_sa.sun_path);
             cli_fd = -1;
         } else
@@ -117,13 +117,13 @@ void acceptCli(void)
         close(fd);
         return;
     }
-    LOG(LOG_INFO, 0, "(%d): RECV CLI Request.", chld.onr);
+    LOG(LOG_INFO, 0, "RECV CLI (%d) Request.", chld.onr);
     while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
-    if ((errno = 0) || len <= 0 || len > CLI_CMD_BUF ||
+    if (len <= 0 || len > CLI_CMD_BUF ||
         (buf[0] == 'r' && len > 2 &&
         (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-        LOG(LOG_WARNING, 1, "acceptCli (%d): Error receiving command.", chld.onr);
+        LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command.", chld.onr);
     } else if (buf[0] == 'c' || buf[0] == 'b') {
         sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
         buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
@@ -132,7 +132,7 @@ void acceptCli(void)
     } else if (buf[0] == 'r') {
         logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask);
     } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
-        sprintf(msg, "Interface %s Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
+        sprintf(msg, "Interface '%s' Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
         send(fd, msg, strlen(msg), MSG_DONTWAIT);
     } else if (buf[0] == 'i') {
         getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, fd);
@@ -159,8 +159,8 @@ void acceptCli(void)
         send(fd, "GO AWAY\n", 9, MSG_DONTWAIT);
 
     // Close connection.
-    LOG(LOG_DEBUG, 0, "(%d): Finished command %s.", chld.onr, buf);
-    exit(-errno);
+    LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI (%d) command '%s'.", errno ? "Failed" : "Finished", chld.onr, buf);
+    exit(errno > 0);
 }
 
 // Below are functions and definitions for client connections.
@@ -233,7 +233,7 @@ static void cliSignalHandler(int sig) {
     case SIGURG:
     case SIGPIPE:
         if (sig == SIGPIPE)
-            fprintf(stderr, "Connection closed by daemon. ");
+            fprintf(stderr, "Connection reset by daemon. ");
         if (srv_fd != -1)
             close(srv_fd);
         fprintf(stderr, "Terminated.\n");

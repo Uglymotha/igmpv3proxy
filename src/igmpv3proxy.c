@@ -418,7 +418,7 @@ static void igmpProxyMonitor(void) {
         errno = sigstatus = pollFD[1].revents = 0;
     }
 
-    LOG(LOG_CRIT, eABNRML, "Monitor Proceses exited.");
+    LOG(LOG_CRIT, -eABNRML, "Monitor Proceses exited.");
 }
 
 /**
@@ -450,7 +450,8 @@ static void igmpProxyRun(void) {
             } else if (sighandled & GOT_SIGHUP || sighandled & GOT_SIGUSR1) {
                 sigstatus = sighandled & GOT_SIGHUP ? GOT_SIGHUP : GOT_SIGUSR1;
                 sighandled &= ~GOT_SIGHUP & ~GOT_SIGUSR1;
-                LOG(LOG_NOTICE, 0, "%s: Reloading config%s.", SHUP ? "SIGHUP" : "SIGUSR1", SHUP ? " and rebuilding interfaces" : "");
+                LOG(LOG_NOTICE, 0, "%s: Reloading config%s.",
+                    SHUP ? "SIGHUP" : "SIGUSR1", SHUP ? " and rebuilding interfaces" : "");
                 reloadConfig(NULL);
             } else if (sighandled & GOT_SIGUSR2) {
                 sighandled &= ~GOT_SIGUSR2;
@@ -510,7 +511,7 @@ void igmpProxyCleanUp(int code) {
         if (nr)
             LOG(LOG_NOTICE, 0, "Waiting for %d process%s to finish.", nr, nr != 1 ? "es" : "");
         while (nr && (pid = waitpid(-1, &status, 0)) > 0) FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
-            chld.c[i].st = WEXITSTATUS(status);
+            chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
             sprintf(msg, "for table %d, ", chld.c[i].tbl);
             LOG(chld.c[i].tbl != mrt_tbl ? LOG_NOTICE : LOG_INFO, 0, "%s %d, %sPID: %d, %s (%d).",
                 chld.c[i].tbl == mrt_tbl ? "Child" : "Proxy", i + 1, chld.c[i].tbl == mrt_tbl ? "" : msg,

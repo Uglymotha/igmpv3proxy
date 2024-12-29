@@ -308,8 +308,8 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
             kill(chld.c[Ln].pid, SIGINT);
         }
         if (Errno < 0)
-            Errno = 0 - Errno;
-        if (Errno == 6 || Errno == 11)
+            Errno = -Errno;
+        if (Errno == SIGABRT || Errno == SIGSEGV)
             exit(Errno);
         igmpProxyCleanUp(Errno);
     }
@@ -330,8 +330,8 @@ void ipRules(int tbl, bool activate) {
         LOG(LOG_INFO, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
         FOR_IF(int i = 0; i < 2; i++, igmpProxyFork(-2) == 0) {
             execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
-            LOG(LOG_ERR, eNOFORK, "ipRules: Cannot exec.");
-            exit(1);
+            LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
+            exit(ENOEXEC);
         }
     }
 }
@@ -356,7 +356,9 @@ void getMemStats(int h, int cli_fd) {
             strcat(msg, "         %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
             strcat(msg, "         %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
         } else
-            strcpy(msg, "%lld, %lld, %lld, %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld");
+            strcpy(msg, "%lld, %lld, %lld, %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld"
+                        "%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld"
+                        "%lld %lld");
         sprintf(buf, msg, memuse.var, memalloc.var, memfree.var,
                           memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
                           memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd, memuse.tmr, memalloc.tmr, memfree.tmr,
@@ -396,7 +398,7 @@ void getMemStats(int h, int cli_fd) {
     if (getrusage(RUSAGE_SELF, &usage) < 0) {
         if (cli_fd && !h)
             send(cli_fd, "\n", 1, MSG_DONTWAIT);
-        LOG(LOG_WARNING, 1, "getMemStats: rusage() failed.");
+        LOG(LOG_WARNING, 1, "getrusage() failed.");
     } else {
         if (cli_fd >= 0) {
             if (h)
@@ -407,6 +409,6 @@ void getMemStats(int h, int cli_fd) {
             send(cli_fd, buf, strlen(buf), MSG_DONTWAIT);
         }
         LOG(LOG_DEBUG, 0, "System Stats:  resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
-                           usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
+            usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
     }
 }

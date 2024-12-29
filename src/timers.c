@@ -64,7 +64,7 @@ struct timespec timer_ageQueue(void) {
     clock_gettime(CLOCK_REALTIME, &curtime);
     for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
-                          timeDiff(node->time, curtime).tv_nsec / 1000);
+            timeDiff(node->time, curtime).tv_nsec / 1000);
         node->func(node->data, node->id);
         // The function may have removed the timeout itself, check before freeing.
         if (queue == node) {

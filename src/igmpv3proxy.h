@@ -214,7 +214,12 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold, conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection, conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval, conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, conf.routeUnknownMc, NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold,             \
+                                            conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection,        \
+                                            conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval,                 \
+                                            conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, \
+                                            false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, conf.routeUnknownMc,     \
+                                            NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -226,8 +231,14 @@ struct querier {                                        // igmp querier status f
     uint64_t       Timer;                               // Self / Other Querier timer
     uint64_t       ageTimer;                            // Route aging timer
 };
-#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval, IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
-#define OTHER_QUERIER (struct querier){ src, ver, ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY) : IfDp->conf->qry.interval, ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10, IfDp->querier.Timer, IfDp->querier.ageTimer }
+#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval,   \
+                                          IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
+#define OTHER_QUERIER (struct querier){ src, ver, \
+                                        ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY)             \
+                                                 : IfDp->conf->qry.interval,                                                      \
+                                        ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) \
+                                                 : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10,                 \
+                                        IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 // Interfaces configuration.
 struct ifStats {
@@ -253,7 +264,8 @@ struct IfDesc {
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, {0, 0, 0, 0}, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
+                                        {0, 0, 0, 0}, 0, (uint8_t)-1, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -316,8 +328,12 @@ struct IfDesc {
 #define SPIPE      (sigstatus & GOT_SIGPIPE)
 #define SHUTDOWN   (sigstatus & GOT_SIGTERM)
 
-static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "", "", "", "", "SIGUSR1", "SIGUSR2" };
-static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed to initialize", "failed to fork", "ran out of memory", "aborted", "failed to load config", "", "was murdered", "", "segfaulted", "", "", "" , "was terminated" };
+static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2",
+                                "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "",
+                                "", "", "", "SIGUSR1", "SIGUSR2" };
+static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed to initialize", "failed to fork",
+                                   "ran out of memory", "aborted", "failed to load config", "failed to execute", "was murdered",
+                                   "", "segfaulted", "", "", "" , "was terminated" };
 
 #define SETSIGS     struct sigaction sa = { 0 };              \
                     sa.sa_sigaction = signalHandler;          \
@@ -349,24 +365,24 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define CLI_CMD_BUF 256
 
 // Memory (de)allocation macro's, which check for valid size and counts.
-#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) { \
-                                getMemStats(0, -1);                                                                  \
-                                LOG(LOG_CRIT, 6, "Invalid malloc() in %s() (%s:%d)",  __func__, __FILE__, __LINE__); }
+#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {       \
+                                getMemStats(0, -1);                                                                        \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid malloc() in %s() (%s:%d)",  __func__, __FILE__, __LINE__); }
 #define _calloc(p,n,m,s)    if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {  \
                                 getMemStats(0, -1);                                                                            \
-                                LOG(LOG_CRIT, 6, "Invalid calloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
-#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                    \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                        \
-                                getMemStats(0, -1);                                                                   \
-                                LOG(LOG_CRIT, 6, "Invalid realloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
-#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                    \
-                                || (sp <= sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                           \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                        \
-                                getMemStats(0,-1);                                                                    \
-                                LOG(LOG_CRIT, 6, "Invalid rcealloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+                                LOG(LOG_CRIT, SIGABRT, "Invalid calloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                         \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                             \
+                                getMemStats(0, -1);                                                                        \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid realloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                          \
+                                || (sp <= sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                 \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                              \
+                                getMemStats(0,-1);                                                                          \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid rcealloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
 #define _free(p, m, s)     {if ((p) && ((errno = 0) || s <= 0 || (memuse.m -=s) < 0 || (++memfree.m) <= 0)) {                 \
                                 getMemStats(0, -1);                                                                           \
-                                LOG(LOG_CRIT, 6, "Invalid free() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }           \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid free() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }     \
                             if (p) { free(p); p = NULL; }                                                                     \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 

@@ -86,11 +86,11 @@ void rebuildIfVc(uint64_t *tid) {
     if (IFREBUILD || STARTUP) {
         sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
-                           memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
+            memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
         LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
-                           memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
+            memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
         LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
-                           memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
+            memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
     }
 }
 
@@ -99,13 +99,13 @@ void rebuildIfVc(uint64_t *tid) {
 */
 void buildIfVc(void) {
     struct ifreq ifr;
-    struct ifaddrs *IfAddrsP, *tmpIfAddrsP;
+    struct ifaddrs *IfAddrsP = NULL, *tmpIfAddrsP;
     struct IfDesc *IfDp;
 
     // Get the system interface list.
     if ((getifaddrs(&IfAddrsP)) == -1)
-        LOG(LOG_CRIT, eNOINIT, "Cannot enumerate interfaces.");
-    for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
+        LOG(STARTUP ? LOG_CRIT : LOG_ERR, eNOINIT, "Cannot enumerate interfaces.");
+    else for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
         unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
         if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
             || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
@@ -118,7 +118,7 @@ void buildIfVc(void) {
             continue;
         }
 
-        uint32_t       addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
+        uint32_t addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
         if (! IfDp) {
             // New interface, allocate and initialize.
             _malloc(IfDp, ifd, IFSZ);  // Freed by freeIfDescL()
@@ -159,7 +159,7 @@ void buildIfVc(void) {
 
         // Log the result...
         LOG(LOG_INFO, 0, "Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
-                          IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
+            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
     }
 
     free(IfAddrsP);   // Alloced by getiffaddrs()
@@ -196,30 +196,39 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
     }              total = { 0, 0, 0 };
 
     if (! IfDp && h) {
-        sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
+        sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum"
+                     "|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
     if (IfDp) {
         if (h)
             sprintf(buf, "Details for Interface: %s\n    IGMP Queries Received: %lu\n    IGMP Queries Sent:     %lu\n",
-                          IfDp->Name, IfDp->stats.rqCnt, IfDp->stats.sqCnt);
+                    IfDp->Name, IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         else
             sprintf(buf, "%lu,%lu\n", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
     } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
         if (h) {
-            total = (struct totals){ total.bytes + IfDp->stats.bytes, total.rate + IfDp->stats.rate, total.ratelimit + IfDp->conf->ratelimit };
+            total = (struct totals){ total.bytes + IfDp->stats.bytes, total.rate + IfDp->stats.rate,
+                                     total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
         } else {
             strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
         }
-        sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" : IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" : IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream", IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled", inetFmt(IfDp->querier.ip, 2), IfDp->stats.bytes, IfDp->stats.rate, !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
+        sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
+                inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" :
+                                                IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
+                                                IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
+                IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
+                inetFmt(IfDp->querier.ip, 2), IfDp->stats.bytes, IfDp->stats.rate,
+                !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     if (h) {
-        strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B | %10lld B/s | %10lld B/s\n");
+        strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B "
+                    "| %10lld B/s | %10lld B/s\n");
         sprintf(buf, msg, total.bytes, total.rate, total.ratelimit);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
@@ -234,7 +243,8 @@ void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
     int            i = 1;
 
     if (h) {
-        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp2 ? IfDp2->Name : "");
+        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__"
+                     "|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp2 ? IfDp2->Name : "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 

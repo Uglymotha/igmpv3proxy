@@ -34,7 +34,7 @@
 */
 
 /**
-*   querier.c: Process group and group and source specific queries.
+*   querier.c: Send and process group and group and source specific queries.
 */
 
 #include "igmpv3proxy.h"
@@ -48,7 +48,7 @@ static uint32_t     qC = 0;       // Querier count.
 */
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start != 0 && IfDp->conf->tbl != mrt_tbl)
-        LOG(LOG_CRIT, eABNRML, "Requested to %s querier on table %d interface %s.",
+        LOG(LOG_CRIT, -eABNRML, "Requested to %s querier on table %d interface %s.",
                               !start ? "stop" : start == 1 ? "start" : "restart", IfDp->conf->tbl, IfDp->Name);
     if (start == 0 || start == 2) {
         // Remove all queries, timers and reset all IGMP status for interface.
@@ -98,7 +98,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
 
         // Add to source to the query list. Allocate memory per 32 sources.
         LOG(LOG_DEBUG, 0, "addSrcToQlst: Adding source %s to query list for %s (%d).",
-                           inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), nsrcs + 1);
+            inetFmt(src->ip, 1), inetFmt(src->mct->group, 2), nsrcs + 1);
         if ((nsrcs % 32) == 0)
             _realloc(qlst, qry, QRYSZ(nsrcs), QRYSZ(nsrcs - 1));  // Freed by delQuery().
         if (nsrcs == 0)
@@ -111,7 +111,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         CLR_HASH(src->dHostsHT, srcHash);
         if (srcHash != (uint32_t)-1 && src->vifB.us && NO_HASH(src->dHostsHT)) {
             LOG(LOG_INFO, 0, "Last downstream host, quickleave source %s in group %s on %s.",
-                              inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
+                inetFmt(src->ip, 2), inetFmt(src->mct->group, 3), IfDp->Name);
             joinBlockSrc(src, NULL, false);
         }
     }
@@ -127,7 +127,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
     // If no group found for query, not active or denied on interface return.
     if (! mct || NOT_SET(mct, d, IfDp) || !checkFilters(IfDp, 1, NULL, mct)) {
         LOG(LOG_DEBUG, 0, "Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 1),
-                           ! mct ? "not found." : NOT_SET(mct, d, IfDp) ? "not active." : "denied.");
+            ! mct ? "not found." : NOT_SET(mct, d, IfDp) ? "not active." : "denied.");
     } else if (nsrcs == 0 && NOT_SET(mct, lm, IfDp)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "Group specific query for %s on %s.", inetFmt(mct->group, 1), IfDp->Name);
@@ -145,7 +145,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
             i++;
         }
         LOG(LOG_INFO, 0, "Group group and source specific query for %s with %d sources on %s.",
-                           inetFmt(mct->group, 1), nsrcs, IfDp->Name);
+            inetFmt(mct->group, 1), nsrcs, IfDp->Name);
         startQuery(IfDp, qlst);
     }
 }
@@ -172,7 +172,7 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
         qlst->mct->vifB.age[IfDp->index] = qlst->misc;
     } else
         LOG(LOG_INFO, 0, "#%d: Querying %d sources for %s on %s.",
-                          qC, qlst->nsrcs, inetFmt(qlst->mct->group, 1), IfDp->Name);
+            qC, qlst->nsrcs, inetFmt(qlst->mct->group, 1), IfDp->Name);
 
     // Allocate and assign new querier.
     if (qL) {
@@ -221,7 +221,7 @@ void groupSpecificQuery(struct qlst *qlst) {
                 if (!BIT_SET(qlst->src[i]->vifB.lm, qlst->IfDp->index) || NOT_SET(qlst->src[i], d, qlst->IfDp)) {
                     // Source no longer in last member state.
                     LOG(LOG_INFO, 0, "Source %s for group %s no longer in last member state on %s.",
-                                      inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
+                        inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
                     query2->igmp_src[query2->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
                 } else if (--qlst->src[i]->vifB.age[qlst->IfDp->index] == 0) {
                     // Source expired. Remove from query list.
@@ -230,12 +230,12 @@ void groupSpecificQuery(struct qlst *qlst) {
                     if (IS_IN(qlst->mct, qlst->IfDp)) {
                         // Aged source in include mode should be removed.
                         LOG(LOG_INFO, 0, "Removed inactive source %s from group %s on %s.",
-                                          inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
+                            inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
                         delSrc(qlst->src[i], qlst->IfDp, 0, (uint32_t)-1);
                     } else {
                         // In exclude mode sources should be kept and MFC updated, as traffic should no longer be forwarded.
                         LOG(LOG_INFO, 0, "Source %s from group %s on %s expired.",
-                                          inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
+                            inetFmt(qlst->src[i]->ip, 1), inetFmt(qlst->mct->group, 2), qlst->IfDp->Name);
                         if (qlst->src[i]->mfc)
                             activateRoute(qlst->src[i]->mfc->IfDp, qlst->src[i], qlst->src[i]->ip, qlst->src[i]->mct->group, true);
                     }
@@ -280,8 +280,7 @@ void groupSpecificQuery(struct qlst *qlst) {
                                               && toInclude(qlst->mct, qlst->IfDp)))) {
         // Group in exclude mode has aged, switch to include or inlcude mode group has no more sources.
         // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
-        LOG(LOG_DEBUG, 0, "Removing group %s from %s after querying.",
-                           inetFmt(qlst->mct->group, 1), qlst->IfDp->Name);
+        LOG(LOG_DEBUG, 0, "Removing group %s from %s after querying.", inetFmt(qlst->mct->group, 1), qlst->IfDp->Name);
         delGroup(qlst->mct, qlst->IfDp, NULL, 1);
     } else {
         LOG(LOG_INFO, 0, "Done querying %s/%d on %s.", inetFmt(qlst->mct->group, 1), nsrcs, qlst->IfDp->Name);
@@ -301,8 +300,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
     struct mcTable  *mct = qry ? ql->mct : _mct;
     struct src      *src = _src;
     LOG(LOG_INFO, 0, "Removing quer%s%s%s%s on %s.", qry || src ? "y" : "ies",
-                      mct || src ? " for " : "", src ? inetFmt(src->ip, 1) : "",
-                      mct ? inetFmt(mct->group, 2) : "", IfDp->Name);
+        mct || src ? " for " : "", src ? inetFmt(src->ip, 1) : "", mct ? inetFmt(mct->group, 2) : "", IfDp->Name);
     while (ql) {
         struct qlst *nql = qry ? NULL : ql->next;
         // Find all queriers for interface, group and type.
@@ -313,7 +311,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
                 for (i = 0; ql && i < ql->nsrcs && ql->src[i] != src; i++);
                 if (ql && i < ql->nsrcs) {
                     LOG(LOG_INFO, 0, "Existing query for source %s in group %s on %s.",
-                                        inetFmt(ql->src[i]->ip, 1), inetFmt(ql->mct->group, 2), ql->IfDp->Name);
+                        inetFmt(ql->src[i]->ip, 1), inetFmt(ql->mct->group, 2), ql->IfDp->Name);
                     ql->src[i] = ql->src[--ql->nsrcs];
                 }
             } else if (BIT_TST(ql->type, 1)) {
