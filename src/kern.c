@@ -71,15 +71,16 @@ int k_enableMRouter(void) {
         LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_HDRINCL Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_INIT Failed");
-    else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0) {
+    else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_IFINFO Failed");
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     else if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
              || ! (Va & MRT_MFC_BW_UPCALL)) {
         LOG(LOG_WARNING, 1, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
         CONF->bwControlInterval = 0;
+    }
 #endif
-    } else
+    else
         LOG(LOG_NOTICE, 0, "Opened IGMP socket.");
     fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
 
