@@ -376,7 +376,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 getMemStats(0, -1);                                                                        \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid realloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
 #define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                          \
-                                || (sp <= sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                 \
+                                || (sp > sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                  \
                                 || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                              \
                                 getMemStats(0,-1);                                                                          \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid rcealloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
