@@ -135,9 +135,9 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
     } else {
         // Set upstream status and join group if it is in exclude mode upstream.
         BIT_SET(mct->vifB.u, IfDp->index);
-        if (mct->mode && CONF->bwControlInterval && IfDp->conf->ratelimit > 0 && IfDp->stats.rate > IfDp->conf->ratelimit)
+        if (mct->mode && IfDp->conf->bwControl > 0 && IfDp->conf->ratelimit > 0 && IfDp->stats.iRate > IfDp->conf->ratelimit)
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
-                IfDp->Name, IfDp->stats.rate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
+                IfDp->Name, IfDp->stats.iRate, IfDp->conf->ratelimit, inetFmt(mct->group, 1));
         else if (!mct->mode || k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1)) {
             BIT_SET(mct->vifB.us, IfDp->index);
             LOG(LOG_INFO, 0, "Joined group %s upstream on interface %s.", inetFmt(mct->group, 1), IfDp->Name);
@@ -332,6 +332,8 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcH
                 activateRoute(src->mfc->IfDp, src, src->ip, mct->group, !(! IfDp || !mct->mode));
             if ((mode == 0 || mode == 3) && ! src->mfc) {
                 // Remove the source if there are no senders and it was not requested by include mode host.
+                if (IfDp && IS_SET(src, qry, IfDp))
+                    delQuery(IfDp, NULL, src->mct, src, 0);
                 mct->nsrcs--;
                 if (CONF->maxOrigins && (mct->nsrcs & 0x80000000) && (mct->nsrcs & ~0x80000000) < CONF->maxOrigins) {
                     // Reset maxorigins exceeded flag.
@@ -462,7 +464,7 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
 
         if (mfc) {
             mfc->bytes += bwUpc->bu_measured.b_bytes;
-            mfc->rate = bwUpc->bu_measured.b_bytes / CONF->bwControlInterval;
+            mfc->rate = bwUpc->bu_measured.b_bytes / CONF->bwControl;
             LOG(LOG_DEBUG, 0, "Added %lld bytes to Src %s Dst %s, total %lldB (%lld B/s)",
                 bwUpc->bu_measured.b_bytes, inetFmt(mfc->src->ip, 1), inetFmt(mct->group, 2), mfc->bytes, mfc->rate);
             GETIFL_IF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
@@ -479,60 +481,58 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
 /**
 *   Process all S,G counters and calculate interface rates.
 */
-void bwControl(uint64_t *tid) {
-    struct IfDesc   *IfDp = NULL;
-    struct mcTable  *mct;
+void bwControl(struct IfDesc *IfDp) {
+    struct ifMct    *imc;
     struct mfc      *mfc;
+    clock_gettime(CLOCK_REALTIME, &curtime);
 
-    // Reset all interface rate counters.
-    GETIFL(IfDp)
-        IfDp->stats.rate = 0;
+    // Reset interface rate.
+    IfDp->stats.iRate = IfDp->stats.oRate = 0;
 
-    // Go over all MCT.
-    GETMRT(mct) {
-        // Go over all sources.
-        for (mfc = mct->mfc; mfc; mfc = mfc->next) {
+    // Go over all upstream interface groups and sources and get the bandwith used.
+    for(imc = IfDp->uMct; imc && imc->mct; imc = imc->next) for (mfc = imc->mct->mfc; mfc; mfc = mfc->next) {
+        // On Linux get the S,G statistics via ioct. On BSD they are processed by processBwUpcall().
 #ifndef HAVE_STRUCT_BW_UPCALL_BU_SRC
-            // On Linux get the S,G statistics via ioct. On BSD they are processed by processBwUpcall().
-            struct sioc_sg_req siocReq = { {mfc->src->ip}, {mct->group}, 0, 0, 0 };
-            if (ioctl(MROUTERFD, SIOCGETSGCNT, (void *)&siocReq, sizeof(siocReq))) {
-                LOG(LOG_WARNING, 1, "BW_CONTROL: ioctl failed.");
-                continue;
-            }
-            uint64_t bytes = siocReq.bytecnt - mfc->bytes;
-            mfc->bytes += bytes;
-            mfc->rate = bytes / CONF->bwControlInterval;
-            LOG(LOG_DEBUG, 0, "Added %lld bytes to Src %s Dst %s (%lld B/s), total %lld.",
-                bytes, inetFmt(mfc->src->ip, 1), inetFmt(mct->group, 2), mfc->rate, mfc->bytes);
-#else
-            // On BSD systems go over all interfaces.
-            GETIFL_IF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
-                IfDp->stats.rate += mfc->rate;
-                LOG(LOG_DEBUG, 0, "Added %lld B/s to interface %s (%lld B/s), total %lld.",
-                    mfc->rate, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
-            }
-#endif
-        }
-    }
-
-    // On Linux get the interface stats via ioctl.
-#ifndef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    GETIFL_IF(IfDp, IfDp->index != (uint8_t)-1) {
-        struct sioc_vif_req siocVReq = { IfDp->index, 0, 0, 0, 0 };
-        if (ioctl(MROUTERFD, SIOCGETVIFCNT, (void *)&siocVReq, sizeof(siocVReq))) {
+        struct sioc_sg_req siocReq = { {mfc->src->ip}, {imc->mct->group}, 0, 0, 0 };
+        if (ioctl(MROUTERFD, SIOCGETSGCNT, (void *)&siocReq, sizeof(siocReq))) {
             LOG(LOG_WARNING, 1, "BW_CONTROL: ioctl failed.");
             continue;
         }
-        uint64_t bytes = (IS_UPSTREAM(IfDp->state) ? siocVReq.ibytes : siocVReq.obytes) - IfDp->stats.bytes;
-        IfDp->stats.bytes += bytes;
-        IfDp->stats.rate = bytes / CONF->bwControlInterval;
-        LOG(LOG_DEBUG, 0, "Added %lld bytes to interface %s (%lld B/s), total %lld.",
-            bytes, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
+        uint64_t bytes = siocReq.bytecnt - mfc->bytes;
+        mfc->bytes += bytes;
+        mfc->rate = bytes / IfDp->conf->bwControl;
+        LOG(LOG_DEBUG, 0, "Added %lld bytes to Src %s Dst %s (%lld B/s), total %lld.",
+            bytes, inetFmt(mfc->src->ip, 1), inetFmt(imc->mct->group, 2), mfc->rate, mfc->bytes);
+#else
+        // On FreeBSD systems the bw of the interface is the combined bw of all groups on that interface.
+        LOG(LOG_DEBUG, 0, "Added %lld B/s to interface %s (%lld B/s), total %lld.",
+            mfc->rate, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
+#endif
+    }
+
+#ifndef HAVE_STRUCT_BW_UPCALL_BU_SRC
+    // On Linux get the interface stats via ioctl.
+    struct sioc_vif_req siocVReq = { IfDp->index, 0, 0, 0, 0 };
+    if (ioctl(MROUTERFD, SIOCGETVIFCNT, (void *)&siocVReq, sizeof(siocVReq)))
+        LOG(LOG_WARNING, 1, "BW_CONTROL: ioctl failed.");
+    else for (int i = 0; i < 2; i++) {
+        uint64_t bytes = (i == 0 ? siocVReq.ibytes : siocVReq.obytes) - (i == 0 ? IfDp->stats.iBytes : IfDp->stats.oBytes);
+        if (i == 0) {
+            IfDp->stats.iBytes += bytes;
+            IfDp->stats.iRate = bytes / IfDp->conf->bwControl;
+        } else {
+            IfDp->stats.oBytes += bytes;
+            IfDp->stats.oRate = bytes / IfDp->conf->bwControl;
+        }
+        LOG(LOG_DEBUG, 0, "Added %lld bytes to %s interface %s (%lld B/s), total %lld.",
+            bytes, i== 0 ? "upstream" : "downstream", IfDp->Name, i == 0 ? IfDp->stats.iRate : IfDp->stats.oRate,
+            i == 0 ? IfDp->stats.iBytes : IfDp->stats.oBytes);
     }
 #endif
 
     // Set next timer;
-    *tid = timer_setTimer(CONF->bwControlInterval * 10, "Bandwidth Control", bwControl, tid);
+    sprintf(tName, "Bandwith Control: %s", IfDp->Name);
+    IfDp->bwTimer = timer_setTimer(IfDp->conf->bwControl * 10, tName, bwControl, IfDp);
 }
 
 /**
@@ -982,7 +982,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
             ttlVc[IfDp->index] = IfDp->conf->threshold;
         LOG(LOG_DEBUG, 0, "Setting TTL for Vif %s (%d) to %d", IfDp->Name, IfDp->index, ttlVc[IfDp->index]);
     }
-    k_addMRoute(src->ip, mct->group, src->mfc->IfDp->index, ttlVc);
+    k_addMRoute(src->ip, mct->group, src->mfc->IfDp, ttlVc);
 
     logRouteTable("Activate Route", 1, -1, group, (uint32_t)-1);
 }

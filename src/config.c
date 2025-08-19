@@ -52,18 +52,18 @@ static inline bool  parsePhyintToken(char *token);
 static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables"
                              " defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver"
                              " defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval"
-                             " defaultlastmemberinterval defaultlastmembercount bwcontrol rescanvif rescanconf loglevel logfile"
+                             " defaultlastmemberinterval defaultlastmembercount defaultbwcontrol rescanvif rescanconf loglevel"
                              " defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream"
                              " disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval"
                              " lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection"
                              " querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany"
                              " nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable"
-                             " defaultdisableipmrules defaultrouteunknownmc";
+                             " defaultdisableipmrules defaultrouteunknownmc logfile";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
                                " lastmembercount defaultfilter filter altnet whitelist disableipmrules routeunknownmc"
-                               " norouteunknownmc";
+                               " norouteunknownmc bwcontrol";
 
 // Daemon Configuration.
 static struct Config         conf, oldconf;
@@ -74,7 +74,7 @@ static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
-static struct timers timers = { 0, 0, 0 };
+static struct timers timers = { 0, 0 };
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -128,8 +128,7 @@ void freeConfig(bool old) {
         // On Shutdown stop any running timers.
         timer_clearTimer(timers.rescanConf);
         timer_clearTimer(timers.rescanVif);
-        timer_clearTimer(timers.bwControl);
-        timers = (struct timers){ 0, 0, 0 };
+        timers = (struct timers){ 0, 0 };
     }
     LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
@@ -211,7 +210,7 @@ static inline void initCommonConfig(void) {
     conf.robustnessValue = DEFAULT_ROBUSTNESS;
     conf.queryInterval = DEFAULT_INTERVAL_QUERY;
     conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
-    conf.bwControlInterval = 0;
+    conf.bwControl = 0;
 
     // Request queue size. This many request buffered requests will be handled before other work is done.
     conf.reqQsz = REQQSZ;
@@ -293,14 +292,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
             }
             if ((strcmp(" ratelimit", token) == 0 || strcmp(" r", token) == 0 || strcmp(" rl", token) == 0
                                                   || strcmp(" 2", token) == 0) && INTTOKEN) {
-                if (! conf.bwControlInterval || (fil.src.ip != 0 && fil.src.ip != 0xFFFFFFFF)) {
-                    LOG(LOG_NOTICE, 0, "Config (%s): %s Ignoring '%s - %s %lld.'", in, !conf.bwControlInterval ?
-                        "BW Control disabled." : "Ratelimit rules must have INADDR_ANY as source.",
-                         inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2), intToken);
-                    fil = filNew;
-                    continue;
-                } else
-                    fil.action = intToken >= 2 ? intToken : 2;
+                fil.action = intToken >= 2 ? intToken : 2;
             } else if (strcmp(" allow", token) == 0 || strcmp(" a", token) == 0 || strcmp(" 1", token) == 0)
                 fil.action = ALLOW;
             else if (strcmp(" block", token) == 0 || strcmp(" b", token) == 0 || strcmp(" 0", token) == 0)
@@ -509,6 +501,10 @@ static inline bool parsePhyintToken(char *token) {
         } else if (strcmp(" norouteunknownmc", token) == 0) {
             tmpPtr->routeUnknownMc = false;
             LOG(LOG_NOTICE, 0, "Config (%s): Will not add routes for unknown groups.", tmpPtr->name);
+
+        } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
+            tmpPtr->bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken);
+            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -851,9 +847,9 @@ bool loadConfig(char *cfgFile) {
             conf.routeUnknownMc = true;
             LOG(LOG_NOTICE, 0, "Config: Will add routes for unknown MC groups.");
 
-        } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
-            conf.bwControlInterval = intToken < 3 ? 3 : intToken;
-            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken);
+        } else if (strcmp(" defaultbwcontrol", token) == 0 && INTTOKEN) {
+            conf.bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken) ;
+            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
 
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
             conf.rescanVif = intToken > 0 ? intToken : 0;
@@ -941,23 +937,7 @@ bool loadConfig(char *cfgFile) {
         timer_clearTimer(timers.rescanConf);
         timers.rescanConf = 0;
     }
-    // Check bwcontrol status and start or clear timers if necessary..
-    if (oldconf.bwControlInterval != conf.bwControlInterval) {
-        timer_clearTimer(timers.bwControl);
-        timers.bwControl = 0;
-#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-        int Va, len = sizeof(Va);
-        if (!STARTUP && (getsockopt(MROUTERFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, (void *)&len) < 0
-                     || ! (Va & MRT_MFC_BW_UPCALL))) {
-            LOG(LOG_WARNING, 1, "Config: MRT_API_CONFIG Failed. Disabling bandwidth control.");
-            conf.bwControlInterval = 0;
-        } else if (!STARTUP)
-            clearGroups(CONF);
-#endif
-        if (conf.bwControlInterval)
-            timers.bwControl = timer_setTimer(conf.bwControlInterval * 10, "Bandwidth Control",
-                                              bwControl, &timers.bwControl);
-    }
+
     return !logwarning;
 }
 
@@ -1110,6 +1090,16 @@ void configureVifs(void) {
         else if (!STARTUP  && oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
         else if (IFREBUILD && oldstate == newstate && !IS_DISABLED(newstate))    {                       clearGroups(IfDp); }
         IfDp->filCh = false;
+
+        // Enable or disable bandwith control on interface if required.
+        if (!IFREBUILD && !IS_DISABLED(newstate) && CONF->bwControl != (uint32_t)-1
+            && IfDp->conf->bwControl > 0 && IfDp->bwTimer == 0) {
+            sprintf(tName, "Bandwith Control: %s", IfDp->Name);
+            IfDp->bwTimer = timer_setTimer(IfDp->conf->bwControl * 10, tName, bwControl, IfDp);
+        } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0) {
+            timer_clearTimer(IfDp->bwTimer);
+            IfDp->bwTimer = 0;
+        }
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {

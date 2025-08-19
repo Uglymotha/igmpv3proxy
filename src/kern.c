@@ -77,7 +77,7 @@ int k_enableMRouter(void) {
     else if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
              || ! (Va & MRT_MFC_BW_UPCALL)) {
         LOG(LOG_WARNING, 1, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
-        CONF->bwControlInterval = 0;
+        CONF->bwControl = (uint32_t)-1;
     }
 #endif
     else
@@ -177,7 +177,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
         IfDp->state &= ~0x03;
         return false;
     }
-    IfDp->stats.bytes = IfDp->stats.rate = 0;
+    IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
     IfDp->index = Ix;
     BIT_SET(vifBits, IfDp->index);
     LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
@@ -276,7 +276,7 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
 /**
 *   Adds a multicast MFT to the kernel.
 */
-void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) {
+void k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
@@ -285,7 +285,7 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
 #else
     struct mfcctl CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl));
-    CtlReq = (struct mfcctl){ {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+    CtlReq = (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
 #endif
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
@@ -293,11 +293,11 @@ void k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]) 
     LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d.", inetFmt(CtlReq.mfcc_origin.s_addr, 1),
         inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 2), (int)CtlReq.mfcc_parent);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
-        LOG(LOG_WARNING, 1, "MRT_ADD_MFC %d - %s failed.", vif, inetFmt(group, 1));
+        LOG(LOG_WARNING, 1, "MRT_ADD_MFC %d - %s failed.", IfDp->index, inetFmt(group, 1));
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    if (CONF->bwControlInterval) {
+    if (IfDp->conf->bwControl > 0) {
         struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ,
-                                   { {CONF->bwControlInterval, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
+                                   { {IfDp->conf->bwControl, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
         if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
             LOG(LOG_WARNING, 1, "MRT_ADD_BW_UPCALL %d - %s failed.", vif, inetFmt(group, 1));
     }

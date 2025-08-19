@@ -52,6 +52,7 @@ static struct timeOutQueue {
 }     *queue = NULL;
 #define TMSZ(n) (sizeof(struct timeOutQueue) + strlen(n) + 1)
 static uint64_t id = 1;
+char            tName[TMNAMESZ];
 
 /**
 *   Execute at most CONF->tmQsz expired timers, return time difference to next scheduled timer.
@@ -113,6 +114,8 @@ void *timer_clearTimer(uint64_t tid) {
     struct timeOutQueue *node, *pnode;
     uint64_t i;
 
+    if (tid == 0)
+        return NULL;
     // Find the timer and remove it if found.
     for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
     if (node) {

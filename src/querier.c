@@ -40,7 +40,6 @@
 #include "igmpv3proxy.h"
 #include "mctable.h"
 
-static struct qlst *qL = NULL;    // List of running GSQ
 static uint32_t     qC = 0;       // Querier count.
 
 /**
@@ -49,7 +48,7 @@ static uint32_t     qC = 0;       // Querier count.
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start != 0 && IfDp->conf->tbl != mrt_tbl)
         LOG(LOG_CRIT, -eABNRML, "Requested to %s querier on table %d interface %s.",
-                              !start ? "stop" : start == 1 ? "start" : "restart", IfDp->conf->tbl, IfDp->Name);
+            !start ? "stop" : start == 1 ? "start" : "restart", IfDp->conf->tbl, IfDp->Name);
     if (start == 0 || start == 2) {
         // Remove all queries, timers and reset all IGMP status for interface.
         LOG(LOG_NOTICE, 0, "Stopping querier process on %s", IfDp->Name);
@@ -94,7 +93,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
     if (NOT_SET(src, lm, IfDp) && (nsrcs == 0 || qlst->src[qlst->nsrcs - 1]->ip != src->ip)) {
         // In case source is in running query, remove it there and add to current list.
         if (IS_SET(src, qry, IfDp))
-            delQuery(IfDp, NULL, NULL, src, 0);
+            delQuery(IfDp, NULL, src->mct, src, 0);
 
         // Add to source to the query list. Allocate memory per 32 sources.
         LOG(LOG_DEBUG, 0, "addSrcToQlst: Adding source %s to query list for %s (%d).",
@@ -154,6 +153,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
 *   Start a query or last member aging on interface.
 */
 inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
+    struct qlst * iqlst = IfDp->qLst;
     // We may be called without qlst, in case of gssq which had no valid sources to query.
     if (! qlst)
         return;
@@ -172,14 +172,14 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
         qlst->mct->vifB.age[IfDp->index] = qlst->misc;
     } else
         LOG(LOG_INFO, 0, "#%d: Querying %d sources for %s on %s.",
-            qC, qlst->nsrcs, inetFmt(qlst->mct->group, 1), IfDp->Name);
+            qC + 1, qlst->nsrcs, inetFmt(qlst->mct->group, 1), IfDp->Name);
 
     // Allocate and assign new querier.
-    if (qL) {
-        qlst->next = qL;
-        qL->prev = qlst;
+    if (IfDp->qLst) {
+        qlst->next = IfDp->qLst;
+        iqlst->prev = qlst;
     }
-    qL = qlst;
+    IfDp->qLst = qlst;
     qC++;
 
     if (!IQUERY)
@@ -287,8 +287,10 @@ void groupSpecificQuery(struct qlst *qlst) {
         delQuery(qlst->IfDp, qlst, NULL, NULL, 0);
     }
 
-    _free(query1, var, size);  // Alloced by self.
-    _free(query2, var, size);  // Alloced by self.
+    if (query1)
+        _free(query1, var, size);  // Alloced by self.
+    if (query2)
+        _free(query2, var, size);  // Alloced by self.
     logRouteTable("GSQ", 1, -1, group, (uint32_t)-1);
 }
 
@@ -296,15 +298,14 @@ void groupSpecificQuery(struct qlst *qlst) {
 *   Removes all active queriers specified by parameters.
 */
 void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t type) {
-    struct qlst     *ql  = qry ? qry : qL;
+    struct qlst     *ql  = qry ? qry : IfDp->qLst;
     struct mcTable  *mct = qry ? ql->mct : _mct;
     struct src      *src = _src;
     LOG(LOG_INFO, 0, "Removing quer%s%s%s%s on %s.", qry || src ? "y" : "ies",
         mct || src ? " for " : "", src ? inetFmt(src->ip, 1) : "", mct ? inetFmt(mct->group, 2) : "", IfDp->Name);
     while (ql) {
-        struct qlst *nql = qry ? NULL : ql->next;
         // Find all queriers for interface, group and type.
-        if (ql->IfDp == IfDp && ((! mct || ql->mct == mct) && (!type || !((ql->type - type) & ~0x9)))) {
+        if ((! mct || ql->mct == mct) && (!type || !((ql->type - type) & ~0x9))) {
             if (src) {
                 // Find and remove source from all queries.
                 uint32_t i;
@@ -330,12 +331,12 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src, uint8_t ty
                     ql->next->prev = ql->prev;
                 if (ql->prev)
                     ql->prev->next = ql->next;
-                if (qL == ql)
-                    qL = ql->next;
+                if (IfDp->qLst == ql)
+                    IfDp->qLst = ql->next;
                 qC--;
                 _free(ql, qry, ql->nsrcs ? QRYSZ(ql->nsrcs) : QLSZ);  // Alloced by addSrcToQlst() or startQuery()
             }
         }
-        ql = nql;
+        ql = qry || (mct && ql->mct == mct) ? NULL : ql->next;
     }
 }

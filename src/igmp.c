@@ -52,7 +52,6 @@ uint32_t    alligmp3_group;            // IGMPv3 addr in net order
 // Buffers for sending and receiving IGMP packets.
 extern char *rcv_buf;           // Input packet buffer (from igmpv3proxy.c)
 static char *snd_buf = NULL;    // Output Packet buffer
-static char  msg[TMNAMESZ];
 
 /**
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
@@ -126,13 +125,11 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
             inetFmt(group,1), IfDp->Name, inetFmt(src, 2));
     else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_DEBUG, 0, "The request from %s on %s is from myself. Ignoring.", inetFmt(src, 1), IfDp->Name);
-    else if ((IfDp->state & ifstate) == 0 || IfDp->conf->tbl != mrt_tbl) {
-        strcat(strcpy(msg, ""), IS_UPSTREAM(IfDp->state)   ? "upstream interface "
-                              : IS_DOWNSTREAM(IfDp->state) ? "downstream interface " : "disabled interface ");
+    else if ((IfDp->state & ifstate) == 0 || IfDp->conf->tbl != mrt_tbl)
         LOG(LOG_INFO, 0, "Message for %s from %s was received on %s interface %s. Ignoring.",
             inetFmt(group, 1), inetFmt(src, 2), IS_UPSTREAM(IfDp->state) ? "upstream" : IS_DOWNSTREAM(IfDp->state) ? "downstream" :
             "disabled", IfDp->Name);
-    } else
+    else
         return true;
 
     return false;
@@ -175,7 +172,7 @@ void acceptIgmp(int fd) {
             return;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         case IGMPMSG_BW_UPCALL:
-            if (CONF->bwControlInterval)
+            if (IfDp->conf->bwControl > 0)
                 processBwUpcall((struct bw_upcall *)(rcv_buf + sizeof(struct igmpmsg)),
                                ((recvlen - sizeof(struct igmpmsg)) / sizeof(struct bw_upcall)));
             return;
@@ -352,7 +349,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             // For downstream interface and general query set the age timer.
             if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
                 timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10) + 1;
-                IfDp->querier.ageTimer = timer_setTimer(timeout, strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name),
+                IfDp->querier.ageTimer = timer_setTimer(timeout, strcat(strcpy(tName, "Age Active Groups: "), IfDp->Name),
                                                         ageGroups, IfDp);
             }
             // Determine timeout for other querier, in case of gsq, use configured values.
@@ -367,8 +364,8 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
             else
                 timeout = (100 * IfDp->conf->qry.robustness) + 5;
             // Set timeout for other querier.
-            sprintf(msg, "%sv%1d Querier: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
-            IfDp->querier.Timer = timer_setTimer(timeout, strcat(msg, IfDp->Name), expireQuerierTimer, IfDp);
+            sprintf(tName, "%sv%1d Querier: ", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver);
+            IfDp->querier.Timer = timer_setTimer(timeout, strcat(tName, IfDp->Name), expireQuerierTimer, IfDp);
 
             LOG(LOG_NOTICE, 0, "%sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
                 IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, inetFmt(src, 1),
@@ -404,11 +401,11 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
         else
             timeout = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi;
         IfDp->querier.Timer = timer_setTimer((timeout * 10) + ((uint8_t)IfDp->Name[0] % 4),
-                                             strcat(strcpy(msg, "General Query: "), IfDp->Name),
+                                             strcat(strcpy(tName, "General Query: "), IfDp->Name),
                                              sendGeneralMemberQuery, IfDp);
         // Set timer for route aging.
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
-        IfDp->querier.ageTimer = timer_setTimer(timeout, strcat(strcpy(msg, "Age Active Groups: "), IfDp->Name), ageGroups, IfDp);
+        IfDp->querier.ageTimer = timer_setTimer(timeout, strcat(strcpy(tName, "Age Active Groups: "), IfDp->Name), ageGroups, IfDp);
         LOG(LOG_INFO, 0, "From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 1),
             inetFmt(allhosts_group, 2), IfDp->Name, IfDp->conf->qry.responseInterval);
     }

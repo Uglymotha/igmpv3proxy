@@ -211,7 +211,8 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
         return;
     } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
         if (h) {
-            total = (struct totals){ total.bytes + IfDp->stats.bytes, total.rate + IfDp->stats.rate,
+            total = (struct totals){ total.bytes + IfDp->stats.iBytes + IfDp->stats.oBytes,
+                                     total.rate + IfDp->stats.iRate + IfDp->stats.oRate,
                                      total.ratelimit + IfDp->conf->ratelimit };
             strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
         } else {
@@ -222,7 +223,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
                                                 IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
                                                 IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
                 IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
-                inetFmt(IfDp->querier.ip, 2), IfDp->stats.bytes, IfDp->stats.rate,
+                inetFmt(IfDp->querier.ip, 2), IfDp->stats.iBytes + IfDp->stats.oBytes, IfDp->stats.iRate + IfDp->stats.oRate,
                 !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }

@@ -98,7 +98,6 @@ struct Config {
     uint8_t             robustnessValue;
     uint8_t             queryInterval;
     uint8_t             queryResponseInterval;
-    uint32_t            bwControlInterval;
     // Last member probe.
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
@@ -128,6 +127,8 @@ struct Config {
     uint32_t            rescanVif;
     // Set if nneed to detect config change.
     uint32_t            rescanConf;
+    // Default BW Control interval.
+    uint32_t            bwControl;
     // Set if need to proxy IANA local multicast range 224.0.0.0/8.
     bool                proxyLocalMc;
     // Set if must not participate in IGMP querier election.
@@ -160,7 +161,6 @@ struct chld {
 struct timers {
     uint64_t rescanConf;
     uint64_t rescanVif;
-    uint64_t bwControl;
 };
 
 // Linked list of filters.
@@ -198,11 +198,12 @@ struct queryParam {
 // Structure to keep configuration for VIFs.
 struct vifConfig {
     char                name[IF_NAMESIZE];
-    int                 tbl;                            // Mroute Table for Interface.
+    int                 tbl;                            // Mroute Table for Interface
     uint8_t             state;                          // Configured interface state
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
+    uint32_t            bwControl;                      // BW Control interval
     bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
@@ -214,12 +215,12 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold,             \
-                                            conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection,        \
-                                            conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval,                 \
-                                            conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.disableIpMrules, \
-                                            false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, conf.routeUnknownMc,     \
-                                            NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold,          \
+                                            conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection,     \
+                                            conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval,              \
+                                            conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.bwControl,    \
+                                            conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, \
+                                            conf.routeUnknownMc, NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -242,8 +243,8 @@ struct querier {                                        // igmp querier status f
 
 // Interfaces configuration.
 struct ifStats {
-    uint64_t                      bytes;                 // Total bytes sent/received on interface
-    uint64_t                      rate;                  // Rate in bytes / s
+    uint64_t                      iBytes, oBytes;        // Total bytes sent/received on interface
+    uint64_t                      iRate,  oRate;         // Rate in bytes / s
     uint64_t                      rqCnt;                 // IGMP Received Query Count
     uint64_t                      sqCnt;                 // IGMP Sent Query Count
 };
@@ -259,13 +260,15 @@ struct IfDesc {
     struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
+    uint64_t                      bwTimer;               // BW Control timerd id
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
+    void                         *qLst;                  // List of active queries on interface
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
-                                        {0, 0, 0, 0}, 0, (uint8_t)-1, NULL, NULL, IfDescL }
+                                        {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -379,7 +382,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 || (sp > sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                  \
                                 || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                              \
                                 getMemStats(0,-1);                                                                          \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid rcealloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+                                LOG(LOG_CRIT, SIGABRT, "Invalid recalloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
 #define _free(p, m, s)     {if ((p) && ((errno = 0) || s <= 0 || (memuse.m -=s) < 0 || (++memfree.m) <= 0)) {                 \
                                 getMemStats(0, -1);                                                                           \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid free() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }     \
@@ -485,6 +488,7 @@ extern uint32_t         allhosts_group;                // All hosts addr in net 
 extern uint32_t         allrouters_group;              // All hosts addr in net order
 extern uint32_t         alligmp3_group;                // IGMPv3 addr in net order
 
+
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
@@ -585,14 +589,14 @@ int     k_enableMRouter(void);
 int     k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
-void    k_addMRoute(uint32_t src, uint32_t group, int vif, uint8_t ttlVc[MAXVIFS]);
+void    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
 void    k_delMRoute(uint32_t src, uint32_t group, int vif);
 void    k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
 *   mctable.c
 */
-void     bwControl(uint64_t *tid);
+void     bwControl(struct IfDesc *IfDp);
 void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
@@ -614,6 +618,7 @@ void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8
 *   timers.c
 */
 #define         TMNAMESZ 48
+extern char     tName[TMNAMESZ];               // Timer name buffer.
 #define         DEBUGQUEUE(...) if (CONF->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
 struct timespec timer_ageQueue(void);
 uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
