@@ -58,12 +58,11 @@ static const char *options = " include phyint user group chroot defaultquickleav
                              " lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection"
                              " querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany"
                              " nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable"
-                             " defaultdisableipmrules defaultrouteunknownmc logfile";
+                             " defaultdisableipmrules logfile";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
-                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules routeunknownmc"
-                               " norouteunknownmc bwcontrol";
+                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol";
 
 // Daemon Configuration.
 static struct Config         conf, oldconf;
@@ -74,7 +73,7 @@ static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
 uint32_t                   uVifs;
 
 // Keeps timer ids for configurable timed functions.
-static struct timers timers = { 0, 0 };
+static struct timers timers = { (intptr_t)NULL, (intptr_t)NULL };
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -126,9 +125,8 @@ void freeConfig(bool old) {
     }
     if (SHUTDOWN) {
         // On Shutdown stop any running timers.
-        timer_clearTimer(timers.rescanConf);
-        timer_clearTimer(timers.rescanVif);
-        timers = (struct timers){ 0, 0 };
+        timers.rescanConf = timerClear(timers.rescanConf);
+        timers.rescanVif = timerClear(timers.rescanVif);
     }
     LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
@@ -248,9 +246,6 @@ static inline void initCommonConfig(void) {
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
 
-    // Do not add routes for unknown groups by default.
-    conf.routeUnknownMc = false;
-
     // Default no timed rebuild interfaces / reload config.
     conf.rescanVif  = 0;
     conf.rescanConf = 0;
@@ -309,11 +304,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
         } else if ((strcmp(" whitelist", list) == 0 || (strcmp(" filter", list) == 0 && fil.src.ip != 0xFFFFFFFF))
                    && !IN_MULTICAST(ntohl(addr))) {
             // Check if valid MC group for whitelist are filter dst.
-            LOG(LOG_WARNING, 0, "Config (%s): '%s' is not a valid multicast address.", in, inetFmt(addr, 1));
-            fil = filErr;
-        } else if ((addr | mask) != mask) {
-            // Check if valid sn/mask pair.
-            LOG(LOG_WARNING, 0, "Config (%s): '%s' is not valid subnet/mask pair.", in, inetFmts(addr, mask, 1));
+            LOG(LOG_WARNING, 0, "Config (%s): '%s' is not a valid multicast address.", in, inetFmt(addr, 0));
             fil = filErr;
         } else if (strcmp(" altnet", list) == 0) {
             // altnet is not usefull or compatible with igmpv3, ignore.
@@ -325,7 +316,7 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
                 fil.src.ip   = addr;
                 fil.src.mask = mask;
             } else {
-                LOG(LOG_WARNING, 0, "Config (%s): Source address '%s' cannot be multicast.", in, inetFmts(addr, mask, 1));
+                LOG(LOG_WARNING, 0, "Config (%s): Source address '%s' cannot be multicast.", in, inetFmt(addr, mask));
                 fil = filErr;
             }
         } else if (fil.dst.ip == 0xFFFFFFFF) {
@@ -340,8 +331,8 @@ static inline void parseFilters(char *in, char *token, struct filters ***filP, s
         } else if (   (fil.src.ip != 0xFFFFFFFF || (fil.src.ip == 0xFFFFFFFF && fil.action > ALLOW))
                    &&  fil.dst.ip != 0xFFFFFFFF && ! (fil.action == (uint64_t)-1)) {
             // Correct filter, add and reset fil to process next entry.
-            LOG(LOG_NOTICE, 0, "Config (%s): Adding filter Src: %15s, Dst: %15s, Dir: %6s, Action: %5s.", in,
-                inetFmts(fil.src.ip, fil.src.mask, 1), inetFmts(fil.dst.ip, fil.dst.mask, 2),
+            LOG(LOG_NOTICE, 0, "Config (%s): Adding filter Src: %s, Dst: %s, Dir: %s, Action: %s.", in,
+                inetFmt(fil.src.ip, fil.src.mask), inetFmt(fil.dst.ip, fil.dst.mask),
                 fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
@@ -468,7 +459,7 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
             tmpPtr->qry.ip = inet_addr(token + 1);
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 1));
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 0));
 
         } else if (strcmp(" querierver", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 3)
@@ -493,14 +484,6 @@ static inline bool parsePhyintToken(char *token) {
         } else if (strcmp(" cksumverify", token) == 0) {
             tmpPtr->cksumVerify = true;
             LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpPtr->name);
-
-        } else if (strcmp(" routeunknownmc", token) == 0) {
-            tmpPtr->routeUnknownMc = true;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will add routes for unknown groups.", tmpPtr->name);
-
-        } else if (strcmp(" norouteunknownmc", token) == 0) {
-            tmpPtr->routeUnknownMc = false;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will not add routes for unknown groups.", tmpPtr->name);
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
             tmpPtr->bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken);
@@ -791,7 +774,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" defaultquerierip", token) == 0 && nextToken(token)) {
             conf.querierIp = inet_addr(token + 1);
-            LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(conf.querierIp, 1));
+            LOG(LOG_NOTICE, 0, "Config: Setting default querier ip address to %s.", inetFmt(conf.querierIp, 0));
 
         } else if (strcmp(" defaultquerierver", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 3)
@@ -842,10 +825,6 @@ bool loadConfig(char *cfgFile) {
                 conf.lastMemberQueryCount = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default last member query count to %d.", intToken);
             }
-
-        } else if (strcmp(" defaultrouteunknownmc", token) == 0) {
-            conf.routeUnknownMc = true;
-            LOG(LOG_NOTICE, 0, "Config: Will add routes for unknown MC groups.");
 
         } else if (strcmp(" defaultbwcontrol", token) == 0 && INTTOKEN) {
             conf.bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken) ;
@@ -924,19 +903,16 @@ bool loadConfig(char *cfgFile) {
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
     // Check rescanvif status and start or clear timers if necessary.
-    if (conf.rescanVif && timers.rescanVif == 0) {
-        timers.rescanVif = timer_setTimer(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
-    } else if (!conf.rescanVif && timers.rescanVif != 0) {
-        timer_clearTimer(timers.rescanVif);
-        timers.rescanVif = 0;
-    }
+    if (conf.rescanVif && timers.rescanVif == (intptr_t)NULL)
+        timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
+    else if (!conf.rescanVif && timers.rescanVif != (intptr_t)NULL)
+        timers.rescanVif = timerClear(timers.rescanVif);
+
     // Check rescanconf status and start or clear timers if necessary.
-    if (conf.rescanConf && timers.rescanConf == 0) {
-        timers.rescanConf = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
-    } else if (!conf.rescanConf && timers.rescanConf != 0) {
-        timer_clearTimer(timers.rescanConf);
-        timers.rescanConf = 0;
-    }
+    if (conf.rescanConf && timers.rescanConf == (intptr_t)NULL)
+        timers.rescanConf = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
+    else if (!conf.rescanConf && timers.rescanConf != (intptr_t)NULL)
+        timers.rescanConf = timerClear(timers.rescanConf);
 
     return !logwarning;
 }
@@ -944,7 +920,7 @@ bool loadConfig(char *cfgFile) {
 /**
  *   Reloads the configuration file and removes interfaces which were removed from config.
  */
-void reloadConfig(uint64_t *tid) {
+void reloadConfig(intptr_t *tid) {
     // Check and set sigstatus if we are doing a reload confi timer..
     ovifConf        = vifConf;
     vifConf         = NULL;
@@ -968,7 +944,7 @@ void reloadConfig(uint64_t *tid) {
         LOG(LOG_NOTICE, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
     if (conf.rescanConf && tid) {
-        *tid = timer_setTimer(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
+        *tid = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
         sigstatus &= ~GOT_SIGUSR1;
     }
     getMemStats(0, -1);
@@ -1094,12 +1070,10 @@ void configureVifs(void) {
         // Enable or disable bandwith control on interface if required.
         if (!IFREBUILD && !IS_DISABLED(newstate) && CONF->bwControl != (uint32_t)-1
             && IfDp->conf->bwControl > 0 && IfDp->bwTimer == 0) {
-            sprintf(tName, "Bandwith Control: %s", IfDp->Name);
-            IfDp->bwTimer = timer_setTimer(IfDp->conf->bwControl * 10, tName, bwControl, IfDp);
-        } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0) {
-            timer_clearTimer(IfDp->bwTimer);
-            IfDp->bwTimer = 0;
-        }
+            sprintf(strBuf, "Bandwith Control: %s", IfDp->Name);
+            IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strBuf, bwControl, IfDp);
+        } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0)
+            IfDp->bwTimer = timerClear(IfDp->bwTimer);
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {

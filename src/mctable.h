@@ -47,7 +47,7 @@ struct vifFlags {
     uint32_t            d;                        // Active downstream vifs
     uint32_t            dd;                       // Denied dowstream vifs
     uint32_t            su;                       // Filters set flag for upstream
-    uint32_t            u;                        // Active upstream vifs
+    uint32_t            u;                        // Active upstream vifs (not used for sources)
     uint32_t            ud;                       // Denied upstream vifs
     uint32_t            us;                       // Upstream membership state
     uint32_t            lm;                       // Last member vifs
@@ -137,18 +137,16 @@ struct qlst {
                               for (uint16_t iz = 0; iz < CONF->mcTables; iz++)       \
                                    for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
 
-// Static variables.
-static char              msg[TMNAMESZ] = "";      // Timer name buffer
-
 // Prototypes
 struct mcTable *findGroup(register uint32_t group, bool create);
 struct ifMct   *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
 struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash);
-void            joinBlockSrc(struct src *src, struct IfDesc *If, bool join);
+void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join);
 bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
 struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
 bool            toInclude(struct mcTable *mct, struct IfDesc *IfDp);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 void            groupSpecificQuery(struct qlst *qlst);
+void            delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src);
 
 #endif // MCTABLE_H_INCLUDED

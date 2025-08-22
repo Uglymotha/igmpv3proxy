@@ -62,37 +62,31 @@ char Usage[] =
 "\n"
 PACKAGE_STRING "\n";
 
-// buffers to hold the string representations of IP addresses, to be passed to inet_fmt() or inet_fmts().
-static char s[4][19];
+// Buffers for representations of IP addresses / IGMP / GREC types, to be passed to inetFmt(), grecKind() and igmpPacketKind().
+static char    s[8][20];
+static uint8_t pos = 0;
 
 /**
-*   Convert an IP address in u_long (network) format into a printable string.
+*   Convert an IP subnet number in network format into a printable string including the netmask as a number of bits.
 */
-const char *inetFmt(uint32_t addr, int pos) {
-    uint8_t *a = (uint8_t *)&addr;
-    sprintf(s[pos - 1], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
-    return s[pos - 1];
-}
-
-/**
-*   Convert an IP subnet number in u_long (network) format into a printable string including the netmask as a number of bits.
-*/
-const char *inetFmts(uint32_t addr, uint32_t mask, int pos) {
+const char *inetFmt(uint32_t addr, uint32_t mask) {
     uint8_t *a    = (uint8_t *)&addr;
     int      bits = 33 - ffs(ntohl(mask));
-
-    if ((addr == 0) && (mask == 0))
-        sprintf(s[pos - 1], "0/0");
+    pos = pos%8;
+    if (addr == 0 && mask == 0)
+        sprintf(s[pos], "0/0");
+    else if (mask == 0)
+        sprintf(s[pos], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
     else if (((uint8_t *)&mask)[3] != 0)
-        sprintf(s[pos - 1], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
+        sprintf(s[pos], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
     else if (((uint8_t *)&mask)[2] != 0)
-        sprintf(s[pos - 1], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
+        sprintf(s[pos], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
     else if (((uint8_t *)&mask)[1] != 0)
-        sprintf(s[pos - 1], "%u.%u/%d",       a[0], a[1], bits);
+        sprintf(s[pos], "%u.%u/%d",       a[0], a[1], bits);
     else
-        sprintf(s[pos - 1], "%u/%d",          a[0], bits);
+        sprintf(s[pos], "%u/%d",          a[0], bits);
 
-    return s[pos - 1];
+    return s[pos++];
 }
 
 /**
@@ -145,15 +139,15 @@ bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask) 
     tmpStr = strtok(NULL, "/");
     if (tmpStr) {
         bitcnt = atoi(tmpStr);
-        if (bitcnt < 0 || bitcnt > 32) {
+        if (bitcnt < 0 || bitcnt > 32)
             *addr = (uint32_t)-1;
-            return false;
-        }
     } else
         bitcnt = 32;
     *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
+    if ((*addr | *mask) != *mask)
+        *addr = (uint32_t)-1;
 
-    return true;
+    return (*addr != (uint32_t)-1);
 }
 
 /**
@@ -204,32 +198,29 @@ uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
 *   Finds the textual name of the supplied IGMP request.
 */
 const char *igmpPacketKind(unsigned int type, unsigned int code) {
-    switch (type) {
-    case IGMP_MEMBERSHIP_QUERY:      return "Membership query  ";
-    case IGMP_V1_MEMBERSHIP_REPORT:  return "V1 member report  ";
-    case IGMP_V2_MEMBERSHIP_REPORT:  return "V2 member report  ";
-    case IGMP_V3_MEMBERSHIP_REPORT:  return "V3 member report  ";
-    case IGMP_V2_LEAVE_GROUP:        return "Leave message     ";
-    }
-
-    static char unknown[20];
-    sprintf(unknown, "unk: 0x%02x/0x%02x    ", type, code);
-    return unknown;
+    pos = pos%8;
+    sprintf(s[pos], type == IGMP_MEMBERSHIP_QUERY     ? "Membership query" :
+                    type == IGMP_V1_MEMBERSHIP_REPORT ? "V1 join" :
+                    type == IGMP_V2_MEMBERSHIP_REPORT ? "V2 join" :
+                    type == IGMP_V2_LEAVE_GROUP       ? "V2 leave" :
+                    type == IGMP_V3_MEMBERSHIP_REPORT ? "V3 group report" :
+                                                        "Unkown: 0x%02x/0x%02x", type, code);
+    return s[pos++];
 }
 
 /**
 *   Returns the IGMP group record type in string.
 */
 const char *grecKind(unsigned int type) {
-    switch (type) {
-    case IGMPV3_MODE_IS_INCLUDE:    return "IS_IN";
-    case IGMPV3_MODE_IS_EXCLUDE:    return "IS_EX";
-    case IGMPV3_CHANGE_TO_INCLUDE:  return "TO_IN";
-    case IGMPV3_CHANGE_TO_EXCLUDE:  return "TO_EX";
-    case IGMPV3_ALLOW_NEW_SOURCES:  return "ALLOW";
-    case IGMPV3_BLOCK_OLD_SOURCES:  return "BLOCK";
-    }
-    return "???";
+    pos = pos%8;
+    sprintf(s[pos], type == IGMPV3_MODE_IS_INCLUDE   ? "IS_IN" :
+                    type == IGMPV3_MODE_IS_EXCLUDE   ? "IS_EX" :
+                    type == IGMPV3_CHANGE_TO_INCLUDE ? "TO_IN" :
+                    type == IGMPV3_CHANGE_TO_EXCLUDE ? "TO_EX" :
+                    type == IGMPV3_ALLOW_NEW_SOURCES ? "ALLOW" :
+                    type == IGMPV3_BLOCK_OLD_SOURCES ? "BLOCK" :
+                                                       "???");
+    return s[pos++];
 }
 
 /**
@@ -303,7 +294,7 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     if (Severity <= LOG_CRIT && !SHUTDOWN) {
         BLOCKSIGS;
         sigstatus = GOT_SIGTERM;
-        IF_FOR_IF(mrt_tbl < 0 && chld.nr, Ln = 0; Ln < chld.nr; Ln++, chld.c[Ln].pid > 0) {
+        IF_FOR_IF(mrt_tbl < 0 && chld.nr, (Ln = 0; Ln < chld.nr; Ln++), chld.c[Ln].pid > 0) {
             LOG(LOG_NOTICE, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
             kill(chld.c[Ln].pid, SIGINT);
         }
@@ -328,7 +319,7 @@ void ipRules(int tbl, bool activate) {
     LOG(LOG_NOTICE, 0, "%s mrules for table %d.", activate ? "Adding" : "Removing", tbl);
     GETIFL_IF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
         LOG(LOG_INFO, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
-        FOR_IF(int i = 0; i < 2; i++, igmpProxyFork(-2) == 0) {
+        FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(-2) == 0) {
             execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
             LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
             exit(ENOEXEC);

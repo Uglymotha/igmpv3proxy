@@ -63,7 +63,7 @@ struct chld           chld = { 0 };
 *   pointer to the arguments are received on the line...
 */
 int main(int ArgCn, char *ArgVc[]) {
-    int          c = 0, i = 0, j = 0, tbl = -1;
+    int          c = 0, i = 0, j = 0, h = 0, tbl = -1;
     char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "", *path;
     struct stat  st;
     fileName = basename(ArgVc[0]);
@@ -101,7 +101,6 @@ int main(int ArgCn, char *ArgVc[]) {
         case 'c':
             c = getopt(ArgCn, ArgVc, "cbr::i::mf::thp");
             while (c != -1 && c != '?') {
-                uint32_t addr, mask, h = 0;
                 memset(cmd, 0, sizeof(cmd));
                 cmd[0] = c;
                 if (c != 'r' && c != 'i' && c!= 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp")) == 'h')
@@ -114,19 +113,8 @@ int main(int ArgCn, char *ArgVc[]) {
                         optarg++;
                         h = 'h';
                     }
-                    if (strlen(optarg) > 0) {
-                        if (c == 'r' && !parseSubnetAddress(optarg, &addr, &mask)) {
-                            i = optind, j = optind = 1;
-                            if (! (opts[1] = malloc(strlen(optarg) + 2))) {  // Freed by Self
-                                fprintf(stderr, "Out of Memory!");
-                                exit(-1);
-                            }
-                            sprintf(opts[1], "-%s", optarg);
-                        } else if (c == 'r' && !IN_MULTICAST(ntohl(addr))) {
-                            fprintf(stderr, "Ignoring %s, not a valid multicast subnet/mask pair.\n", optarg);
-                        } else
-                            strcat(strcat(cmd, " "), optarg);
-                    }
+                    if (strlen(optarg) > 0)
+                        strncat(strcat(cmd, " "), optarg, IF_NAMESIZE);
                 }
                 cliCmd(cmd, tbl);
                 c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp") : h;
@@ -356,7 +344,7 @@ static void igmpProxyMonitor(void) {
     int             pid, status, i;
 
     LOG(LOG_WARNING, 0, "Monitoring %d proxy processes.", chld.nr);
-    FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].tbl > 0 && !CONF->disableIpMrules)
+    FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].tbl > 0 && !CONF->disableIpMrules)
         ipRules(chld.c[i].tbl, true);
 
     sigstatus = 0;
@@ -365,7 +353,8 @@ static void igmpProxyMonitor(void) {
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
                 sigstatus   =  GOT_SIGCHLD;
-                while (chld.nr && (pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF(i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
+                while (chld.nr && (pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF((i = 0; i < chld.nr; i++),
+                       chld.c[i].pid == pid) {
                     chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
                     LOG(WIFEXITED(status) ? LOG_INFO : chld.c[i].tbl >= 0 ? LOG_WARNING : LOG_NOTICE, 0,
                         "%s: %d PID: %d for table: %d, %s (%i)", chld.c[i].tbl >= 0 ? "Proxy" : "Child", i + 1, chld.c[i].pid,
@@ -407,7 +396,7 @@ static void igmpProxyMonitor(void) {
         if (mrt_tbl < 0 && pollFD[1].revents & POLLIN)
             acceptCli();
         if (mrt_tbl < 0 && !sighandled)
-            timeout = timer_ageQueue();
+            timeout = timerAgeQueue();
         if (timeout.tv_nsec < 0)
             timeout.tv_nsec = 0;
         if (mrt_tbl >= 0) {
@@ -437,7 +426,7 @@ static void igmpProxyRun(void) {
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
                 sigstatus   =  GOT_SIGCHLD;
-                while ((pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
+                while ((pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
                     chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
                     LOG(WIFEXITED(status) ? LOG_INFO : LOG_NOTICE, 0, "Child: %d PID: %d, %s (%i)",
                         i + 1, chld.c[i].pid, exitmsg[chld.c[i].st], chld.c[i].st);
@@ -467,7 +456,7 @@ static void igmpProxyRun(void) {
         }
         if (!sighandled && (Rt <= 0 || i >= CONF->reqQsz)) {
             // Run queue aging (unless sigs pending), it wil return the time until next timer is scheduled.
-            timeout = timer_ageQueue();
+            timeout = timerAgeQueue();
             // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
             Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &nto : &timeout, NULL);
             i = 1;
@@ -503,14 +492,14 @@ void igmpProxyCleanUp(int code) {
     int    nr = 0, pid, status;
     char   msg[24];
 
-    FOR_IF (int i = 0; i < chld.nr; i++, chld.c[i].pid > 0 && (SHUTDOWN || chld.c[i].tbl == mrt_tbl))
+    FOR_IF ((int i = 0; i < chld.nr; i++), chld.c[i].pid > 0 && (SHUTDOWN || chld.c[i].tbl == mrt_tbl))
         nr++;
     if (code == 0 && mrt_tbl >= 0)
         code = SIGTERM;
     if (chld.nr) {
         if (nr)
             LOG(LOG_NOTICE, 0, "Waiting for %d process%s to finish.", nr, nr != 1 ? "es" : "");
-        while (nr && (pid = waitpid(-1, &status, 0)) > 0) FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].pid == pid) {
+        while (nr && (pid = waitpid(-1, &status, 0)) > 0) FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
             chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
             sprintf(msg, "for table %d, ", chld.c[i].tbl);
             LOG(chld.c[i].tbl != mrt_tbl ? LOG_NOTICE : LOG_INFO, 0, "%s %d, %sPID: %d, %s (%d).",
@@ -519,7 +508,7 @@ void igmpProxyCleanUp(int code) {
             chld.c[i].pid = nr = 0;
             if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
                 ipRules(chld.c[i].tbl, false);
-            FOR_IF (int i = 0; i < chld.nr; i++, chld.c[i].pid > 0 && (!RESTART || chld.c[i].tbl == mrt_tbl))
+            FOR_IF ((int i = 0; i < chld.nr; i++), chld.c[i].pid > 0 && (!RESTART || chld.c[i].tbl == mrt_tbl))
                 nr++;
             if (nr)
                 LOG(LOG_INFO, 0, "Still waiting for %d process%s to finish.", nr, nr != 1 ? "es" : "");
@@ -576,7 +565,7 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
         sighandled |= GOT_SIGTERM;
         if (SHUTDOWN) {
             // If SIGTERM received more than once, KILL childs and exit.
-            IF_FOR_IF(mrt_tbl < 0 && chld.nr, i = 0; i < chld.nr; i++, chld.c[i].pid > 0) {
+            IF_FOR_IF(mrt_tbl < 0 && chld.nr, (i = 0; i < chld.nr; i++), chld.c[i].pid > 0) {
                 kill(chld.c[i].pid, SIGKILL);
             }
             exit(sig);
@@ -606,6 +595,6 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
     }
     // Send SIG to children, except for SIGINT SIGPIPE and SIGCHLD.
     // If monitor is terminating we will end childs with SIGINT.
-    IF_FOR_IF(mrt_tbl < 0 && chld.c, i = 0; i < chld.nr; i++, chld.c[i].pid > 0)
+    IF_FOR_IF(mrt_tbl < 0 && chld.c, (i = 0; i < chld.nr; i++), chld.c[i].pid > 0)
         kill(chld.c[i].pid, sig == SIGTERM ? SIGINT : sig);
 }

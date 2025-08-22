@@ -68,7 +68,7 @@ void freeIfDescL(void) {
 /**
 *   Rebuilds the list of interfaces.
 */
-void rebuildIfVc(uint64_t *tid) {
+void rebuildIfVc(intptr_t *tid) {
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
     if (tid)
         sigstatus |= GOT_SIGUSR2;
@@ -82,7 +82,7 @@ void rebuildIfVc(uint64_t *tid) {
 
     // Restart timer when doing timed reload.
     if (!SHUTDOWN && CONF->rescanVif && tid)
-        *tid = timer_setTimer(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
+        *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
     if (IFREBUILD || STARTUP) {
         sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
@@ -159,7 +159,7 @@ void buildIfVc(void) {
 
         // Log the result...
         LOG(LOG_INFO, 0, "Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
-            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 1), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
+            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 0), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
     }
 
     free(IfAddrsP);   // Alloced by getiffaddrs()
@@ -219,11 +219,11 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
         }
         sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
-                inetFmt(IfDp->InAdr.s_addr, 1), IS_DISABLED(IfDp->state) ? "Disabled" :
+                inetFmt(IfDp->InAdr.s_addr, 0), IS_DISABLED(IfDp->state) ? "Disabled" :
                                                 IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
                                                 IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
                 IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
-                inetFmt(IfDp->querier.ip, 2), IfDp->stats.iBytes + IfDp->stats.oBytes, IfDp->stats.iRate + IfDp->stats.oRate,
+                inetFmt(IfDp->querier.ip, 0), IfDp->stats.iBytes + IfDp->stats.oBytes, IfDp->stats.iRate + IfDp->stats.oRate,
                 !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
@@ -263,8 +263,8 @@ void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
                 strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
             else
                 strcpy(msg, "%s %d %s %s %s %s %s\n");
-            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmts(filter->src.ip, filter->src.mask, 1),
-                    inetFmts(filter->dst.ip, filter->dst.mask, 2), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
+            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmt(filter->src.ip, filter->src.mask),
+                    inetFmt(filter->dst.ip, filter->dst.mask), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
                     filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }

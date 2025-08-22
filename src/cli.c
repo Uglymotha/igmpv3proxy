@@ -122,15 +122,16 @@ void acceptCli(void)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
     if (len <= 0 || len > CLI_CMD_BUF ||
         (buf[0] == 'r' && len > 2 &&
-        (!parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-        LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command.", chld.onr);
+           !parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) && !IN_MULTICAST(ntohl(addr))
+         && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) ) {
+        LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf[buf[1] == 'h' ? 3 : 2]);
     } else if (buf[0] == 'c' || buf[0] == 'b') {
         sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
         buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
                       : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
         kill(getppid(), buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
     } else if (buf[0] == 'r') {
-        logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask);
+        logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask, IfDp);
     } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
         sprintf(msg, "Interface '%s' Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
         send(fd, msg, strlen(msg), MSG_DONTWAIT);
@@ -139,13 +140,13 @@ void acceptCli(void)
     } else if (buf[0] == 'f') {
         getIfFilters(IfDp, len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 't') {
-        debugQueue("", len > 1 && buf[1] == 'h' ? 0 : 1, fd);
+        DEBUGQUEUE("", len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 'm') {
         getMemStats(buf[1] == 'h' ?  0 : 1, fd);
     } else if (buf[0] == 'p' && mrt_tbl < 0) {
         sprintf(msg, "Monitor PID: %d\n", getppid());
         send(fd, msg, strlen(msg), MSG_DONTWAIT);
-        FOR_IF(int i = 0; i < chld.nr; i++, chld.c[i].tbl >= 0) {
+        FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].tbl >= 0) {
             if (chld.c[i].pid > 0)
                 sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
             else

@@ -121,8 +121,6 @@ struct Config {
     uint8_t             logLevel;
     char               *logFilePath;
     bool                log2Stderr;                     // Log to stderr instead of to syslog / file
-    // Set if mc route needs to be added for unknown groups.
-    bool                routeUnknownMc;
     // Set if nneed to detect new interface.
     uint32_t            rescanVif;
     // Set if nneed to detect config change.
@@ -159,8 +157,8 @@ struct chld {
 
 // Timers for proxy control.
 struct timers {
-    uint64_t rescanConf;
-    uint64_t rescanVif;
+    intptr_t rescanConf;
+    intptr_t rescanVif;
 };
 
 // Linked list of filters.
@@ -209,7 +207,6 @@ struct vifConfig {
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
     bool                quickLeave;                     // Fast upstream leave
     bool                proxyLocalMc;                   // Forward local multicast
-    bool                routeUnknownMc;                 // Add routes for unknown (not requested downstream) groups
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
@@ -220,7 +217,7 @@ struct vifConfig {
                                             conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval,              \
                                             conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.bwControl,    \
                                             conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, \
-                                            conf.routeUnknownMc, NULL, NULL, vifConf }
+                                            NULL, NULL, vifConf }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -229,11 +226,12 @@ struct querier {                                        // igmp querier status f
     uint8_t        qqi;                                 // Queriers query interval
     uint8_t        qrv;                                 // Queriers robustness value
     uint8_t        mrc;                                 // Queriers max response code
-    uint64_t       Timer;                               // Self / Other Querier timer
-    uint64_t       ageTimer;                            // Route aging timer
+    intptr_t       Timer;                               // Self / Other Querier timer
+    intptr_t       ageTimer;                            // Route aging timer
 };
 #define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval,   \
-                                          IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, 0, 0 }
+                                          IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, (intptr_t)NULL,  \
+                                          (intptr_t)NULL }
 #define OTHER_QUERIER (struct querier){ src, ver, \
                                         ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY)             \
                                                  : IfDp->conf->qry.interval,                                                      \
@@ -260,7 +258,7 @@ struct IfDesc {
     struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
     uint8_t                       index;                 // MCast vif index
-    uint64_t                      bwTimer;               // BW Control timerd id
+    intptr_t                      bwTimer;               // BW Control timerd id
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
     void                         *qLst;                  // List of active queries on interface
@@ -395,9 +393,9 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define BIT_TST(X,n)     (((X) >> (n)) & 1)
 
 // Conditional loop macro's.
-#define IF_FOR(x, y)       if  (x) for (y)
-#define FOR_IF(x, y)       for (x) if  (y)
-#define IF_FOR_IF(x, y, z) if  (x) for (y) if (z)
+#define IF_FOR(x, y)       if  (x) for y
+#define FOR_IF(x, y)       for x if  (y)
+#define IF_FOR_IF(x, y, z) if  (x) for y if (z)
 
 //#################################################################################
 // Common IGMPv3 includes. Various OS dont provide common structs, so we just use our own.
@@ -487,7 +485,7 @@ extern uint32_t         uVifs;
 extern uint32_t         allhosts_group;                // All hosts addr in net order
 extern uint32_t         allrouters_group;              // All hosts addr in net order
 extern uint32_t         alligmp3_group;                // IGMPv3 addr in net order
-
+static char             strBuf[64];                    // Temp string buffer.
 
 //#################################################################################
 //  Lib function prototypes.
@@ -508,7 +506,7 @@ void igmpProxyCleanUp(int code);
 #define        OLDCONF getConfig(true)
 struct Config *getConfig(bool old);
 void           freeConfig(bool old);
-void           reloadConfig(uint64_t *tid);
+void           reloadConfig(intptr_t *tid);
 bool           loadConfig(char *cfgFile);
 void           configureVifs(void);
 
@@ -529,7 +527,7 @@ void cliCmd(char *cmd, int tbl);
 #define        GETIFL_IF(x, y)       GETIFL(x) if (y)
 #define        IF_GETIFL_IF(x, y, z) if (x) GETIFL_IF(y, z)
 void           freeIfDescL(void);
-void           rebuildIfVc(uint64_t *tid);
+void           rebuildIfVc(intptr_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
@@ -555,8 +553,7 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 #define         testHash(t, h)  (BIT_TST(t[h / 64], h % 64))
 inline bool     noHash(register uint64_t *t) { register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
                                                while(i < n && t[i] == 0) i++; return (i >= n); }
-const char     *inetFmt(uint32_t addr, int pos);
-const char     *inetFmts(uint32_t addr, uint32_t mask, int pos);
+const char     *inetFmt(uint32_t addr, uint32_t mask);
 uint16_t        inetChksum(uint16_t *addr, int len);
 int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
@@ -601,7 +598,7 @@ void     clearGroups(void *Dp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
-void     logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask);
+void     logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask, struct IfDesc *IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
 void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #endif
@@ -612,17 +609,14 @@ void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
 #define  IQUERY (IfDp->querier.ip == IfDp->conf->qry.ip && IfDp->conf->qry.lmCount > 0)
 void     ctrlQuerier(int start, struct IfDesc *IfDp);
 void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver);
-void     delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src, uint8_t type);
 
 /**
 *   timers.c
 */
-#define         TMNAMESZ 48
-extern char     tName[TMNAMESZ];               // Timer name buffer.
-#define         DEBUGQUEUE(...) if (CONF->logLevel == LOG_DEBUG) debugQueue(__VA_ARGS__)
-struct timespec timer_ageQueue(void);
-uint64_t        timer_setTimer(int delay, const char *name, void (*func)(), void *);
-void           *timer_clearTimer(uint64_t timer_id);
-void            debugQueue(const char *header, int h, int fd);
+#define         DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
+struct timespec timerAgeQueue(void);
+intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
+intptr_t        timerClear(intptr_t timer_id);
+void            timerDebugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

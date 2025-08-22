@@ -43,40 +43,41 @@ extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
 
 // Queue definition.
 static struct timeOutQueue {
-    uint64_t                id;
-    void                (*func)(void *, uint64_t);  // function to call
-    void                 *data;                     // Argument for function.
-    struct timespec       time;                     // Time for event
-    struct timeOutQueue  *next;                     // Next event in queue
-    char                 *name;                     // name of the timer
+    void                (*func)(void *);   // function to call
+    void                 *data;            // Argument for function.
+    struct timespec       time;            // Time for event
+    struct timeOutQueue  *prev;            // Previous event in queue
+    struct timeOutQueue  *next;            // Next event in queue
+    char                 *name;            // name of the timer
 }     *queue = NULL;
 #define TMSZ(n) (sizeof(struct timeOutQueue) + strlen(n) + 1)
 static uint64_t id = 1;
-char            tName[TMNAMESZ];
 
 /**
 *   Execute at most CONF->tmQsz expired timers, return time difference to next scheduled timer.
 *   Returns -1,-1 if no timer is scheduled, 0, -1 if next timer has already expired.
 */
-struct timespec timer_ageQueue(void) {
+struct timespec timerAgeQueue(void) {
     struct timeOutQueue *node = queue;
     uint64_t                i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
     for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
-        LOG(LOG_INFO, 0, "About to call timeout %d (#%d) - %s - Missed by %dus", node->id, i, node->name,
+        LOG(LOG_INFO, 0, "About to call timeout (#%d) - %s - Missed by %dus", i, node->name,
             timeDiff(node->time, curtime).tv_nsec / 1000);
-        node->func(node->data, node->id);
+        node->func(node->data);
         // The function may have removed the timeout itself, check before freeing.
         if (queue == node) {
             queue = node->next;
+            if (queue)
+                queue->prev = NULL;
             _free(node, tmr, TMSZ(node->name));
         }
         clock_gettime(CLOCK_REALTIME, &curtime);
     }
-    if (i > 1)
-        DEBUGQUEUE("Age Queue", 1, -1);
 
+    if (i > 1)
+        DEBUGQUEUE("-Age Queue-", 1, -1);
     return queue ? timeDiff(curtime, queue->time) : (struct timespec){-1, -1};
 }
 
@@ -84,87 +85,85 @@ struct timespec timer_ageQueue(void) {
 *   Inserts a timer in queue. Queue is maintained in order of execution.
 *   FIFO if timers are scheduled at exactly the same time. Delay in multiples of .1s
 */
-uint64_t timer_setTimer(int delay, const char *name, void (*func)(), void *data) {
+intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
     struct timeOutQueue  *ptr = NULL, *node = NULL;
     uint64_t                i = 1;
 
     // Create and set a new timer.
     _malloc(node, tmr, TMSZ(name));  // Freed by timer_ageQueue() or timer_clearTimer()
-    *node = (struct timeOutQueue){ id++, func, data, timeDelay(delay), NULL, memcpy(&node->name + 1, name, strlen(name) + 1) };
+    *node = (struct timeOutQueue){ func, data, timeDelay(delay), NULL, NULL, memcpy(&node->name + 1, name, strlen(name) + 1) };
     if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
         // Start of queue, insert.
+        if (queue)
+            queue->prev = node;
         node->next = queue;
         queue = node;
     } else {
         // chase the queue looking for the right place.
         for (ptr = queue, i++; ptr->next && timeDiff(ptr->next->time, node->time).tv_nsec != -1; ptr = ptr->next, i++);
         node->next = ptr->next;
+        node->prev = ptr;
+        if (ptr->next)
+            ptr->next->prev = node;
         ptr->next = node;
     }
 
-    LOG(LOG_INFO, 0, "Created timeout %d (#%d): %s - delay %d.%1d secs", node->id, i, node->name, delay / 10, delay % 10);
-    DEBUGQUEUE("Set Timer", 1, -1);
-    return node->id;
+    LOG(LOG_INFO, 0, "Created timeout (#%d): %s - delay %d.%1d secs", i, node->name, delay / 10, delay % 10);
+    DEBUGQUEUE("-Set Timer-", 1, -1);
+    return (intptr_t)node;
 }
 
 /**
 *   Removes a timer from the queue.
 */
-void *timer_clearTimer(uint64_t tid) {
-    struct timeOutQueue *node, *pnode;
-    uint64_t i;
+intptr_t timerClear(intptr_t tid) {
+    struct timeOutQueue *node = (void *)tid, *n;
 
-    if (tid == 0)
-        return NULL;
-    // Find the timer and remove it if found.
-    for (pnode = NULL, i = 1, node = queue; node && node->id != tid; pnode = node, node = node->next, i++);
     if (node) {
-        if (pnode)
-            pnode->next = node->next;
-        else
+        if (node->prev)
+            node->prev->next = node->next;
+        if (node->next)
+            node->next->prev = node->prev;
+        if (! node->prev)
             queue = node->next;
         DEBUGQUEUE("Clear Timer", 1, -1);
-        pnode = (void *)node->data;
-        LOG(LOG_DEBUG, 0, "Removed timeout %d (#%d): %s", node->id, i, node->name);
+        IF_FOR(CONF->logLevel >= LOG_INFO, (n = node, tid=1; n->prev; n = n->prev, tid++));
+        LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
         _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
     }
-
-    // If timer was removed, return its data, the caller may need it.
-    return node ? (void *)pnode : NULL;
+    return (intptr_t)NULL;
 }
 
 /**
 *   Debugging utility
 */
-void debugQueue(const char *header, int h, int fd) {
+void timerDebugQueue(const char *header, int h, int fd) {
     char                  msg[CLI_CMD_BUF] = "", buf[CLI_CMD_BUF] = "";
     struct timeOutQueue  *node = queue;
     uint64_t              i;
 
-    if (fd < 0 && CONF->logLevel < LOG_DEBUG)
-        return;
     clock_gettime(CLOCK_REALTIME, &curtime);
     if (fd < 0)
-        LOG(LOG_DEBUG, 0, "----------------------%s-----------------------", header);
+        LOG(LOG_DEBUG, 0, "----------------------%s----------------------", header);
     else if (h) {
-        sprintf(buf, "Active Timers:\n_Nr_|____In____|___ID___|________________Name_______________\n");
+        sprintf(buf, "Active Timers:\n_Nr_|____In____|________________Name_______________\n");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     for (i = 1; node; node = node->next, i++) {
         struct timespec delay = timeDiff(curtime, node->time);
         if (fd < 0)
-            LOG(LOG_DEBUG, 0, "| %3d %5d.%1ds | - Id:%6d - %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
+            LOG(LOG_DEBUG, 0, "| %3d %5d.%1ds | %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->name);
         else {
-            strcpy(msg, h ? "%3d | %5d.%1ds | %6d | %s" : "%d %d.%d %d %s");
-            sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, node->id, node->name);
+            strcpy(msg, h ? "%3d | %5d.%1ds | %s" : "%d %d.%d %s");
+            sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, node->name);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }
     if (fd < 0) {
-        LOG(LOG_DEBUG, 0, "------------------------------------------------------");
+        LOG(LOG_DEBUG, 0, "-------------------------------------------------------");
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb in use, %lld allocs, %lld frees.", memuse.tmr, memalloc.tmr, memfree.tmr);
     } else if (h) {
-        sprintf(buf, "------------------------------------------------------------\n");
+        sprintf(buf, "-------------------------------------------------------\n");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }
