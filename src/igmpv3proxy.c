@@ -328,7 +328,7 @@ static void igmpProxyInit(void) {
     // Make sure logfile and chroot directory are owned by configured user and switch ids.
     if (CONF->user && geteuid() == 0) {
         unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
-        LOG(CONF->logLevel, 0, "Switching user to %s.", CONF->user->pw_name);
+        LOG(LOG_WARNING, 0, "Switching user to %s.", CONF->user->pw_name);
         if (setgroups(1, (gid_t *)&gid) != 0 ||
             setresgid(CONF->user->pw_gid, CONF->user->pw_gid, CONF->user->pw_gid) != 0 ||
             setresuid(uid, uid, uid) != 0)
@@ -414,14 +414,13 @@ static void igmpProxyMonitor(void) {
  *   Main daemon event loop.
  */
 static void igmpProxyRun(void) {
-    int    i = 0, Rt = 0, pid, status;
+    int    i = 0, Rt = 0, Errno, pid, status;
     sigstatus = sighandled = 0;
 
     LOG(LOG_WARNING, 0, "Starting IGMPv3 Proxy on %s.", tS);
-    while (true) {
+    while (!(errno = 0)) {
         // Process signaling.
         struct timespec timeout;
-        errno = 0;
         if (sighandled) {
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
@@ -450,8 +449,7 @@ static void igmpProxyRun(void) {
             } else if (sighandled & GOT_SIGPIPE) {
                 sighandled &= ~GOT_SIGPIPE;
                 LOG(LOG_WARNING, 0, "Ceci n'est pas une SIGPIPE.");
-            } else if (sighandled & GOT_SIGCHLD)
-                sighandled &= ~GOT_SIGCHLD;  // Proxy ignores SIGCHLD.
+            }
             sigstatus = 0;
         }
         if (!sighandled && (Rt <= 0 || i >= CONF->reqQsz)) {
@@ -459,14 +457,14 @@ static void igmpProxyRun(void) {
             timeout = timerAgeQueue();
             // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
             Rt = ppoll(pollFD, 2, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &nto : &timeout, NULL);
-            i = 1;
+            Errno = errno, i = 1;
         }
 
         // log and ignore failures
-        if (Rt < 0 && errno != EINTR)
+        if (Rt < 0 && Errno != EINTR)
             LOG(LOG_ERR, 1, "ppoll() error.");
         else if (!sighandled && Rt > 0) do {
-            errno = 0;
+            Errno = errno, errno = 0;
             clock_gettime(CLOCK_REALTIME, &timeout);
             // Handle incoming IGMP request first.
             if (pollFD[0].revents & POLLIN) {
@@ -478,7 +476,7 @@ static void igmpProxyRun(void) {
                 acceptCli();
 
             clock_gettime(CLOCK_REALTIME, &curtime);
-            LOG(LOG_DEBUG, 0, "Fnished request %d in %dus.", i, timeDiff(timeout, curtime).tv_nsec / 1000);
+            LOG(LOG_DEBUG, 0, "Finished request %d in %dus.", i, timeDiff(timeout, curtime).tv_nsec / 1000);
             // Keep handling request until timeout, signal or max nr of queued requests to process in 1 loop.
         } while (!sighandled && i++ <= CONF->reqQsz && (Rt = ppoll(pollFD, 2, &nto, NULL)));
     }
@@ -520,7 +518,8 @@ void igmpProxyCleanUp(int code) {
     }
 
     // Remove all interfaces, CLI socket, PID file and Config.
-    rebuildIfVc(NULL);
+    if (getIfL())
+        rebuildIfVc(NULL);
     pollFD[1].fd = initCli(0);
     pollFD[0].fd = initIgmp(0);
     if ((mrt_tbl < 0 || chld.onr == 0) && !RESTART && CONF->runPath) {
@@ -535,7 +534,8 @@ void igmpProxyCleanUp(int code) {
     if (!RESTART)
         // On SIGURG reloadConfig will clear old config.
         freeConfig(false);
-    getMemStats(0, -1);
+    if (CONF->logLevel >= LOG_INFO)
+        getMemStats(0, -1);
 
     // Log shutdown.
     TIME_STR(tE, curtime);

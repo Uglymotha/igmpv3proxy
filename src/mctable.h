@@ -100,6 +100,7 @@ struct mcTable {
 
 struct ifMct {
     struct ifMct       *prev;
+    struct IfDesc      *IfDp;                     // Pointer back to interface.
     struct mcTable     *mct;                      // Pointer to group in multicast table
     struct ifMct       *next;
 };

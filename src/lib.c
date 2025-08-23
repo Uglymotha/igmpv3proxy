@@ -64,29 +64,28 @@ PACKAGE_STRING "\n";
 
 // Buffers for representations of IP addresses / IGMP / GREC types, to be passed to inetFmt(), grecKind() and igmpPacketKind().
 static char    s[8][20];
-static uint8_t pos = 0;
+static uint64_t pos = 0;
 
 /**
 *   Convert an IP subnet number in network format into a printable string including the netmask as a number of bits.
 */
 const char *inetFmt(uint32_t addr, uint32_t mask) {
-    uint8_t *a    = (uint8_t *)&addr;
-    int      bits = 33 - ffs(ntohl(mask));
-    pos = pos%8;
-    if (addr == 0 && mask == 0)
-        sprintf(s[pos], "0/0");
-    else if (mask == 0)
-        sprintf(s[pos], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
-    else if (((uint8_t *)&mask)[3] != 0)
-        sprintf(s[pos], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
-    else if (((uint8_t *)&mask)[2] != 0)
-        sprintf(s[pos], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
-    else if (((uint8_t *)&mask)[1] != 0)
-        sprintf(s[pos], "%u.%u/%d",       a[0], a[1], bits);
-    else
-        sprintf(s[pos], "%u/%d",          a[0], bits);
+    uint8_t i = pos++%8, bits = 33 - ffs(ntohl(mask)), *a = (uint8_t *)&addr;
 
-    return s[pos++];
+    if (addr == 0 && mask == 0)
+        sprintf(s[i], "0/0");
+    else if (mask == 0 || mask == (uint32_t)-1)
+        sprintf(s[i], "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
+    else if (((uint8_t *)&mask)[3] != 0)
+        sprintf(s[i], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
+    else if (((uint8_t *)&mask)[2] != 0)
+        sprintf(s[i], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
+    else if (((uint8_t *)&mask)[1] != 0)
+        sprintf(s[i], "%u.%u/%d",       a[0], a[1], bits);
+    else
+        sprintf(s[i], "%u/%d",          a[0], bits);
+
+    return s[i];
 }
 
 /**
@@ -125,25 +124,19 @@ uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
 /**
 *   Parses a subnet address string on the format a.b.c.d/n into a subnet addr and mask.
 */
-bool parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask) {
-    char addrstr[19];
-    strncpy(addrstr, str, 18);
-    // First get the network part of the address...
-    char *tmpStr = strtok(addrstr, "/");
-    *addr = inet_addr(tmpStr);
-    if (*addr == (in_addr_t)-1)
-        return false;
+bool parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask) {
+    uint8_t i = pos++%8, bitcnt = 32;
+    strncpy(s[i], str, 18);
 
+    // First get the network part of the address...
+    str = strtok(s[i], "/");
+    *addr = inet_addr(str);
     // Next parse the subnet mask.
-    int bitcnt;
-    tmpStr = strtok(NULL, "/");
-    if (tmpStr) {
-        bitcnt = atoi(tmpStr);
-        if (bitcnt < 0 || bitcnt > 32)
-            *addr = (uint32_t)-1;
-    } else
-        bitcnt = 32;
-    *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
+    str = strtok(NULL, "/");
+    if (str && ((bitcnt = atoi(str)) < 0 || bitcnt > 32))
+        *addr = *mask = (uint32_t)-1;
+    else
+        *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
     if ((*addr | *mask) != *mask)
         *addr = (uint32_t)-1;
 
@@ -163,7 +156,6 @@ uint16_t inetChksum(register uint16_t *addr, register int len) {
         while ((len -= 2) > 1);
     if (len)
         sum += *(uint8_t *)addr;
-
     sum = (sum >> 16) + (uint16_t)sum;
     return (uint16_t) ~(sum + (sum >> 16));
 }
@@ -198,29 +190,29 @@ uint16_t sortArr(register uint32_t *arr, register uint16_t nr) {
 *   Finds the textual name of the supplied IGMP request.
 */
 const char *igmpPacketKind(unsigned int type, unsigned int code) {
-    pos = pos%8;
-    sprintf(s[pos], type == IGMP_MEMBERSHIP_QUERY     ? "Membership query" :
+    uint8_t i = pos++%8;
+    sprintf(s[i], type == IGMP_MEMBERSHIP_QUERY     ? "Membership query" :
                     type == IGMP_V1_MEMBERSHIP_REPORT ? "V1 join" :
                     type == IGMP_V2_MEMBERSHIP_REPORT ? "V2 join" :
                     type == IGMP_V2_LEAVE_GROUP       ? "V2 leave" :
                     type == IGMP_V3_MEMBERSHIP_REPORT ? "V3 group report" :
                                                         "Unkown: 0x%02x/0x%02x", type, code);
-    return s[pos++];
+    return s[i];
 }
 
 /**
 *   Returns the IGMP group record type in string.
 */
 const char *grecKind(unsigned int type) {
-    pos = pos%8;
-    sprintf(s[pos], type == IGMPV3_MODE_IS_INCLUDE   ? "IS_IN" :
+    uint8_t i = pos++%8;
+    sprintf(s[i], type == IGMPV3_MODE_IS_INCLUDE   ? "IS_IN" :
                     type == IGMPV3_MODE_IS_EXCLUDE   ? "IS_EX" :
                     type == IGMPV3_CHANGE_TO_INCLUDE ? "TO_IN" :
                     type == IGMPV3_CHANGE_TO_EXCLUDE ? "TO_EX" :
                     type == IGMPV3_ALLOW_NEW_SOURCES ? "ALLOW" :
                     type == IGMPV3_BLOCK_OLD_SOURCES ? "BLOCK" :
                                                        "???");
-    return s[pos++];
+    return s[i];
 }
 
 /**
@@ -402,4 +394,5 @@ void getMemStats(int h, int cli_fd) {
         LOG(LOG_DEBUG, 0, "System Stats:  resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
             usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
     }
+    LOG(LOG_DEBUG, 0, "%lld log strings generated.", pos);
 }

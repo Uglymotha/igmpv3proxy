@@ -162,12 +162,12 @@ void acceptIgmp(int fd) {
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(rcv_buf);
-        if (! (IfDp = getIf(igmpMsg->im_vif, NULL, 0)))
+        if (! (IfDp = getIf(igmpMsg->im_vif, NULL, 4)))
             return;
         LOG(LOG_DEBUG, 0, "Upcall from %s to %s on %s.", inetFmt(src, 0), inetFmt(dst, 0), IfDp->Name);
         switch (igmpMsg->im_msgtype) {
         case IGMPMSG_NOCACHE:
-            if (checkIgmp(IfDp, src, dst, IF_STATE_UPSTREAM))
+            if (checkIgmp(IfDp, src, dst, IF_STATE_UPDOWNSTREAM))
                 activateRoute(IfDp, NULL, src, dst, true);
             return;
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
@@ -197,7 +197,7 @@ void acceptIgmp(int fd) {
             struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
             ifindex = sdl->sdl_index;
 #endif
-            if (! (IfDp = getIf(ifindex, NULL, 1))) {
+            if (! (IfDp = getIf(ifindex, NULL, 5))) {
                 char ifName[IF_NAMESIZE];
                 LOG(LOG_INFO, 0, "No valid interface found for src: %s dst: %s on %s.",
                     inetFmt(src, 0), inetFmt(dst, 0), ifindex ? if_indextoname(ifindex, ifName) : "unk");

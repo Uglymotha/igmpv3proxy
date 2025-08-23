@@ -39,8 +39,11 @@
 
 #include "igmpv3proxy.h"
 
-// Linked list of igmpv3proxy interfaces.
-static struct IfDesc *IfDescL = NULL;
+// Linked list of igmpv3proxy system interfaces and ulticast vifs.
+static struct   IfDesc       *IfDescL = NULL, *vifL = NULL;
+extern volatile sig_atomic_t  sighandled;  // From igmpv3proxy.c signal handler.
+
+static void configureVifs(void);
 
 /**
 *   Frees the IfDesc table and cleans up on interface removal.
@@ -166,21 +169,192 @@ void buildIfVc(void) {
 }
 
 /**
-*   Sets the supplied pointer to the next interface in the array.
-*   If called with NULL pointer walk current table, if called with pointer to self walk old table.
+*   Returns pointer to the list of system interfaces.
 */
 inline struct IfDesc *getIfL(void) {
     return IfDescL;
 }
 
 /**
+*   Returns pointer to the list of active multicast vifs.
+*/
+inline struct IfDesc *getVifL(void) {
+    return vifL;
+}
+
+/**
 *   Returns pointer to interface based on given name, sys- or vif-index or NULL if not found.
+*   mode 0 = search by vifindex, 1 = search by sysindex, 2= search by name.
+*   if bit 3 of mode is set search the active vifs, all system interfaces otherwise.
 */
 inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
-    struct IfDesc *IfDp = IfDescL;
-    while (IfDp && !(mode == 2 ? strcmp(name, IfDp->Name) == 0 : (mode == 1 ? IfDp->sysidx : IfDp->index) == ix))
-         IfDp = IfDp->next;
+    struct IfDesc *IfDp = mode & 4 ? vifL : IfDescL;
+    while (IfDp && !((mode & 3) == 2 ? strcmp(name, IfDp->Name) == 0 : ((mode & 3) == 1 ? IfDp->sysidx : IfDp->index) == ix))
+         IfDp = mode & 4 ? IfDp->nextvif : IfDp->next;
     return IfDp;
+}
+
+/**
+*   Configures all multicast vifs and links to interface configuration. This function is responsible for:
+*   - All active interfaces have a matching configuration. Either explicit through config file or implicit defaults.
+*   - Default filters are created for the interface if necessary.
+*   - Establish correct old and new state of interfaces.
+*   - Control querier process and do route maintenance on interface transitions.
+*   - Add and remove vifs from the kernel if needed.
+*   - IfDp->state represents the old and new state of interfaces as below.
+*      8        7         6       5       4       3       2       1
+*      removed  existing  unused  unused  olddown oldup   down    up
+*/
+void configureVifs(void) {
+    struct IfDesc     *IfDp = NULL, *If;
+    struct vifConfig  *vifConf = NULL, *ovifConf = NULL;
+    struct filters    *fil, *ofil;
+    bool               quickLeave = false, tbl0 = false;
+    uint32_t           vifcount = 0, upvifcount = 0, downvifcount = 0;
+
+    uVifs = 0;
+    if (! (vifConf = *VIFCONF))
+        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
+    GETIFL(IfDp) {
+        // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
+        if ((!IFREBUILD && !SHUTDOWN) || ! IfDp->conf) {
+            for (ovifConf = NULL; vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
+            if (vifConf) {
+                LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
+            } else {
+                // Interface has no matching config, create default config.
+                LOG(LOG_NOTICE, 0, "Creating default config for %s interface %s.",
+                    IS_DISABLED(CONF->defaultInterfaceState)     ? "disabled"     :
+                    IS_UPDOWNSTREAM(CONF->defaultInterfaceState) ? "updownstream" :
+                    IS_UPSTREAM(CONF->defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
+                _calloc(vifConf, 1, vif, VIFSZ);  // Freed by freeConfig()
+                *vifConf = DEFAULT_VIFCONF;
+                *VIFCONF = vifConf;
+                strcpy(vifConf->name, IfDp->Name);
+                vifConf->filters = CONF->defaultFilters;
+            }
+            // Link the configuration to the interface. And update the states.
+            ovifConf = IfDp->conf;
+            IfDp->conf = vifConf;
+        }
+        // We will fork proxy for default table 0 on seeing the first interface.
+        if (!SHUTDOWN && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
+            igmpProxyFork(0);
+
+        // Evaluate to old and new state of interface.
+        if (!STARTUP && !CONFRELOAD && !(IfDp->state & 0x40)) {
+            // If no state flag at this point it is because buildIfVc detected new or removed interface.
+            if (!(IfDp->state & 0x80))
+                // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
+                IfDp->state = ((IfDp->state & 0x03) << 2) | 0x80;
+            else
+                // New interface, oldstate is disabled, newstate is configured state.
+                IfDp->state = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
+        } else
+            // Existing interface, oldstate is current state, newstate is configured state.
+            IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
+
+        if (IfDp->conf->tbl != mrt_tbl) {
+            // Check if Interface is in table for current process.
+            LOG(LOG_INFO, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
+            IfDp->state &= ~0x3;  // Keep old state, new state disabled.
+        }
+        if (mrt_tbl < 0)
+            // Monitor process only needs config.
+            continue;
+        register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
+        quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
+
+        // Set configured querier ip to interface address if not configured
+        // and set version to 3 for disabled/upstream only interface.
+        if (IfDp->conf->qry.ip == (uint32_t)-1)
+            IfDp->conf->qry.ip = IfDp->InAdr.s_addr;
+        if (!IS_DOWNSTREAM(IfDp->state))
+            IfDp->conf->qry.ver = 3;
+        if (IfDp->conf->qry.ver == 1)
+            IfDp->conf->qry.interval = 10, IfDp->conf->qry.responseInterval = 10;
+
+        // Check if filters have changed so that ACLs will be reevaluated.
+        if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
+            for (fil = vifConf->filters, ofil = ovifConf ? ovifConf->filters : NULL;
+                 fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
+                 fil = fil->next, ofil = ofil->next);
+            if (fil || ofil) {
+                LOG(LOG_INFO, 0, "Filters changed for %s.", IfDp->Name);
+                IfDp->filCh = true;
+            }
+        }
+
+        // Check if querier process needs to be restarted, because election was turned of and other querier present.
+        if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
+                                      && IfDp->querier.ip != IfDp->conf->qry.ip)
+            ctrlQuerier(2, IfDp);
+
+        // Increase counters and call addVif if necessary.
+        if (!IS_DISABLED(newstate)) {
+            if (IfDp->index == (uint8_t)-1 && k_addVIF(IfDp))
+                IfDp->nextvif = vifL, vifL = IfDp;
+            vifcount++;
+            if (IS_DOWNSTREAM(newstate))
+                downvifcount++;
+            if (IS_UPSTREAM(newstate)) {
+                upvifcount++;
+                BIT_SET(uVifs, IfDp->index);
+            } else
+                BIT_CLR(uVifs, IfDp->index);
+        }
+
+        // Do maintenance on vifs according to their old and new state.
+        if      ( IS_DISABLED(oldstate) && IS_UPSTREAM(newstate))                { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
+        else if ( IS_DISABLED(oldstate) && IS_DOWNSTREAM(newstate))              { ctrlQuerier(1, IfDp);                    }
+        else if (!IS_DISABLED(oldstate) && IS_DISABLED(newstate))                { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
+        else if (!STARTUP  && oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
+        else if (IFREBUILD && oldstate == newstate && !IS_DISABLED(newstate))    {                       clearGroups(IfDp); }
+        IfDp->filCh = false;
+
+        // Enable or disable bandwith control on interface if required.
+        if (!IFREBUILD && !IS_DISABLED(newstate) && CONF->bwControl != (uint32_t)-1
+            && IfDp->conf->bwControl > 0 && IfDp->bwTimer == 0) {
+            sprintf(strBuf, "Bandwith Control: %s", IfDp->Name);
+            IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strBuf, bwControl, IfDp);
+        } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0)
+            IfDp->bwTimer = timerClear(IfDp->bwTimer);
+
+        // Check if vif needs to be removed.
+        if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
+            BIT_CLR(uVifs, IfDp->index);
+            k_delVIF(IfDp);
+            for (If = vifL; If->next && If->next != IfDp; If = If->next);
+            vifL == IfDp ? (vifL = IfDp->nextvif) : (If->nextvif = IfDp->nextvif);
+            if (vifcount)
+                vifcount--;
+            if (IS_DOWNSTREAM(oldstate) && downvifcount)
+                downvifcount--;
+            if (IS_UPSTREAM(oldstate)   && upvifcount)
+                upvifcount--;
+        }
+    }
+    if (mrt_tbl < 0)
+        // Monitor process only needs config and state.
+        return;
+
+    // Set hashtable size to 0 when quickleave is not enabled on any interface.
+    if (!quickLeave && !RESTART) {
+        LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
+        CONF->quickLeave = false;
+        CONF->dHostsHTSize = 0;
+    }
+
+    // Check if quickleave was enabled or disabled due to config change.
+    if ((CONFRELOAD || SHUP) && OLDCONF->dHostsHTSize != CONF->dHostsHTSize && mrt_tbl >= 0) {
+        LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
+            OLDCONF->dHostsHTSize, CONF->dHostsHTSize);
+        sighandled |= GOT_SIGURG;
+    }
+
+    // All vifs created / updated, check if there is an upstream and at least one downstream.
+    if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
+        LOG(LOG_CRIT, -eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }
 
 /**
@@ -209,7 +383,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             sprintf(buf, "%lu,%lu\n", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
-    } else for (IFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
+    } else for (VIFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->stats.iBytes + IfDp->stats.oBytes,
                                      total.rate + IfDp->stats.iRate + IfDp->stats.oRate,
@@ -249,7 +423,7 @@ void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
-    for (IFL(IfDp), i++) {
+    for (VIFL(IfDp), i++) {
         struct filters *filter;
         int             i = 1;
         if ((mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) || (IfDp2 && IfDp != IfDp2))

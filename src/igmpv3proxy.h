@@ -212,12 +212,12 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", conf.defaultTable, conf.defaultInterfaceState, conf.defaultThreshold,          \
-                                            conf.defaultRatelimit, {conf.querierIp, conf.querierVer, conf.querierElection,     \
-                                            conf.robustnessValue, conf.queryInterval, conf.queryResponseInterval,              \
-                                            conf.lastMemberQueryInterval, conf.lastMemberQueryCount, 0, 0}, conf.bwControl,    \
-                                            conf.disableIpMrules, false, conf.cksumVerify, conf.quickLeave, conf.proxyLocalMc, \
-                                            NULL, NULL, vifConf }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultThreshold,           \
+                                            CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,     \
+                                            CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,               \
+                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount, 0, 0}, CONF->bwControl,     \
+                                            CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave, CONF->proxyLocalMc, \
+                                            NULL, NULL, *VIFCONF }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -262,11 +262,12 @@ struct IfDesc {
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
     void                         *qLst;                  // List of active queries on interface
+    struct IfDesc                *nextvif;               // List of active multicast routing vifs.
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
-                                        {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, IfDescL }
+                                        {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -502,13 +503,14 @@ void igmpProxyCleanUp(int code);
 /**
 *   config.c
 */
-#define        CONF getConfig(false)
-#define        OLDCONF getConfig(true)
-struct Config *getConfig(bool old);
-void           freeConfig(bool old);
-void           reloadConfig(intptr_t *tid);
-bool           loadConfig(char *cfgFile);
-void           configureVifs(void);
+#define            VIFCONF getVifConf()
+#define            CONF getConfig(false)
+#define            OLDCONF getConfig(true)
+struct Config     *getConfig(bool old);
+struct vifConfig **getVifConf(void);
+void               freeConfig(bool old);
+void               reloadConfig(intptr_t *tid);
+bool               loadConfig(char *cfgFile);
 
 /**
 *   cli.c
@@ -521,15 +523,19 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define        IFL(x)                x = getIfL(); x; x = x->next
-#define        GETIFL(x)             for (IFL(x))
-#define        IF_GETIFL(y, x)       if (y) GETIFL(x)
-#define        GETIFL_IF(x, y)       GETIFL(x) if (y)
-#define        IF_GETIFL_IF(x, y, z) if (x) GETIFL_IF(y, z)
+#define        IFL(x)                 x = getIfL(); x; x = x->next
+#define        GETIFL(x)              for (IFL(x))
+#define        GETIFL_IF(x, y)        GETIFL(x) if (y)
+#define        VIFL(x)                x = getVifL(); x; x = x->nextvif
+#define        GETVIFL(x)             for (VIFL(x))
+#define        IF_GETVIFL(y, x)       if (y) GETVIFL(x)
+#define        GETVIFL_IF(x, y)       GETVIFL(x) if (y)
+#define        IF_GETVIFL_IF(x, y, z) if (x) GETVIFL_IF(y, z)
 void           freeIfDescL(void);
 void           rebuildIfVc(intptr_t *tid);
 void           buildIfVc(void);
 struct IfDesc *getIfL(void);
+struct IfDesc *getVifL(void);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void           getIfStats(struct IfDesc *IfDp, int h, int fd);
 void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -559,7 +565,7 @@ int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
 struct timespec timeDelay(int delay);
 uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
-bool            parseSubnetAddress(const char * const str, uint32_t *addr, uint32_t *mask);
+bool            parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
 uint16_t        sortArr(register uint32_t *arr, register uint16_t nr);
 const char     *igmpPacketKind(unsigned int type, unsigned int code);

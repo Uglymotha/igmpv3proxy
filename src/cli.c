@@ -101,9 +101,9 @@ int initCli(int mode) {
 */
 void acceptCli(void)
 {
-    int                 pid, len, i = 0, fd = -1, s = sizeof(struct sockaddr);
-    uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
-    char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF];
+    int                 pid, len = 0, i = 0, fd = -1, s = sizeof(struct sockaddr), h;
+    uint32_t            addr = 0, mask = 0;
+    char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF] = {0};
     struct sockaddr     cli_sa;
     struct IfDesc      *IfDp = NULL;
 
@@ -113,53 +113,61 @@ void acceptCli(void)
         return;
     } else if ((pid = igmpProxyFork(-1)) != 0) {
         if (pid < 0)
-            send(fd, "error\n", 6, MSG_DONTWAIT);
+            send(fd, "Cannot fork()\n", 14, MSG_DONTWAIT);
         close(fd);
         return;
     }
     LOG(LOG_INFO, 0, "RECV CLI (%d) Request.", chld.onr);
     while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
-    if (len <= 0 || len > CLI_CMD_BUF ||
-        (buf[0] == 'r' && len > 2 &&
-           !parseSubnetAddress(&buf[buf[1] == 'h' ? 3 : 2], &addr, &mask) && !IN_MULTICAST(ntohl(addr))
-         && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) ) {
-        LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf[buf[1] == 'h' ? 3 : 2]);
+    h = len > 1 && buf[1] == 'h' ? 0 : 1;
+    if (len <= 0 || len > CLI_CMD_BUF) {
+        LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf);
+    } else if (buf[0] == 'r' || buf[0] == 'i' || buf[0] == 'f') {
+        i = buf[1] == 'h' ? 3 : 2;
+        if (len > 2 && (! (IfDp = getIf(0, &buf[i], 6))
+                    && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr)))))
+            if (buf[0] == 'r') {
+                LOG(LOG_WARNING, 0, "CLI (%d) %s invalid interface or subnet/mask. %s", chld.onr, &buf[i]);
+                sprintf(msg, "%s is not a valid interface, subnet/mask or multicast address.\n", &buf[i]);
+            } else {
+                LOG(LOG_WARNING, 0, "CLI (%d) interface %s not found.", chld.onr, &buf[i]);
+                sprintf(msg, "Interface '%s' Not Found.\n", &buf[i]);
+            }
+        else if (buf[0] == 'r')
+            logRouteTable("", h, fd, addr, mask, IfDp);
+        else if (buf[0] == 'i')
+            getIfStats(IfDp, h, fd);
+        else if (buf[0] == 'f')
+            getIfFilters(IfDp, h ? 0 : 1, fd);
     } else if (buf[0] == 'c' || buf[0] == 'b') {
         sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
-        buf[0] == 'c' ? send(fd, "Reloading Configuration.\n", 26, MSG_DONTWAIT)
-                      : send(fd, "Rebuilding Interfaces.\n", 24, MSG_DONTWAIT);
+        buf[0] == 'c' ? sprintf(msg, "Reloading Configuration.\n")
+                      : sprintf(msg, "Rebuilding Interfaces.\n");
         kill(getppid(), buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
-    } else if (buf[0] == 'r') {
-        logRouteTable("", buf[1] == 'h' ? 0 : 1, fd, addr, mask, IfDp);
-    } else if ((buf[0] == 'i' || buf[0] == 'f')  && len > 2 && ! (IfDp = getIf(0, &buf[buf[1] == 'h' ? 3 : 2], 2))) {
-        sprintf(msg, "Interface '%s' Not Found\n", &buf[buf[1] == 'h' ? 3 : 2]);
-        send(fd, msg, strlen(msg), MSG_DONTWAIT);
-    } else if (buf[0] == 'i') {
-        getIfStats(IfDp, buf[1] == 'h' ?  0 : 1, fd);
-    } else if (buf[0] == 'f') {
-        getIfFilters(IfDp, len > 1 && buf[1] == 'h' ? 0 : 1, fd);
     } else if (buf[0] == 't') {
-        DEBUGQUEUE("", len > 1 && buf[1] == 'h' ? 0 : 1, fd);
+        DEBUGQUEUE("", h, fd);
     } else if (buf[0] == 'm') {
-        getMemStats(buf[1] == 'h' ?  0 : 1, fd);
+        getMemStats(h, fd);
     } else if (buf[0] == 'p' && mrt_tbl < 0) {
         sprintf(msg, "Monitor PID: %d\n", getppid());
-        send(fd, msg, strlen(msg), MSG_DONTWAIT);
-        FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].tbl >= 0) {
+        FOR_IF((i = 0; i < chld.nr; i++), chld.c[i].tbl >= 0) {
             if (chld.c[i].pid > 0)
                 sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
             else
                 sprintf(msg, "Table: %d - %s\n", chld.c[i].tbl, exitmsg[chld.c[i].st]);
             send(fd, msg, strlen(msg), MSG_DONTWAIT);
         }
+        return;
     } else if (buf[0] == 'p' && mrt_tbl >= 0) {
         sprintf(msg, "Table: %d - PID: %d\n", mrt_tbl, getppid());
-        send(fd, msg, strlen(msg), MSG_DONTWAIT);
     } else
-        send(fd, "GO AWAY\n", 9, MSG_DONTWAIT);
+        sprintf(msg, "GO AWAY\n");
 
     // Close connection.
+    if (strlen(msg))
+        send(fd, msg, strlen(msg), MSG_DONTWAIT);
+    close(fd);
     LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI (%d) command '%s'.", errno ? "Failed" : "Finished", chld.onr, buf);
     exit(errno > 0);
 }

@@ -111,7 +111,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         if (srcHash != (uint32_t)-1 && src->vifB.us && NO_HASH(src->dHostsHT)) {
             LOG(LOG_INFO, 0, "Last downstream host, quickleave source %s in group %s on %s.",
                 inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), IfDp->Name);
-            GETIFL_IF(IfDp, IS_UPSTREAM(IfDp->state) && IS_SET(src->mct, us, IfDp))
+            GETVIFL_IF(IfDp, IS_UPSTREAM(IfDp->state) && IS_SET(src->mct, us, IfDp))
                 joinBlockSrc(src, IfDp, false);
         }
     }
@@ -274,7 +274,7 @@ void groupSpecificQuery(struct qlst *qlst) {
         uint32_t timeout = (BIT_TST(qlst->type, 3)            ? qlst->code
                          :  IfDp->querier.ver == 3      ? getIgmpExp(IfDp->conf->qry.lmInterval, 0)
                          :  IfDp->conf->qry.lmInterval) + 1;
-        sprintf(strBuf, "GSQ (%s): %15s/%u", IfDp->Name, inetFmt(qlst->mct->group, 0), qlst->nsrcs);
+        sprintf(strBuf, "GSQ (%s): %s/%u", IfDp->Name, inetFmt(qlst->mct->group, 0), qlst->nsrcs);
         qlst->tid = timerSet(timeout, strBuf, groupSpecificQuery, qlst);
     } else {
         if (qlst->cnt >= qlst->misc && (   (BIT_TST(qlst->type, 2) && !qlst->mct->mode && qlst->mct->nsrcs == 0)
@@ -307,8 +307,6 @@ void groupSpecificQuery(struct qlst *qlst) {
 void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src) {
     struct mcTable *mct = qry ? ((struct qlst *)qry)->mct : _mct;
     struct qlst    *nql;
-    LOG(LOG_INFO, 0, "Removing quer%s%s%s%s on %s.", qry || _src ? "y" : "ies", mct || _src ? " for " : "", _src ?
-        inetFmt(((struct src *)_src)->ip, 0) : "", mct ? inetFmt(mct->group, 0) : "", IfDp->Name);
 
     for (struct qlst *ql = qry ? qry : IfDp->qLst; ql; ql = qry ? NULL : nql) {
         if (qry || ! mct || ql->mct == mct) {
@@ -327,6 +325,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src) {
                                                        BIT_CLR(ql->src[i]->vifB.qry, IfDp->index), i++);
             nql = ql->next;
             if (! _src || (!ql->nsrcs && BIT_TST(ql->type, 2))) {
+                LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(ql->mct->group, 0), ql->IfDp->Name);
                 if (! qry)
                     timerClear(ql->tid);
                 if (ql->next)
