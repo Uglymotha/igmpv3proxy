@@ -47,7 +47,7 @@ struct vifFlags {
     uint32_t            d;                        // Active downstream vifs
     uint32_t            dd;                       // Denied dowstream vifs
     uint32_t            su;                       // Filters set flag for upstream
-    uint32_t            u;                        // Active upstream vifs (not used for sources)
+    uint32_t            u;                        // Active upstream vifs for mct, or downstream vifs for src/mfc
     uint32_t            ud;                       // Denied upstream vifs
     uint32_t            us;                       // Upstream membership state
     uint32_t            lm;                       // Last member vifs

@@ -79,11 +79,11 @@ const char *inetFmt(uint32_t addr, uint32_t mask) {
     else if (((uint8_t *)&mask)[3] != 0)
         sprintf(s[i], "%u.%u.%u.%u/%d", a[0], a[1], a[2], a[3], bits);
     else if (((uint8_t *)&mask)[2] != 0)
-        sprintf(s[i], "%u.%u.%u/%d",    a[0], a[1], a[2], bits);
+        sprintf(s[i], "%u.%u.%u.0/%d",    a[0], a[1], a[2], bits);
     else if (((uint8_t *)&mask)[1] != 0)
-        sprintf(s[i], "%u.%u/%d",       a[0], a[1], bits);
+        sprintf(s[i], "%u.%u.0.0/%d",       a[0], a[1], bits);
     else
-        sprintf(s[i], "%u/%d",          a[0], bits);
+        sprintf(s[i], "%u.0.0.0/%d",          a[0], bits);
 
     return s[i];
 }
@@ -238,6 +238,7 @@ uint16_t grecNscrs(struct igmpv3_grec *grec) {
 /**
 *   Calculate QQIC / RESV value from given 15 bit integer (RFC Max).
 *   We use our own implementation, as various OS do not provide a common one.
+*   d = 0: convert from 15 bit to 8 bit qrv. d = 1: convert from 8 bit qrv to 15 bit value.
 */
 uint16_t getIgmpExp(register int val, register int d) {
     int i, exp;

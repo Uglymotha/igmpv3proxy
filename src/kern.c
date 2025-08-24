@@ -276,7 +276,7 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
 /**
 *   Adds a multicast MFT to the kernel.
 */
-void k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]) {
+bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
@@ -292,8 +292,10 @@ void k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
     // Add the mfc to the kernel.
     LOG(LOG_INFO, 0, "Adding MFC: %s -> %s, InpVIf: %d.", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
         inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent);
-    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0) {
         LOG(LOG_WARNING, 1, "MRT_ADD_MFC %d - %s failed.", IfDp->index, inetFmt(group, 0));
+        return false;
+    }
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (IfDp->conf->bwControl > 0) {
         struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ,
@@ -302,12 +304,13 @@ void k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
             LOG(LOG_WARNING, 1, "MRT_ADD_BW_UPCALL %d - %s failed.", vif, inetFmt(group, 0));
     }
 #endif
+    return true;
 }
 
 /**
 *   Remove multicast MFC from the kernel.
 */
-void k_delMRoute(uint32_t src, uint32_t group, int vif) {
+bool k_delMRoute(uint32_t src, uint32_t group, int vif) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
@@ -322,8 +325,9 @@ void k_delMRoute(uint32_t src, uint32_t group, int vif) {
     // Remove mfc from kernel.
     LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
         inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent);
-    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
+    if (!(errno = 0) && setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
         LOG(LOG_WARNING, 1, "MRT_DEL_MFC %d - %s failed.", vif, inetFmt(group, 0));
+    return errno;
 }
 
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC

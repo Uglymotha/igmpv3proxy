@@ -69,6 +69,25 @@ void freeIfDescL(void) {
 }
 
 /**
+*   Returns pointer to the list of system interfaces.
+*/
+inline struct IfDesc *getIfL(bool vifl) {
+    return vifl ? vifL : IfDescL;
+}
+
+/**
+*   Returns pointer to interface based on given name, sys- or vif-index or NULL if not found.
+*   mode 0 = search by vifindex, 1 = search by sysindex, 2= search by name.
+*   if bit 3 of mode is set search the active vifs, all system interfaces otherwise.
+*/
+inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
+    struct IfDesc *IfDp = mode & SRCHVIFL ? vifL : IfDescL;
+    while (IfDp && !((mode & 3) == 2 ? strcmp(name, IfDp->Name) == 0 : ((mode & 3) == 1 ? IfDp->sysidx : IfDp->index) == ix))
+         IfDp = mode & SRCHVIFL ? IfDp->nextvif : IfDp->next;
+    return IfDp;
+}
+
+/**
 *   Rebuilds the list of interfaces.
 */
 void rebuildIfVc(intptr_t *tid) {
@@ -116,7 +135,7 @@ void buildIfVc(void) {
 #ifdef IFF_CANTCONFIG
             || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, 2)) && (IfDp->state & 0xC0))) {
+            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, FINDNAME)) && (IfDp->state & 0xC0))) {
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
             continue;
         }
@@ -169,32 +188,6 @@ void buildIfVc(void) {
 }
 
 /**
-*   Returns pointer to the list of system interfaces.
-*/
-inline struct IfDesc *getIfL(void) {
-    return IfDescL;
-}
-
-/**
-*   Returns pointer to the list of active multicast vifs.
-*/
-inline struct IfDesc *getVifL(void) {
-    return vifL;
-}
-
-/**
-*   Returns pointer to interface based on given name, sys- or vif-index or NULL if not found.
-*   mode 0 = search by vifindex, 1 = search by sysindex, 2= search by name.
-*   if bit 3 of mode is set search the active vifs, all system interfaces otherwise.
-*/
-inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
-    struct IfDesc *IfDp = mode & 4 ? vifL : IfDescL;
-    while (IfDp && !((mode & 3) == 2 ? strcmp(name, IfDp->Name) == 0 : ((mode & 3) == 1 ? IfDp->sysidx : IfDp->index) == ix))
-         IfDp = mode & 4 ? IfDp->nextvif : IfDp->next;
-    return IfDp;
-}
-
-/**
 *   Configures all multicast vifs and links to interface configuration. This function is responsible for:
 *   - All active interfaces have a matching configuration. Either explicit through config file or implicit defaults.
 *   - Default filters are created for the interface if necessary.
@@ -217,7 +210,7 @@ void configureVifs(void) {
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
     GETIFL(IfDp) {
         // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
-        if ((!IFREBUILD && !SHUTDOWN) || ! IfDp->conf) {
+        if ((!IFREBUILD && !SHUTDOWN && !RESTART) || ! IfDp->conf) {
             for (ovifConf = NULL; vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
             if (vifConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
@@ -318,13 +311,13 @@ void configureVifs(void) {
             sprintf(strBuf, "Bandwith Control: %s", IfDp->Name);
             IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strBuf, bwControl, IfDp);
         } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0)
-            IfDp->bwTimer = timerClear(IfDp->bwTimer);
+            IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
 
         // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
             BIT_CLR(uVifs, IfDp->index);
             k_delVIF(IfDp);
-            for (If = vifL; If->next && If->next != IfDp; If = If->next);
+            for (If = vifL; If->nextvif && If->nextvif != IfDp; If = If->nextvif);
             vifL == IfDp ? (vifL = IfDp->nextvif) : (If->nextvif = IfDp->nextvif);
             if (vifcount)
                 vifcount--;
@@ -383,7 +376,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
             sprintf(buf, "%lu,%lu\n", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
-    } else for (VIFL(IfDp), i++) if (mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
+    } else GETVIFL_IF(IfDp, mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
         if (h) {
             total = (struct totals){ total.bytes + IfDp->stats.iBytes + IfDp->stats.oBytes,
                                      total.rate + IfDp->stats.iRate + IfDp->stats.oRate,
@@ -392,7 +385,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
         } else {
             strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
         }
-        sprintf(buf, msg, i, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
+        sprintf(buf, msg, i++, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
                 inetFmt(IfDp->InAdr.s_addr, 0), IS_DISABLED(IfDp->state) ? "Disabled" :
                                                 IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
                                                 IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
@@ -423,7 +416,7 @@ void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 
-    for (VIFL(IfDp), i++) {
+    GETVIFL(IfDp) {
         struct filters *filter;
         int             i = 1;
         if ((mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) || (IfDp2 && IfDp != IfDp2))

@@ -162,7 +162,7 @@ void acceptIgmp(int fd) {
     // Handle kernel upcall messages first.
     if (ip->ip_p == 0) {
         struct igmpmsg *igmpMsg = (struct igmpmsg *)(rcv_buf);
-        if (! (IfDp = getIf(igmpMsg->im_vif, NULL, 4)))
+        if (! (IfDp = getIf(igmpMsg->im_vif, NULL, FINDIX | SRCHVIFL)))
             return;
         LOG(LOG_DEBUG, 0, "Upcall from %s to %s on %s.", inetFmt(src, 0), inetFmt(dst, 0), IfDp->Name);
         switch (igmpMsg->im_msgtype) {
@@ -197,7 +197,7 @@ void acceptIgmp(int fd) {
             struct sockaddr_dl *sdl = (struct sockaddr_dl *)CMSG_DATA(cmsgPtr);
             ifindex = sdl->sdl_index;
 #endif
-            if (! (IfDp = getIf(ifindex, NULL, 5))) {
+            if (! (IfDp = getIf(ifindex, NULL, FINDSYSIX | SRCHVIFL))) {
                 char ifName[IF_NAMESIZE];
                 LOG(LOG_INFO, 0, "No valid interface found for src: %s dst: %s on %s.",
                     inetFmt(src, 0), inetFmt(dst, 0), ifindex ? if_indextoname(ifindex, ifName) : "unk");
@@ -337,13 +337,13 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
     if (ver < IfDp->querier.ver || (ver == IfDp->querier.ver && (htonl(src) <= htonl(IfDp->querier.ip)))) {
         if (dst == allhosts_group || src != IfDp->querier.ip) {
             // Clear running query and age timers.
-            IfDp->querier.Timer = timerClear(IfDp->querier.Timer);
-            IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer);
+            IfDp->querier.Timer = timerClear(IfDp->querier.Timer, false);
+            IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer, false);
             // Set querier parameters for interface, use configured values in case querier detected because of gsq.
             IfDp->querier = OTHER_QUERIER;
             if (dst != allhosts_group) {
                 IfDp->querier.qqi = IfDp->conf->qry.interval;
-                IfDp->querier.mrc = IfDp->conf->qry.robustness;
+                IfDp->querier.qrv = IfDp->conf->qry.robustness;
                 IfDp->querier.mrc = IfDp->conf->qry.responseInterval;
             }
             // For downstream interface and general query set the age timer.
@@ -372,6 +372,7 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
                 IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
         }
         if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8))
+            // Process GSQ from other querier if Router Supress flag is not set.
             processGroupQuery(IfDp, igmpv3, ver == 3 ? ntohs(igmpv3->igmp_nsrcs) : 0, ver);
     } else
         LOG(LOG_NOTICE, 0, "v%d query from %s on %s, but it does not have priority over %s. Ignoring",
@@ -417,7 +418,7 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
 static void expireQuerierTimer(struct IfDesc *IfDp) {
     LOG(LOG_NOTICE, 0, "Other querier %s on %s expired.", inetFmt(IfDp->querier.ip, 0), IfDp->Name);
     if (IS_DOWNSTREAM(IfDp->state)) {
-        timerClear(IfDp->querier.ageTimer);
+        IfDp->querier.Timer = timerClear(IfDp->querier.ageTimer, false);
         sendGeneralMemberQuery(IfDp);
     } else {
         IfDp->querier.ip = (uint32_t)-1;

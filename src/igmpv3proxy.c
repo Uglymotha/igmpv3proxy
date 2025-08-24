@@ -103,12 +103,12 @@ int main(int ArgCn, char *ArgVc[]) {
             while (c != -1 && c != '?') {
                 memset(cmd, 0, sizeof(cmd));
                 cmd[0] = c;
-                if (c != 'r' && c != 'i' && c!= 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp")) == 'h')
+                if (c != 'r' && c != 'i' && c != 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp")) == 'h')
                     strcat(cmd, "h");
                 else if (h == '?')
                     break;
                 else if ((c == 'r' || c == 'i' || c == 'f') && optarg) {
-                    if (optarg[0] == 'h' && optarg[1] == '\0') {
+                    if (optarg[0] == 'h') {
                         strcat(cmd, "h");
                         optarg++;
                         h = 'h';
@@ -518,7 +518,7 @@ void igmpProxyCleanUp(int code) {
     }
 
     // Remove all interfaces, CLI socket, PID file and Config.
-    if (getIfL())
+    if (IFL)
         rebuildIfVc(NULL);
     pollFD[1].fd = initCli(0);
     pollFD[0].fd = initIgmp(0);
@@ -562,15 +562,15 @@ static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
             return;  // Daemon / Monitor ignores SIGINT
         sighandled |= GOT_SIGINT;  // Fallthrough
     case SIGTERM:
-        sighandled |= GOT_SIGTERM;
-        if (SHUTDOWN) {
+        BLOCKSIGS;
+        if (SHUTDOWN || sighandled & GOT_SIGTERM) {
             // If SIGTERM received more than once, KILL childs and exit.
             IF_FOR_IF(mrt_tbl < 0 && chld.nr, (i = 0; i < chld.nr; i++), chld.c[i].pid > 0) {
                 kill(chld.c[i].pid, SIGKILL);
             }
             exit(sig);
         }
-        BLOCKSIGS;
+        sighandled |= GOT_SIGTERM;
         if (sig == SIGINT)
             return;
         break;

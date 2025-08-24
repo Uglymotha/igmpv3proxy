@@ -131,8 +131,8 @@ void freeConfig(bool old) {
     }
     if (SHUTDOWN) {
         // On Shutdown stop any running timers.
-        timers.rescanConf = timerClear(timers.rescanConf);
-        timers.rescanVif = timerClear(timers.rescanVif);
+        timers.rescanConf = timerClear(timers.rescanConf, false);
+        timers.rescanVif = timerClear(timers.rescanVif, false);
     }
     LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
@@ -212,7 +212,7 @@ static inline void initCommonConfig(void) {
 
     // Defaul Query Parameters.
     conf.robustnessValue = DEFAULT_ROBUSTNESS;
-    conf.queryInterval = DEFAULT_INTERVAL_QUERY;
+    conf.queryInterval = conf.topQueryInterval = DEFAULT_INTERVAL_QUERY;
     conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
     conf.bwControl = 0;
 
@@ -510,6 +510,8 @@ static inline bool parsePhyintToken(char *token) {
                 LOG(LOG_WARNING, 0, "Config (%s): Query interval value must be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.interval = intToken;
+                if (intToken > conf.topQueryInterval)
+                    conf.topQueryInterval = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpPtr->name, intToken);
             }
 
@@ -523,7 +525,7 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" lastmemberinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Last member interval value must be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Last member query interval value must be between 1 than 255.", tmpPtr->name);
             else {
                 tmpPtr->qry.lmInterval =  intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query interval to %d.", tmpPtr->name, intToken);
@@ -807,6 +809,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Query interval must be between 1 and 255.");
             else {
                 conf.queryInterval = intToken;
+                if (intToken > conf.topQueryInterval)
+                    conf.topQueryInterval = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds.", conf.queryInterval);
             }
 
@@ -914,13 +918,13 @@ bool loadConfig(char *cfgFile) {
     if (conf.rescanVif && timers.rescanVif == (intptr_t)NULL)
         timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
     else if (!conf.rescanVif && timers.rescanVif != (intptr_t)NULL)
-        timers.rescanVif = timerClear(timers.rescanVif);
+        timers.rescanVif = timerClear(timers.rescanVif, false);
 
     // Check rescanconf status and start or clear timers if necessary.
     if (conf.rescanConf && timers.rescanConf == (intptr_t)NULL)
         timers.rescanConf = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
     else if (!conf.rescanConf && timers.rescanConf != (intptr_t)NULL)
-        timers.rescanConf = timerClear(timers.rescanConf);
+        timers.rescanConf = timerClear(timers.rescanConf, false);
 
     return !logwarning;
 }

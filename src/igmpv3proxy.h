@@ -98,6 +98,7 @@ struct Config {
     uint8_t             robustnessValue;
     uint8_t             queryInterval;
     uint8_t             queryResponseInterval;
+    uint16_t            topQueryInterval;                   // Largest query interval of all interfaces.
     // Last member probe.
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
@@ -120,7 +121,7 @@ struct Config {
     // Logging Parameters.
     uint8_t             logLevel;
     char               *logFilePath;
-    bool                log2Stderr;                     // Log to stderr instead of to syslog / file
+    bool                log2Stderr;                         // Log to stderr instead of to syslog / file
     // Set if nneed to detect new interface.
     uint32_t            rescanVif;
     // Set if nneed to detect config change.
@@ -523,19 +524,22 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define        IFL(x)                 x = getIfL(); x; x = x->next
-#define        GETIFL(x)              for (IFL(x))
+#define        IFL                    getIfL(false)
+#define        GETIFL(x)              for (x = IFL; x; x = x->next)
 #define        GETIFL_IF(x, y)        GETIFL(x) if (y)
-#define        VIFL(x)                x = getVifL(); x; x = x->nextvif
-#define        GETVIFL(x)             for (VIFL(x))
+#define        VIFL                   getIfL(true)
+#define        GETVIFL(x)             for (x = VIFL; x; x = x->nextvif)
 #define        IF_GETVIFL(y, x)       if (y) GETVIFL(x)
 #define        GETVIFL_IF(x, y)       GETVIFL(x) if (y)
 #define        IF_GETVIFL_IF(x, y, z) if (x) GETVIFL_IF(y, z)
+#define        FINDIX                 0
+#define        FINDSYSIX              1
+#define        FINDNAME               2
+#define        SRCHVIFL               4
 void           freeIfDescL(void);
 void           rebuildIfVc(intptr_t *tid);
 void           buildIfVc(void);
-struct IfDesc *getIfL(void);
-struct IfDesc *getVifL(void);
+struct IfDesc *getIfL(bool vifl);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void           getIfStats(struct IfDesc *IfDp, int h, int fd);
 void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -592,8 +596,8 @@ int     k_enableMRouter(void);
 int     k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
-void    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
-void    k_delMRoute(uint32_t src, uint32_t group, int vif);
+bool    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
+bool    k_delMRoute(uint32_t src, uint32_t group, int vif);
 void    k_deleteUpcalls(uint32_t src, uint32_t group);
 
 /**
@@ -622,7 +626,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 #define         DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
 intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
-intptr_t        timerClear(intptr_t timer_id);
+intptr_t        timerClear(intptr_t timer_id, bool retdata);
 void            timerDebugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

@@ -102,7 +102,7 @@ int initCli(int mode) {
 void acceptCli(void)
 {
     int                 pid, len = 0, i = 0, fd = -1, s = sizeof(struct sockaddr), h;
-    uint32_t            addr = 0, mask = 0;
+    uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
     char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF] = {0};
     struct sockaddr     cli_sa;
     struct IfDesc      *IfDp = NULL;
@@ -124,8 +124,8 @@ void acceptCli(void)
     if (len <= 0 || len > CLI_CMD_BUF) {
         LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf);
     } else if (buf[0] == 'r' || buf[0] == 'i' || buf[0] == 'f') {
-        i = buf[1] == 'h' ? 3 : 2;
-        if (len > 2 && (! (IfDp = getIf(0, &buf[i], 6))
+        i = h ? 2 : 3;
+        if (len > i && (! (IfDp = getIf(0, &buf[i], FINDNAME | SRCHVIFL))
                     && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr)))))
             if (buf[0] == 'r') {
                 LOG(LOG_WARNING, 0, "CLI (%d) %s invalid interface or subnet/mask. %s", chld.onr, &buf[i]);
@@ -139,7 +139,7 @@ void acceptCli(void)
         else if (buf[0] == 'i')
             getIfStats(IfDp, h, fd);
         else if (buf[0] == 'f')
-            getIfFilters(IfDp, h ? 0 : 1, fd);
+            getIfFilters(IfDp, h, fd);
     } else if (buf[0] == 'c' || buf[0] == 'b') {
         sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
         buf[0] == 'c' ? sprintf(msg, "Reloading Configuration.\n")
@@ -226,7 +226,7 @@ void cliCmd(char *cmd, int tbl) {
         fprintf(stderr, "Cannot open daemon socket. %s\n", strerror(errno));
         exit(-1);
     }
-    if (send(srv_fd, cmd, strlen(cmd) + 1, 0) < 0) {
+    if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
         fprintf(stderr, "Cannot send command. %s\n", strerror(errno));
         exit(-1);
     }

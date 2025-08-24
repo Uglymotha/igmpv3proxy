@@ -116,8 +116,9 @@ intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
 /**
 *   Removes a timer from the queue.
 */
-intptr_t timerClear(intptr_t tid) {
+intptr_t timerClear(intptr_t tid, bool retdata) {
     struct timeOutQueue *node = (void *)tid, *n;
+    void                *data = node ? node->data : NULL;
 
     if (node) {
         if (node->prev)
@@ -131,7 +132,7 @@ intptr_t timerClear(intptr_t tid) {
         LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
         _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
     }
-    return (intptr_t)NULL;
+    return retdata ? (intptr_t)data : (intptr_t)NULL;
 }
 
 /**

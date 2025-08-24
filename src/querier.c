@@ -59,8 +59,8 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
             k_updateGroup(IfDp, false, allrouters_group, 1, (uint32_t)-1);
             k_updateGroup(IfDp, false, alligmp3_group, 1, (uint32_t)-1);
         }
-        IfDp->querier.Timer = timerClear(IfDp->querier.Timer);
-        IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer);
+        IfDp->querier.Timer = timerClear(IfDp->querier.Timer, false);
+        IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer, false);
         memset(&IfDp->querier, 0, sizeof(struct querier));
         IfDp->querier.ip = (uint32_t)-1;
         if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
@@ -327,7 +327,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src) {
             if (! _src || (!ql->nsrcs && BIT_TST(ql->type, 2))) {
                 LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(ql->mct->group, 0), ql->IfDp->Name);
                 if (! qry)
-                    timerClear(ql->tid);
+                    timerClear(ql->tid, false);
                 if (ql->next)
                     ql->next->prev = ql->prev;
                 if (ql->prev)
