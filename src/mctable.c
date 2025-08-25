@@ -162,7 +162,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
     struct src    *src;
     uint32_t       group = mct->group, iz;
     static bool    remove = false;
-    LOG(LOG_DEBUG, 0, "Removing %s group %s from %s.", dir == 0 ? "downstream" : "upstream", inetFmt(mct->group, 0), IfDp->Name);
+    LOG(LOG_DEBUG, 0, "Removing %s group %s from %s.", dir == 1 ? "downstream" : "upstream", inetFmt(mct->group, 0), IfDp->Name);
 
     // Update the interface group list.
     IF_FOR(! imc, (imc = *list; imc && imc->mct != mct; imc = imc->next));
@@ -174,8 +174,10 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
     else
         *list = imc->next;
     _free(imc, ifm, IFMSZ);  // Alloced by addGroup()
-    if (dir > 1)
+    if (dir > 1) {
+        BIT_CLR(mct->vifB.u, IfDp->index);
         return pimc;
+    }
 
     if (!dir) {
         // Leave exclude mode group upstream and clear upstream status.
@@ -210,6 +212,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
              BIT_CLR(src->vifB.dd, IfDp->index), BIT_CLR(src->vifB.sd, IfDp->index), src = delSrc(src, IfDp, 0, (uint32_t)-1));
     }
     if (!remove && !mct->vifB.d) {
+        remove = true;
         // No clients downstream, group can be removed from table.
         uint32_t mctHash = murmurhash3(mct->group) % CONF->mcTables;
         LOG(LOG_INFO, 0, "Deleting group %s from table %d.",inetFmt(mct->group, 0), mctHash);
@@ -220,10 +223,8 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
             delGroup(imc->mct, imc->IfDp, imc, 3);
         }
         // If deleting group downstream Send Leave requests and remove group upstream. If deleting upstream remove downstream.
-        remove = true;
         GETVIFL_IF(If, dir ? IS_SET(mct, u, If) : IS_SET(mct, d, If))
             delGroup(mct, If, NULL, !dir);
-        remove = false;
         // Remove all sources from group.
         for (struct src *src = mct->sources; src; src = delSrc(src, IfDp, 0, (uint32_t)-1));
         // Update MCT and check if all tables are empty.
@@ -239,6 +240,7 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
             }
         }
         _free(mct, mct, MCESZ); // Alloced by findGroup()
+        remove = false;
     }
 
     if (MCT)
@@ -466,9 +468,9 @@ void processBwUpcall(struct bw_upcall *bwUpc, int nr) {
                 bwUpc->bu_measured.b_bytes, inetFmt(mfc->src->ip, 0), inetFmt(mct->group, 0), mfc->bytes, mfc->rate);
             GETIFL_IF(IfDp, IfDp == mfc->IfDp || IS_SET(mct, d, IfDp)) {
                 // Find the incoming and outgoing interfaces and add to counter.
-                IfDp->stats.bytes += bwUpc->bu_measured.b_bytes;
+                IfDp->stats.oBytes += bwUpc->bu_measured.b_bytes;
                 LOG(LOG_DEBUG, 0, "Added %lld bytes to interface %s (%lld B/s), total %lld.",
-                    bwUpc->bu_measured.b_bytes, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
+                    bwUpc->bu_measured.b_bytes, IfDp->Name, IfDp->stats.oRate, IfDp->stats.oBytes);
             }
         }
     }
@@ -503,7 +505,7 @@ void bwControl(struct IfDesc *IfDp) {
 #else
         // On FreeBSD systems the bw of the interface is the combined bw of all groups on that interface.
         LOG(LOG_DEBUG, 0, "Added %lld B/s to interface %s (%lld B/s), total %lld.",
-            mfc->rate, IfDp->Name, IfDp->stats.rate, IfDp->stats.bytes);
+            mfc->rate, IfDp->Name, IfDp->stats.iRate, IfDp->stats.iBytes);
 #endif
     }
 
@@ -635,73 +637,68 @@ static void updateSourceFilter(struct mcTable *mct, int mode) {
 *   Clears / Updates all groups and routing table, and sends Joins / Leaves upstream.
 *   If called with NULL pointer all groups and routes are removed.
 */
-void clearGroups(void *Dp) {
+void clearGroups(struct IfDesc *IfDp) {
     struct ifMct      *imc;
     struct mcTable    *mct;
-    struct IfDesc     *IfDp     = Dp != CONF && Dp != getConfig ? Dp : NULL;
     register uint8_t   oldstate = IfDp ? IF_OLDSTATE(IfDp) : 0, newstate = IfDp ? IF_NEWSTATE(IfDp) : 0;
 
-    if (Dp == CONF || (!IS_UPSTREAM(oldstate) && IS_UPSTREAM(newstate))) {
-        LOG(LOG_NOTICE, 0, "New upstream interface %s, joining groups.", IfDp->Name);
-        GETMRT(mct) {
-            if (addGroup(mct, IfDp, 0, 1, (uint32_t)-1)) {
-                // New upstream interface join all relevant groups and sources.
-                for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
-#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-            } else if (Dp == CONF) {
-                // BW control interval was changed. Reinitialize all bw_upcalls.
-                for (struct mfc *mfc = mct->mfc; mfc; mfc = mfc->next) {
-                    k_deleteUpcalls(mfc->src->ip, mct->group);
-                    activateRoute(mfc->IfDp, mfc->src, 0, 0, true);
-                }
-#endif
-            }
-        }
-        if (Dp == CONF || !IS_DOWNSTREAM(oldstate) || IFREBUILD)
-            return;
+    // Downstream interface transition.
+    IF_FOR(!(!IS_DOWNSTREAM(oldstate) && IS_DOWNSTREAM(newstate)), (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct)) {
+        if (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)) {
+            // Transition to disabled / upstream, remove from group.
+            LOG(LOG_NOTICE, 0, "Vif %d - %s no longer downstream, removing group %s.",
+                IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 0));
+            imc = delGroup(imc->mct, IfDp, imc, 1);
+        } else if (NOT_SET(imc->mct, dd, IfDp) && !checkFilters(IfDp, 1, NULL, imc->mct)) {
+            // Check against bl / wl changes on config reload / sighup.
+            LOG(LOG_NOTICE, 0, "Group %s no longer allowed downstream on Vif %d - %s.",
+                inetFmt(imc->mct->group, 0), IfDp->index, IfDp->Name);
+            delQuery(IfDp, NULL, imc->mct, NULL);
+            for (struct src *src = imc->mct->sources; src; src = delSrc(src, IfDp, imc->mct->mode ? 3 : 0, (uint32_t)-1));
+            imc = delGroup(imc->mct, IfDp, imc, 1);
+        } else if (IS_SET(imc->mct, dd, IfDp) && addGroup(imc->mct, IfDp, 1, 0, (uint32_t)-1))
+            LOG(LOG_NOTICE, 0, "Group %s now allowed downstream on %s.", inetFmt(imc->mct->group, 0), IfDp->Name);
     }
 
-    // Downstream interface transition.
-    if (((CONFRELOAD || SHUP) && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate))
-                              || (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)))
-        for (imc = IfDp->dMct; imc; imc = imc ? imc->next : IfDp->dMct) {
-            if (IS_DOWNSTREAM(oldstate) && !IS_DOWNSTREAM(newstate)) {
-                // Transition to disabled / upstream, remove from group.
-                LOG(LOG_NOTICE, 0, "Vif %d - %s no longer downstream, removing group %s.",
-                    IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 0));
-                imc = delGroup(imc->mct, IfDp, imc, 1);
-            } else if (NOT_SET(imc->mct, dd, IfDp) && !checkFilters(IfDp, 1, NULL, imc->mct)) {
-                // Check against bl / wl changes on config reload / sighup.
-                LOG(LOG_NOTICE, 0, "Group %s no longer allowed downstream on Vif %d - %s.",
-                    inetFmt(imc->mct->group, 0), IfDp->index, IfDp->Name);
-                delQuery(IfDp, NULL, imc->mct, NULL);
-                for (struct src *src = imc->mct->sources; src; src = delSrc(src, IfDp, imc->mct->mode ? 3 : 0, (uint32_t)-1));
-                imc = delGroup(imc->mct, IfDp, imc, 1);
-            } else if (IS_SET(imc->mct, dd, IfDp) && addGroup(imc->mct, IfDp, 1, 0, (uint32_t)-1))
-                LOG(LOG_NOTICE, 0, "Group %s now allowed downstream on %s.", inetFmt(imc->mct->group, 0), IfDp->Name);
-        }
-
     // Upstream interface transition.
-    if (  ((CONFRELOAD || SHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate))
-        || (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate)))
-        for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct) {
-            if (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate) && IS_SET(imc->mct, u, IfDp)) {
-                LOG(LOG_INFO, 0, "Vif %d - %s no longer upstream, removing group %s.",
-                    IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 0));
-                // Transition from upstream to downstream or disabled. Leave group.
+    IF_FOR(IS_UPSTREAM(oldstate) || IS_UPSTREAM(newstate), (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)) {
+        if (IS_UPSTREAM(oldstate) && !IS_UPSTREAM(newstate) && IS_SET(imc->mct, u, IfDp)) {
+            LOG(LOG_INFO, 0, "Vif %d - %s no longer upstream, removing group %s.",
+                IfDp->index, IfDp->Name, inetFmt(imc->mct->group, 0));
+            // Transition from upstream to downstream or disabled. Leave group.
+            imc = delGroup(imc->mct, IfDp, imc, 0);
+        } else if ((CONFRELOAD || SHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
+            if (NOT_SET(imc->mct, ud, IfDp) && !checkFilters(IfDp, 0, NULL, imc->mct)) {
+                // Check against bl / wl changes on config reload / sighup.
+                LOG(LOG_NOTICE, 0, "Group %s no longer allowed upstream on interface %s.",
+                    inetFmt(imc->mct->group, 0), IfDp->Name);
                 imc = delGroup(imc->mct, IfDp, imc, 0);
-            } else if ((CONFRELOAD || SHUP) && IS_UPSTREAM(newstate) && IS_UPSTREAM(oldstate)) {
-                if (NOT_SET(imc->mct, ud, IfDp) && !checkFilters(IfDp, 0, NULL, imc->mct)) {
-                    // Check against bl / wl changes on config reload / sighup.
-                    LOG(LOG_NOTICE, 0, "Group %s no longer allowed upstream on interface %s.",
-                        inetFmt(imc->mct->group, 0), IfDp->Name);
-                    imc = delGroup(imc->mct, IfDp, imc, 0);
-                } else if (IS_SET(imc->mct, ud, IfDp) && addGroup(imc->mct, IfDp, 0, 0, (uint32_t)-1)) {
-                    LOG(LOG_NOTICE, 0, "Group %s now allowed upstream on %s.", inetFmt(imc->mct->group, 0), IfDp->Name);
-                    for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
-                }
+            } else if (IS_SET(imc->mct, ud, IfDp) && addGroup(imc->mct, IfDp, 0, 0, (uint32_t)-1)) {
+                LOG(LOG_NOTICE, 0, "Group %s now allowed upstream on %s.", inetFmt(imc->mct->group, 0), IfDp->Name);
+                for (struct src *src = mct->sources; src; joinBlockSrc(src, IfDp, true), src = src->next);
             }
         }
+    }
+
+    // Stop and start bandwidth control if required.
+    if (!IfDp->conf->bwControl || (!STARTUP && !IFREBUILD && IfDp->oconf && IfDp->oconf->bwControl != IfDp->conf->bwControl)) {
+        IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+        for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
+            for (struct mfc *mfc = mct->mfc; mfc; mfc = mfc->next)
+                k_deleteUpcall(mfc->src->ip, mct->group);
+#endif
+    }
+    if ((CONFRELOAD || SHUP || STARTUP) && IfDp->conf->bwControl) {
+        sprintf(strBuf, "Bandwith Control: %s", IfDp->Name);
+        IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strBuf, bwControl, IfDp);
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+        for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
+            for (struct mfc *mfc = mct->mfc; mfc; mfc = mfc->next)
+                activateRoute(mfc->IfDp, mfc->src, 0, 0, true);
+#endif
+    }
+
     if ((SHUTDOWN || RESTART) && IfDp->uMct) {
         ((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec = timerClear(((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec, false);
         delGroup(((struct ifMct *)IfDp->uMct)->mct, IfDp, IfDp->uMct, 0);

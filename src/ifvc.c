@@ -200,18 +200,16 @@ void buildIfVc(void) {
 */
 void configureVifs(void) {
     struct IfDesc     *IfDp = NULL, *If;
-    struct vifConfig  *vifConf = NULL, *ovifConf = NULL;
+    struct vifConfig  *vifConf = NULL;
     struct filters    *fil, *ofil;
     bool               quickLeave = false, tbl0 = false;
     uint32_t           vifcount = 0, upvifcount = 0, downvifcount = 0;
 
     uVifs = 0;
-    if (! (vifConf = *VIFCONF))
-        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
     GETIFL(IfDp) {
         // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
         if ((!IFREBUILD && !SHUTDOWN && !RESTART) || ! IfDp->conf) {
-            for (ovifConf = NULL; vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
+            for (;vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
             if (vifConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
             } else {
@@ -227,7 +225,7 @@ void configureVifs(void) {
                 vifConf->filters = CONF->defaultFilters;
             }
             // Link the configuration to the interface. And update the states.
-            ovifConf = IfDp->conf;
+            IfDp->oconf = IfDp->conf;
             IfDp->conf = vifConf;
         }
         // We will fork proxy for default table 0 on seeing the first interface.
@@ -269,7 +267,7 @@ void configureVifs(void) {
 
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
-            for (fil = vifConf->filters, ofil = ovifConf ? ovifConf->filters : NULL;
+            for (fil = vifConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
                  fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
             if (fil || ofil) {
@@ -283,7 +281,7 @@ void configureVifs(void) {
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
 
-        // Increase counters and call addVif if necessary.
+        // Check if vifs need to be added or removed and (re)init the group table.
         if (!IS_DISABLED(newstate)) {
             if (IfDp->index == (uint8_t)-1 && k_addVIF(IfDp))
                 IfDp->nextvif = vifL, vifL = IfDp;
@@ -293,28 +291,22 @@ void configureVifs(void) {
             if (IS_UPSTREAM(newstate)) {
                 upvifcount++;
                 BIT_SET(uVifs, IfDp->index);
+                IF_GETVIFL_IF(!STARTUP && !IS_UPSTREAM(oldstate), If, IS_DOWNSTREAM(If->index)) {
+                    LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
+                    sendIgmp(IfDp, NULL);
+                }
             } else
                 BIT_CLR(uVifs, IfDp->index);
+            if (IS_DISABLED(oldstate) || (!STARTUP && oldstate != newstate))
+                ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
         }
-
-        // Do maintenance on vifs according to their old and new state.
-        if      ( IS_DISABLED(oldstate) && IS_UPSTREAM(newstate))                { ctrlQuerier(1, IfDp); clearGroups(IfDp); }
-        else if ( IS_DISABLED(oldstate) && IS_DOWNSTREAM(newstate))              { ctrlQuerier(1, IfDp);                    }
-        else if (!IS_DISABLED(oldstate) && IS_DISABLED(newstate))                { ctrlQuerier(0, IfDp); clearGroups(IfDp); }
-        else if (!STARTUP  && oldstate != newstate)                              { ctrlQuerier(2, IfDp); clearGroups(IfDp); }
-        else if (IFREBUILD && oldstate == newstate && !IS_DISABLED(newstate))    {                       clearGroups(IfDp); }
+        clearGroups(IfDp);
         IfDp->filCh = false;
-
-        // Enable or disable bandwith control on interface if required.
-        if (!IFREBUILD && !IS_DISABLED(newstate) && CONF->bwControl != (uint32_t)-1
-            && IfDp->conf->bwControl > 0 && IfDp->bwTimer == 0) {
-            sprintf(strBuf, "Bandwith Control: %s", IfDp->Name);
-            IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strBuf, bwControl, IfDp);
-        } else if (IS_DISABLED(newstate) || CONF->bwControl == (uint32_t)-1 || IfDp->conf->bwControl == 0)
-            IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
-
-        // Check if vif needs to be removed.
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
+            LOG(LOG_DEBUG,0,"KANKERZOOI %p", IfDp->bwTimer);
+            IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
+            if (!IS_DISABLED(oldstate))
+                ctrlQuerier(0, IfDp);
             BIT_CLR(uVifs, IfDp->index);
             k_delVIF(IfDp);
             for (If = vifL; If->nextvif && If->nextvif != IfDp; If = If->nextvif);
@@ -347,7 +339,7 @@ void configureVifs(void) {
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && !RESTART && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
-        LOG(LOG_CRIT, -eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
+        LOG(STARTUP ? LOG_CRIT : LOG_ERR, -eNOINIT, "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }
 
 /**

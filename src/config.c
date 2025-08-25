@@ -65,7 +65,7 @@ static const char *phyintopt = " table updownstream upstream downstream disabled
                                " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol";
 
 // Daemon Configuration.
-static struct Config         conf, oldconf;
+static struct Config       conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
@@ -892,6 +892,9 @@ bool loadConfig(char *cfgFile) {
             // Token may be " " if parsePhyintToken() returns without valid token.
             LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
     }
+    if (! vifConf)
+        LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
+
     // Close the configfile. When including files, we're done. Decrease count when file has loaded. Reset common flag.
     _free(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))

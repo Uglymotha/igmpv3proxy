@@ -169,7 +169,7 @@ bool k_addVIF(struct IfDesc *IfDp) {
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
     vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {{IfDp->InAdr.s_addr}}, {INADDR_ANY} };
 #else
-    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {{IfDp->InAdr.s_addr}}, {INADDR_ANY} };
+    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {IfDp->InAdr.s_addr}, {INADDR_ANY} };
 #endif
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
@@ -281,7 +281,7 @@ bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl2));
-    CtlReq = (struct mfcctl2){ {src}, {group}, vif, {0}, {0}, 0 };
+    CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
 #else
     struct mfcctl CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl));
@@ -301,7 +301,7 @@ bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
         struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_UNIT_BYTES | BW_UPCALL_LEQ,
                                    { {IfDp->conf->bwControl, 0}, 0, (uint64_t)-1 }, { {0}, 0, 0 } };
         if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
-            LOG(LOG_WARNING, 1, "MRT_ADD_BW_UPCALL %d - %s failed.", vif, inetFmt(group, 0));
+            LOG(LOG_WARNING, 1, "MRT_ADD_BW_UPCALL %s:%s on %s failed.", inetFmt(src, 0), inetFmt(group, 0), IfDp->Name);
     }
 #endif
     return true;
@@ -321,7 +321,9 @@ bool k_delMRoute(uint32_t src, uint32_t group, int vif) {
     memset(&CtlReq, 0, sizeof(struct mfcctl));
     CtlReq =  (struct mfcctl){ {src}, {group}, vif, {0}, 0, 0, 0, 0 };
 #endif
-
+#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
+    k_deleteUpcall(src, group);
+#endif
     // Remove mfc from kernel.
     LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
         inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent);
@@ -334,7 +336,7 @@ bool k_delMRoute(uint32_t src, uint32_t group, int vif) {
 /**
 *   Delete all BW_UPCALLS for S,G
 */
-void k_deleteUpcalls(uint32_t src, uint32_t group) {
+void k_deleteUpcall(uint32_t src, uint32_t group) {
     struct bw_upcall bwUpc = { {src}, {group}, BW_UPCALL_DELETE_ALL, { {0}, 0, 0 }, { {0}, 0, 0} };
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_BW_UPCALL, (void *)&bwUpc, sizeof(bwUpc)) < 0)
         LOG(LOG_WARNING, 0, "Failed to delete BW upcall for Src %s, Dst %s.", inetFmt(src, 0), inetFmt(group, 0));

@@ -254,6 +254,7 @@ struct IfDesc {
     uint32_t                      mtu;                   // Interface MTU
     uint8_t                       state;                 // Operational state
     struct vifConfig             *conf;                  // Pointer to interface configuraion
+    struct vifConfig             *oconf;                 // Pointer to old interface configuraion
     bool                          filCh;                 // Flag for filter change during config reload
     struct querier                querier;               // igmp querier for interface
     struct ifStats                stats;                 // Interface statisticas and counters
@@ -267,7 +268,7 @@ struct IfDesc {
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
+#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
                                         {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
@@ -313,7 +314,6 @@ struct IfDesc {
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
 // Signal Handling.
-#define GOT_SIGINT  0x01
 #define GOT_SIGHUP  0x02
 #define GOT_SIGUSR1 0x04
 #define GOT_SIGUSR2 0x08
@@ -321,6 +321,7 @@ struct IfDesc {
 #define GOT_SIGCHLD 0x20
 #define GOT_SIGPIPE 0x40
 #define GOT_SIGTERM 0x80
+#define GOT_SIGINT  0x100
 #define NOSIG      (sigstatus == 0)
 #define STARTUP    (sigstatus & 0x01)
 #define CONFRELOAD (sigstatus & GOT_SIGUSR1)
@@ -329,7 +330,7 @@ struct IfDesc {
 #define RESTART    (sigstatus & GOT_SIGURG)
 #define SCHLD      (sigstatus & GOT_SIGCHLD)
 #define SPIPE      (sigstatus & GOT_SIGPIPE)
-#define SHUTDOWN   (sigstatus & GOT_SIGTERM)
+#define SHUTDOWN   (sigstatus & (GOT_SIGTERM | GOT_SIGINT))
 
 static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2",
                                 "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "",
@@ -598,13 +599,13 @@ bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
 bool    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
 bool    k_delMRoute(uint32_t src, uint32_t group, int vif);
-void    k_deleteUpcalls(uint32_t src, uint32_t group);
+void    k_deleteUpcall(uint32_t src, uint32_t group);
 
 /**
 *   mctable.c
 */
 void     bwControl(struct IfDesc *IfDp);
-void     clearGroups(void *Dp);
+void     clearGroups(struct IfDesc *IfDp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
