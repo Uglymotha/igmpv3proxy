@@ -63,8 +63,20 @@ char Usage[] =
 PACKAGE_STRING "\n";
 
 // Buffers for representations of IP addresses / IGMP / GREC types, to be passed to inetFmt(), grecKind() and igmpPacketKind().
-static char    s[8][20];
+static char    s[8][STRBUF];
 static uint64_t pos = 0;
+
+/**
+*   Formats log string based on condition.
+*/
+char *strFmt(bool cond, const char *s1, const char *s2, ...) {
+    uint8_t i = pos++%8;
+    va_list argPt;
+
+    va_start(argPt, s2);
+    vsnprintf(s[i], sizeof(s[i]), cond ? s1 : s2, argPt);
+    return s[i];
+}
 
 /**
 *   Convert an IP subnet number in network format into a printable string including the netmask as a number of bits.
@@ -306,14 +318,13 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
 */
 void ipRules(int tbl, bool activate) {
     struct IfDesc *IfDp;
-    char           msg[12];
 
-    sprintf(msg, "%d", tbl);
     LOG(LOG_NOTICE, 0, "%s mrules for table %d.", activate ? "Adding" : "Removing", tbl);
     GETIFL_IF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
         LOG(LOG_INFO, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
         FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(-2) == 0) {
-            execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table", msg, NULL);
+            execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table",
+                   strFmt(1, "%d", "", tbl), NULL);
             LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
             exit(ENOEXEC);
         }
@@ -324,26 +335,23 @@ void ipRules(int tbl, bool activate) {
 *   Show memory statistics for debugging purposes.
 */
 void getMemStats(int h, int cli_fd) {
-    char buf[1280], msg[1024];
+    char buf[1280] = "%lld, %lld, %lld, %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld "
+                     "%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld "
+                     "%lld %lld",
+         msg[1024] = "Current Memory Statistics:\n"
+                     "Various: %lldb in use, %lld allocs, %lld frees.\n"
+                     "Buffers: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.\n"
+                     "Timers:  %lldb in use, %lld allocs, %lld frees.\n"
+                     "Config:  %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n"
+                     "         %lld allocs total, %lld interfaces, %lld config, %lld filters.\n"
+                     "         %lld  frees total, %lld interfaces, %lld config, %lld filters.\n"
+                     "Routes:  %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.\n"
+                     "         %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n"
+                     "         %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n";
     struct rusage usage;
 
     if (cli_fd >= 0) {
-        if (h) {
-            strcpy(msg, "Current Memory Statistics:\n");
-            strcat(msg, "Various: %lldb in use, %lld allocs, %lld frees.\n");
-            strcat(msg, "Buffers: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.\n");
-            strcat(msg, "Timers:  %lldb in use, %lld allocs, %lld frees.\n");
-            strcat(msg, "Config:  %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n");
-            strcat(msg, "         %lld allocs total, %lld interfaces, %lld config, %lld filters.\n");
-            strcat(msg, "         %lld  frees total, %lld interfaces, %lld config, %lld filters.\n");
-            strcat(msg, "Routes:  %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.\n");
-            strcat(msg, "         %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
-            strcat(msg, "         %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.\n");
-        } else
-            strcpy(msg, "%lld, %lld, %lld, %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld"
-                        "%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld"
-                        "%lld %lld");
-        sprintf(buf, msg, memuse.var, memalloc.var, memfree.var,
+        sprintf(h ? buf : msg, h ? msg : buf, memuse.var, memalloc.var, memfree.var,
                           memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
                           memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd, memuse.tmr, memalloc.tmr, memfree.tmr,
                           memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil,
@@ -355,7 +363,7 @@ void getMemStats(int h, int cli_fd) {
                           memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry,
                           memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
                           memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
-        send(cli_fd, buf, strlen(buf), MSG_DONTWAIT);
+        send(cli_fd, h ? buf : msg, strlen(buf), MSG_DONTWAIT);
     }
 
     LOG(LOG_DEBUG, 0, "Buffer Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
@@ -380,20 +388,18 @@ void getMemStats(int h, int cli_fd) {
         memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
 
     if (getrusage(RUSAGE_SELF, &usage) < 0) {
-        if (cli_fd && !h)
-            send(cli_fd, "\n", 1, MSG_DONTWAIT);
+        if (cli_fd)
+            send(cli_fd, h ? "getrusage() failed.\n" : " -1 -1 -1 -1 -1 -1\n", h ? 20 : 19, MSG_DONTWAIT);
         LOG(LOG_WARNING, 1, "getrusage() failed.");
     } else {
         if (cli_fd >= 0) {
-            if (h)
-                strcpy(msg, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.\n");
-            else
-                strcpy(msg, " %lld %lld %lld %lld %lld\n");
-            sprintf(buf, msg, usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
+            sprintf(buf, h ? "System Stats: resident %ldKB, shared %ldKB, unshared %ldKB, stack %ldKB, signals %ld.\n"
+                           : " %ld %ld %ld %ld %ld\n",
+                    usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
             send(cli_fd, buf, strlen(buf), MSG_DONTWAIT);
         }
-        LOG(LOG_DEBUG, 0, "System Stats:  resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
+        LOG(LOG_DEBUG, 0, "System Stats: resident %lldKB, shared %lldKB, unshared %lldKB, stack %lldKB, signals %lld.",
             usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_nsignals);
     }
-    LOG(LOG_DEBUG, 0, "%lld log strings generated.", pos);
+    LOG(LOG_DEBUG, 0, "%lld strings formatted.", pos);
 }

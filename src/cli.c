@@ -99,76 +99,87 @@ int initCli(int mode) {
 /**
 *   Processes an incoming cli connection. Requires the fd of the cli socket.
 */
-void acceptCli(void)
+bool acceptCli(void)
 {
-    int                 pid, len = 0, i = 0, fd = -1, s = sizeof(struct sockaddr), h;
+    int                 pid, len = 0, fd = -1, s = sizeof(struct sockaddr), h;
     uint32_t            addr = (uint32_t)-1, mask = (uint32_t)-1;
-    char                buf[CLI_CMD_BUF] = {0}, msg[CLI_CMD_BUF] = {0};
     struct sockaddr     cli_sa;
     struct IfDesc      *IfDp = NULL;
+    static int          i = 0;
 
     // Receive and answer the cli request.
-    if ((fd = accept(cli_fd, &cli_sa, (socklen_t *)&s)) < 0) {
-        LOG(errno == EAGAIN ? LOG_NOTICE : LOG_WARNING, 1, "acceptCli: Failed accept()");
-        return;
+    if ((fd = accept(cli_fd, &cli_sa, (socklen_t *)&s)) < 0 && ++i <= 10) {
+        LOG(errno == EAGAIN ? LOG_NOTICE : LOG_WARNING, 1, "failure %d in cli accept().");
+        return true;
+    } else if (i > 10) {
+        LOG(LOG_ERR, errno, "Too many failures in cli accept(). Reopening socket.");
+        i = 0;
+        return false;
     } else if ((pid = igmpProxyFork(-1)) != 0) {
         if (pid < 0)
             send(fd, "Cannot fork()\n", 14, MSG_DONTWAIT);
         close(fd);
-        return;
+        i = 0;
+        return true;
     }
-    LOG(LOG_INFO, 0, "RECV CLI (%d) Request.", chld.onr);
-    while (!(errno = 0) && (len = recv(fd, &buf, CLI_CMD_BUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && i++ < 10)
+
+    // Child answers clie request.
+    char *buf = strFmt(1, "", "");
+    while (!(errno = 0) && (len = recv(fd, buf, STRBUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && ++i <= 10)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
+    if (i > 10)
+        exit(1);
+    LOG(LOG_INFO, 0, "RECV CLI Request #%d: '%s'.", chld.onr, buf);
     h = len > 1 && buf[1] == 'h' ? 0 : 1;
-    if (len <= 0 || len > CLI_CMD_BUF) {
+    if (len <= 0 || len > STRBUF) {
         LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf);
+        buf = strFmt(1, "Error connecting to daemon. %s", "", strerror(errno));
     } else if (buf[0] == 'r' || buf[0] == 'i' || buf[0] == 'f') {
         i = h ? 2 : 3;
         if (len > i && (! (IfDp = getIf(0, &buf[i], FINDNAME | SRCHVIFL))
-                    && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr)))))
-            if (buf[0] == 'r') {
-                LOG(LOG_WARNING, 0, "CLI (%d) %s invalid interface or subnet/mask. %s", chld.onr, &buf[i]);
-                sprintf(msg, "%s is not a valid interface, subnet/mask or multicast address.\n", &buf[i]);
-            } else {
-                LOG(LOG_WARNING, 0, "CLI (%d) interface %s not found.", chld.onr, &buf[i]);
-                sprintf(msg, "Interface '%s' Not Found.\n", &buf[i]);
-            }
-        else if (buf[0] == 'r')
-            logRouteTable("", h, fd, addr, mask, IfDp);
-        else if (buf[0] == 'i')
-            getIfStats(IfDp, h, fd);
-        else if (buf[0] == 'f')
-            getIfFilters(IfDp, h, fd);
+                    && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
+            LOG(LOG_WARNING, 0, strFmt(buf[0] == 'r', "CLI (%d) %s invalid interface or subnet/mask. %s",
+                                       "CLI (%d) interface %s not found.", chld.onr, &buf[i]));
+            buf = strFmt(buf[0] == 'r', "%s is not a valid interface, subnet/mask or multicast address.\n",
+                         "Interface '%s' Not Found.\n", &buf[i]);
+        } else {
+            if (buf[0] == 'r')
+                logRouteTable("", h, fd, addr, mask, IfDp);
+            else if (buf[0] == 'i')
+                getIfStats(IfDp, h, fd);
+            else if (buf[0] == 'f')
+                getIfFilters(IfDp, h, fd);
+            buf[0] = 0;
+        }
     } else if (buf[0] == 'c' || buf[0] == 'b') {
         sighandled |= buf[0] == 'c' ? GOT_SIGUSR1 : GOT_SIGUSR2;
-        buf[0] == 'c' ? sprintf(msg, "Reloading Configuration.\n")
-                      : sprintf(msg, "Rebuilding Interfaces.\n");
+        buf = strFmt(buf[0] == 'c', "Reloading Configuration.\n", "Rebuilding Interfaces.\n");
         kill(getppid(), buf[0] == 'c' ? SIGUSR1 : SIGUSR2);
     } else if (buf[0] == 't') {
         DEBUGQUEUE("", h, fd);
+        buf[0] = 0;
     } else if (buf[0] == 'm') {
         getMemStats(h, fd);
     } else if (buf[0] == 'p' && mrt_tbl < 0) {
-        sprintf(msg, "Monitor PID: %d\n", getppid());
+        sprintf(buf, "Monitor PID: %d\n", getppid());
         FOR_IF((i = 0; i < chld.nr; i++), chld.c[i].tbl >= 0) {
             if (chld.c[i].pid > 0)
-                sprintf(msg, "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
+                sprintf(&buf[strlen(buf)], "Table: %d - PID: %d\n", chld.c[i].tbl, chld.c[i].pid);
             else
-                sprintf(msg, "Table: %d - %s\n", chld.c[i].tbl, exitmsg[chld.c[i].st]);
-            send(fd, msg, strlen(msg), MSG_DONTWAIT);
+                sprintf(&buf[strlen(buf)], "Table: %d - %s\n", chld.c[i].tbl, exitmsg[chld.c[i].st]);
+            send(fd, buf, strlen(buf), MSG_DONTWAIT);
+            buf[0] = 0;
         }
-        return;
     } else if (buf[0] == 'p' && mrt_tbl >= 0) {
-        sprintf(msg, "Table: %d - PID: %d\n", mrt_tbl, getppid());
+        sprintf(buf, "Table: %d - PID: %d\n", mrt_tbl, getppid());
     } else
-        sprintf(msg, "GO AWAY\n");
+        sprintf(buf, "GO AWAY\n");
 
     // Close connection.
-    if (strlen(msg))
-        send(fd, msg, strlen(msg), MSG_DONTWAIT);
+    if (strlen(buf))
+        send(fd, buf, strlen(buf), MSG_DONTWAIT);
     close(fd);
-    LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI (%d) command '%s'.", errno ? "Failed" : "Finished", chld.onr, buf);
+    LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI command #%d.", errno ? "Failed" : "Finished", chld.onr);
     exit(errno > 0);
 }
 
@@ -182,7 +193,7 @@ void cliCmd(char *cmd, int tbl) {
     struct sigaction   sa;
     struct stat        st;
     struct sockaddr_un srv_sa;
-    char               buf[CLI_CMD_BUF+1] = "", *path, tpath[128];
+    char               buf[STRBUF+1] = "", *path, tpath[128];
 
     sa.sa_handler = cliSignalHandler;
     sa.sa_flags = 0;    /* Interrupt system calls */
@@ -197,7 +208,6 @@ void cliCmd(char *cmd, int tbl) {
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
     srv_sa.sun_len = SUN_LEN(&srv_sa);
 #endif
-
     // Check for daemon socket location.
     path = strtok(RUN_PATHS, " ");
     while (path) {
@@ -219,19 +229,18 @@ void cliCmd(char *cmd, int tbl) {
         }
         path = strtok(NULL, " ");
     }
-
     // Open and bind socket for receiving answers from daemon.
     if (strcmp(srv_sa.sun_path, "") == 0 || (srv_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0
            || connect(srv_fd, (struct sockaddr*)&srv_sa, sizeof(struct sockaddr_un)) != 0) {
         fprintf(stderr, "Cannot open daemon socket. %s\n", strerror(errno));
         exit(-1);
     }
-    if (send(srv_fd, cmd, strlen(cmd), 0) < 0) {
+    if (send(srv_fd, cmd, strlen(cmd) + 1, 0) < 0) {
         fprintf(stderr, "Cannot send command. %s\n", strerror(errno));
         exit(-1);
     }
     // Receive the daemon's answer. It will be closed by one single byte.
-    for (int len = 0; (len = recv(srv_fd, &buf, CLI_CMD_BUF, 0)) > 0; buf[len] = '\0', fprintf(stdout, "%s", buf));
+    for (int len = 0; (len = recv(srv_fd, &buf, STRBUF, 0)) > 0; buf[len] = '\0', fprintf(stdout, "%s", buf));
     close(srv_fd);
 }
 

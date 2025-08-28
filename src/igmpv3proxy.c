@@ -182,7 +182,7 @@ int main(int ArgCn, char *ArgVc[]) {
         }
     }
     if ((stat(CONF->runPath, &st) == -1 && (mkdir(CONF->runPath, 0770))) || chmod (CONF->runPath, 01770)) {
-        fprintf(stderr, "Failed to create run directory %s. %s", CONF->runPath, strerror(errno));
+        fprintf(stderr, "Failed to create run directory %s. %s\n", CONF->runPath, strerror(errno));
         exit(-1);
     } else {
         remove(strcat(CONF->runPath, "root"));
@@ -218,9 +218,9 @@ int igmpProxyFork(int tbl) {
         for (i = 0; i < chld.nr && (mrt_tbl != chld.c[i].tbl || chld.c[i].pid != 0); i++);
     if (tbl >= 0 && i < chld.nr && chld.c[i].pid > 0) {
         pid = chld.c[i].pid;
-        LOG(LOG_INFO, 0, "%s for table %d already active.", tbl >= 0 ? "Proxy" : "Child", tbl);
+        LOG(LOG_INFO, 0, "%s for table %d already active.", strFmt(tbl >= 0, "Proxy", "Child"), tbl);
     } else if ((pid = fork()) < 0) {
-        LOG(LOG_ERR, eNOFORK, "Cannot fork() %s %d.", tbl >= 0 ? "proxy" : "child", chld.nr);
+        LOG(LOG_ERR, eNOFORK, "Cannot fork() %s %d.", strFmt(tbl >= 0, "proxy", "child"), chld.nr);
     } else if (pid == 0) {
         // Child initializes its own start time, Closes sockets in use by monitor and opens new ones.
         TIME_STR(tS, starttime);
@@ -240,8 +240,8 @@ int igmpProxyFork(int tbl) {
         chld.c[i].st = 0;
         if (i == chld.nr)
             chld.nr++;
-        LOG(tbl >= 0 ? LOG_NOTICE : LOG_INFO, 0, "Forked %s: %d PID: %d for table: %d.",
-            tbl >= 0 ? "proxy" : "child", i + 1, chld.c[i].pid, chld.c[i].tbl);
+        LOG(tbl >= 0 ? LOG_INFO : LOG_DEBUG, 0, "Forked %s: %d PID: %d%s.",
+            tbl >= 0 ? "proxy" : "child", i + 1, chld.c[i].pid, strFmt(tbl >= 0, " for table: %d", "", chld.c[i].tbl));
     }
 
     return pid;
@@ -342,7 +342,6 @@ static void igmpProxyInit(void) {
 static void igmpProxyMonitor(void) {
     struct timespec timeout = (struct timespec){ 0, 0 };
     int             pid, status, i;
-
     LOG(LOG_WARNING, 0, "Monitoring %d proxy processes.", chld.nr);
     FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].tbl > 0 && !CONF->disableIpMrules)
         ipRules(chld.c[i].tbl, true);
@@ -357,8 +356,9 @@ static void igmpProxyMonitor(void) {
                        chld.c[i].pid == pid) {
                     chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
                     LOG(WIFEXITED(status) ? LOG_INFO : chld.c[i].tbl >= 0 ? LOG_WARNING : LOG_NOTICE, 0,
-                        "%s: %d PID: %d for table: %d, %s (%i)", chld.c[i].tbl >= 0 ? "Proxy" : "Child", i + 1, chld.c[i].pid,
-                        chld.c[i].tbl, exitmsg[chld.c[i].st], chld.c[i].st);
+                        "%s: %d PID: %d%s%s (%i)", strFmt(chld.c[i].tbl >= 0, "Proxy", "Child"), i + 1,
+                        chld.c[i].pid, strFmt(chld.c[i].tbl >= 0, " for table: %d; ", "; ", chld.c[i].tbl),
+                        exitmsg[chld.c[i].st], chld.c[i].st);
                     chld.c[i].pid = 0;
                     if (chld.c[i].tbl >= 0 && (   chld.c[i].st == SIGTERM || chld.c[i].st == SIGABRT
                                                || chld.c[i].st == SIGSEGV || chld.c[i].st == SIGKILL)) {
@@ -368,7 +368,7 @@ static void igmpProxyMonitor(void) {
                     } else if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
                         ipRules(chld.c[i].tbl, false);
                 }
-                if (pid < 0)
+                if (pid < 0 && errno != ECHILD)
                     LOG(LOG_ERR, 1, "SIGCHLD: waitpid() error.");
             } else if (sighandled & (GOT_SIGTERM | GOT_SIGURG | GOT_SIGHUP | GOT_SIGUSR1)) {
                 sigstatus    = sighandled & GOT_SIGTERM ? GOT_SIGTERM : sighandled & GOT_SIGURG ? GOT_SIGURG :
@@ -472,9 +472,8 @@ static void igmpProxyRun(void) {
                 acceptIgmp(pollFD[0].fd);
             }
             // Check if any cli connection needs to be handled.
-            if (pollFD[1].revents & POLLIN)
-                acceptCli();
-
+            if (pollFD[1].revents & POLLIN && !acceptCli())
+                pollFD[1].fd = initCli(2);
             clock_gettime(CLOCK_REALTIME, &curtime);
             LOG(LOG_DEBUG, 0, "Finished request %d in %dus.", i, timeDiff(timeout, curtime).tv_nsec / 1000);
             // Keep handling request until timeout, signal or max nr of queued requests to process in 1 loop.
@@ -488,7 +487,6 @@ static void igmpProxyRun(void) {
 */
 void igmpProxyCleanUp(int code) {
     int    nr = 0, pid, status;
-    char   msg[24];
 
     FOR_IF ((int i = 0; i < chld.nr; i++), chld.c[i].pid > 0 && (SHUTDOWN || chld.c[i].tbl == mrt_tbl))
         nr++;
@@ -499,10 +497,9 @@ void igmpProxyCleanUp(int code) {
             LOG(LOG_NOTICE, 0, "Waiting for %d process%s to finish.", nr, nr != 1 ? "es" : "");
         while (nr && (pid = waitpid(-1, &status, 0)) > 0) FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
             chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
-            sprintf(msg, "for table %d, ", chld.c[i].tbl);
             LOG(chld.c[i].tbl != mrt_tbl ? LOG_NOTICE : LOG_INFO, 0, "%s %d, %sPID: %d, %s (%d).",
-                chld.c[i].tbl == mrt_tbl ? "Child" : "Proxy", i + 1, chld.c[i].tbl == mrt_tbl ? "" : msg,
-                pid, exitmsg[chld.c[i].st], chld.c[i].st);
+                chld.c[i].tbl == mrt_tbl ? "Child" : "Proxy", i + 1,
+                strFmt(chld.c[i].tbl == mrt_tbl, "", "for table %d, ",  chld.c[i].tbl),  pid, exitmsg[chld.c[i].st], chld.c[i].st);
             chld.c[i].pid = nr = 0;
             if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
                 ipRules(chld.c[i].tbl, false);

@@ -202,6 +202,7 @@ struct vifConfig {
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
+    uint16_t            maxOrigins;                     // Maximun nr of sources for groups.
     uint32_t            bwControl;                      // BW Control interval
     bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
@@ -216,9 +217,9 @@ struct vifConfig {
 #define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultThreshold,           \
                                             CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,     \
                                             CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,               \
-                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount, 0, 0}, CONF->bwControl,     \
-                                            CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave, CONF->proxyLocalMc, \
-                                            NULL, NULL, *VIFCONF }
+                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount, 0, 0}, CONF->maxOrigins,    \
+                                            CONF->bwControl, CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave,    \
+                                            CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -366,7 +367,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define  eNOCONF -7
 
 // CLI Defines.
-#define CLI_CMD_BUF 256
+#define STRBUF 256
 
 // Memory (de)allocation macro's, which check for valid size and counts.
 #define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {       \
@@ -488,7 +489,6 @@ extern uint32_t         uVifs;
 extern uint32_t         allhosts_group;                // All hosts addr in net order
 extern uint32_t         allrouters_group;              // All hosts addr in net order
 extern uint32_t         alligmp3_group;                // IGMPv3 addr in net order
-static char             strBuf[64];                    // Temp string buffer.
 
 //#################################################################################
 //  Lib function prototypes.
@@ -519,7 +519,7 @@ bool               loadConfig(char *cfgFile);
 */
 int  initCli(int mode);
 int  closeCliFd(void);
-void acceptCli(void);
+bool acceptCli(void);
 void cliCmd(char *cmd, int tbl);
 
 /**
@@ -578,6 +578,7 @@ const char     *grecKind(unsigned int type);
 uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
+char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 bool            myLog(int Serverity, const char *func, int Errno, const char *FmtSt, ...);
 void            getMemStats(int h, int cli_fd);
 void            ipRules(int tbl, bool activate);
@@ -598,7 +599,7 @@ int     k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
 bool    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
-bool    k_delMRoute(uint32_t src, uint32_t group, int vif);
+bool    k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp);
 void    k_deleteUpcall(uint32_t src, uint32_t group);
 
 /**
@@ -624,7 +625,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 /**
 *   timers.c
 */
-#define         DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
+#define DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
 intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
 intptr_t        timerClear(intptr_t timer_id, bool retdata);

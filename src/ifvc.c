@@ -207,8 +207,8 @@ void configureVifs(void) {
 
     uVifs = 0;
     GETIFL(IfDp) {
-        // Find and link matching config to interfaces, except when rescanning vifs and exisiting interface.
-        if ((!IFREBUILD && !SHUTDOWN && !RESTART) || ! IfDp->conf) {
+        // When config is reloaded, find and link matching config to interfaces.
+        if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
             for (;vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
             if (vifConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
@@ -228,10 +228,9 @@ void configureVifs(void) {
             IfDp->oconf = IfDp->conf;
             IfDp->conf = vifConf;
         }
-        // We will fork proxy for default table 0 on seeing the first interface.
-        if (!SHUTDOWN && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
+        // We will fork proxy for default table 0 on first seeing the first interface for that table.
+        if (!SHUTDOWN && !RESTART && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
             igmpProxyFork(0);
-
         // Evaluate to old and new state of interface.
         if (!STARTUP && !CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
@@ -264,7 +263,6 @@ void configureVifs(void) {
             IfDp->conf->qry.ver = 3;
         if (IfDp->conf->qry.ver == 1)
             IfDp->conf->qry.interval = 10, IfDp->conf->qry.responseInterval = 10;
-
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
             for (fil = vifConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
@@ -280,7 +278,6 @@ void configureVifs(void) {
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
-
         // Check if vifs need to be added or removed and (re)init the group table.
         if (!IS_DISABLED(newstate)) {
             if (IfDp->index == (uint8_t)-1 && k_addVIF(IfDp))
@@ -303,7 +300,6 @@ void configureVifs(void) {
         clearGroups(IfDp);
         IfDp->filCh = false;
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
-            LOG(LOG_DEBUG,0,"KANKERZOOI %p", IfDp->bwTimer);
             IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
             if (!IS_DISABLED(oldstate))
                 ctrlQuerier(0, IfDp);
@@ -329,7 +325,6 @@ void configureVifs(void) {
         CONF->quickLeave = false;
         CONF->dHostsHTSize = 0;
     }
-
     // Check if quickleave was enabled or disabled due to config change.
     if ((CONFRELOAD || SHUP) && OLDCONF->dHostsHTSize != CONF->dHostsHTSize && mrt_tbl >= 0) {
         LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
@@ -346,91 +341,76 @@ void configureVifs(void) {
 *   Outputs interface statistics to socket specified in arguments.
 */
 void getIfStats(struct IfDesc *IfDp, int h, int fd) {
-    char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "";
+    char          *buf;
     int            i = 1;
     struct totals {
         uint64_t   bytes;
         uint64_t   rate;
         uint64_t   ratelimit;
     }              total = { 0, 0, 0 };
-
     if (! IfDp && h) {
-        sprintf(buf, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum"
-                     "|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n");
+        buf = strFmt(h, "Current Interface Table:\n_____|______Name_____|Vif|Ver|_______IP______|___State____|Checksum"
+                           "|Quickleave|____Querier____|_______Data______|______Rate______|___Ratelimit___\n", "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
-
     if (IfDp) {
-        if (h)
-            sprintf(buf, "Details for Interface: %s\n    IGMP Queries Received: %lu\n    IGMP Queries Sent:     %lu\n",
-                    IfDp->Name, IfDp->stats.rqCnt, IfDp->stats.sqCnt);
-        else
-            sprintf(buf, "%lu,%lu\n", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
+        buf = strFmt(h, "Details for Interface: %s\n    IGMP Queries Received: %lu\n    IGMP Queries Sent:     %lu\n",
+                        "%s%lu,%lu\n", h ? IfDp->Name : "", IfDp->stats.rqCnt, IfDp->stats.sqCnt);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
         return;
     } else GETVIFL_IF(IfDp, mrt_tbl == -1 || IfDp->conf->tbl == mrt_tbl) {
-        if (h) {
+        if (h)
             total = (struct totals){ total.bytes + IfDp->stats.iBytes + IfDp->stats.oBytes,
                                      total.rate + IfDp->stats.iRate + IfDp->stats.oRate,
                                      total.ratelimit + IfDp->conf->ratelimit };
-            strcpy(msg, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n");
-        } else {
-            strcpy(msg, "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n");
-        }
-        sprintf(buf, msg, i++, IfDp->Name, IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
-                inetFmt(IfDp->InAdr.s_addr, 0), IS_DISABLED(IfDp->state) ? "Disabled" :
-                                                IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
-                                                IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
-                IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
-                inetFmt(IfDp->querier.ip, 0), IfDp->stats.iBytes + IfDp->stats.oBytes, IfDp->stats.iRate + IfDp->stats.oRate,
-                !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
+        buf = strFmt(h, "%4d |%15s| %2d| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n",
+                         "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n", i++, IfDp->Name,
+                     IfDp->index == (uint8_t)-1 ? -1 : IfDp->index, IfDp->querier.ver,
+                     inetFmt(IfDp->InAdr.s_addr, 0),     IS_DISABLED(IfDp->state) ? "Disabled" :
+                                                     IS_UPDOWNSTREAM(IfDp->state) ? "UpDownstream" :
+                                                       IS_DOWNSTREAM(IfDp->state) ? "Downstream" : "Upstream",
+                     IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
+                     inetFmt(IfDp->querier.ip, 0), IfDp->stats.iBytes + IfDp->stats.oBytes,
+                     IfDp->stats.iRate + IfDp->stats.oRate,
+                     !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
-    if (h) {
-        strcpy(msg, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14lld B "
-                    "| %10lld B/s | %10lld B/s\n");
-        sprintf(buf, msg, total.bytes, total.rate, total.ratelimit);
-        send(fd, buf, strlen(buf), MSG_DONTWAIT);
-    }
+    buf = strFmt(h, "Total|---------------|---|---|---------------|------------|--------|----------|---------------|%14ld B "
+                        "| %10ld B/s | %10ld B/s\n", "", total.bytes, total.rate, total.ratelimit);
+    send(fd, buf, strlen(buf), MSG_DONTWAIT);
 }
 
 /**
 *   Outputs configured filters to socket specified in arguments.
 */
 void getIfFilters(struct IfDesc *IfDp2, int h, int fd) {
-    char           buf[CLI_CMD_BUF] = "", msg[CLI_CMD_BUF] = "", s[10] = "";
+    char          *buf;
     struct IfDesc *IfDp = NULL;
     int            i = 1;
 
     if (h) {
-        sprintf(buf, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__"
-                     "|___Action___|______Rate_____\n", IfDp ? " for " : "", IfDp2 ? IfDp2->Name : "");
+        buf = strFmt(h, "Current Active Filters%s%s:\n_______Int______|_nr_|__________SRC________|__________DST________|___Dir__"
+                        "|___Action___|______Rate_____\n", "", IfDp ? " for " : "", IfDp2 ? IfDp2->Name : "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
-
     GETVIFL(IfDp) {
         struct filters *filter;
         int             i = 1;
+        char           *s = NULL;
         if ((mrt_tbl >= 0 && IfDp->conf->tbl != mrt_tbl) || (IfDp2 && IfDp != IfDp2))
             continue;
         for (filter = IfDp->conf->filters; filter; filter = filter->next, i++) {
-            if (filter->action > ALLOW) {
-                strcpy(msg, h ? "%10lld B/s" : "%lld");
-                sprintf(s, msg, filter->action);
-            }
-            if (h)
-                strcpy(msg, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n");
-            else
-                strcpy(msg, "%s %d %s %s %s %s %s\n");
-            sprintf(buf, msg, !h || i == 1 ? IfDp->Name : "", i, inetFmt(filter->src.ip, filter->src.mask),
-                    inetFmt(filter->dst.ip, filter->dst.mask), filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
-                    filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s);
+            if (filter->action > ALLOW)
+                s = strFmt(h, "%10lld B/s", "%lld", filter->action);
+            buf = strFmt(h, "%15s |%4d| %19s | %19s | %6s | %10s | %s\n", "%s %d %s %s %s %s %s\n", !h || i == 1 ? IfDp->Name : "",
+                         i, inetFmt(filter->src.ip, filter->src.mask), inetFmt(filter->dst.ip, filter->dst.mask),
+                         filter->dir == 1 ? "up" : filter->dir == 2 ? "down" : "both",
+                         filter->action == ALLOW ? "Allow" : filter->action == BLOCK ? "Block" : "Ratelimit", s ? s : "");
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }
 
-    if (h) {
-        sprintf(buf, "-------------------------------------------------------------------------------------------------------\n");
-        send(fd, buf, strlen(buf), MSG_DONTWAIT);
-    }
+    if (h)
+        send(fd, "-------------------------------------------------------------------------------------------------------\n",
+             125 , MSG_DONTWAIT);
 }

@@ -49,7 +49,7 @@ struct vifFlags {
     uint32_t            su;                       // Filters set flag for upstream
     uint32_t            u;                        // Active upstream vifs for mct, or downstream vifs for src/mfc
     uint32_t            ud;                       // Denied upstream vifs
-    uint32_t            us;                       // Upstream membership state
+    uint32_t            uj;                       // Upstream membership state (joined in exclude mode)
     uint32_t            lm;                       // Last member vifs
     uint32_t            qry;                      // Active query vifs
     uint8_t             age[MAXVIFS];             // Age value
@@ -109,12 +109,13 @@ struct qlst {
     struct qlst       *prev;
     struct qlst       *next;
     struct mcTable    *mct;                       // Pointer to group being queried
-    struct IfDesc     *IfDp;                      // Interface for query
-    uint64_t           tid;                       // Timer ID
+    struct ifMct      *imc;                       // Interface for query
+    intptr_t           tid;                       // Timer ID
     uint8_t            type;                      // Query type (GSQ/GSSQ)
     uint8_t            code;                      // Query max response code
     uint8_t            misc;                      // Query misc (RA/QRV)
     uint8_t            cnt;                       // Nr of queries sent
+    uint32_t           group;                     // Group for query
     uint32_t           nsrcs;                     // Nr of sources in query
     struct src        *src[];                     // Array of pointers to sources
 };
@@ -141,11 +142,11 @@ struct qlst {
 // Prototypes
 struct mcTable *findGroup(register uint32_t group, bool create);
 struct ifMct   *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
-struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, uint32_t srcHash);
+struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, bool leave, uint32_t srcHash);
 void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join);
 bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
 struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
-bool            toInclude(struct mcTable *mct, struct IfDesc *IfDp);
+void            toInclude(struct mcTable *mct, struct ifMct *imc);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 void            groupSpecificQuery(struct qlst *qlst);
 void            delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src);

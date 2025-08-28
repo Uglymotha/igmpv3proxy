@@ -65,7 +65,10 @@ struct timespec timerAgeQueue(void) {
     for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout (#%d) - %s - Missed by %dus", i, node->name,
             timeDiff(node->time, curtime).tv_nsec / 1000);
+        clock_gettime(CLOCK_REALTIME, &node->time);
         node->func(node->data);
+        clock_gettime(CLOCK_REALTIME, &curtime);
+        LOG(LOG_DEBUG, 0, "%s took %dus", node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
         // The function may have removed the timeout itself, check before freeing.
         if (queue == node) {
             queue = node->next;
@@ -73,7 +76,6 @@ struct timespec timerAgeQueue(void) {
                 queue->prev = NULL;
             _free(node, tmr, TMSZ(node->name));
         }
-        clock_gettime(CLOCK_REALTIME, &curtime);
     }
 
     if (i > 1)
@@ -139,15 +141,15 @@ intptr_t timerClear(intptr_t tid, bool retdata) {
 *   Debugging utility
 */
 void timerDebugQueue(const char *header, int h, int fd) {
-    char                  msg[CLI_CMD_BUF] = "", buf[CLI_CMD_BUF] = "";
-    struct timeOutQueue  *node = queue;
-    uint64_t              i;
+    char                *buf;
+    struct timeOutQueue *node = queue;
+    uint64_t             i;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
     if (fd < 0)
         LOG(LOG_DEBUG, 0, "----------------------%s----------------------", header);
     else if (h) {
-        sprintf(buf, "Active Timers:\n_Nr_|____In____|________________Name_______________\n");
+        buf = strFmt(h, "Active Timers:\n_Nr_|____In____|________________Name_______________\n", "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
     for (i = 1; node; node = node->next, i++) {
@@ -155,16 +157,15 @@ void timerDebugQueue(const char *header, int h, int fd) {
         if (fd < 0)
             LOG(LOG_DEBUG, 0, "| %3d %5d.%1ds | %s", i, delay.tv_sec, delay.tv_nsec / 100000000, node->name);
         else {
-            strcpy(msg, h ? "%3d | %5d.%1ds | %s" : "%d %d.%d %s");
-            sprintf(buf, strcat(msg, "\n"), i, delay.tv_sec, delay.tv_nsec / 100000000, node->name);
+            buf = strFmt(h, "%3d | %5d.%1ds | %s\n", "%d %d.%d %s\n", i, delay.tv_sec, delay.tv_nsec / 100000000, node->name);
             send(fd, buf, strlen(buf), MSG_DONTWAIT);
         }
     }
     if (fd < 0) {
-        LOG(LOG_DEBUG, 0, "-------------------------------------------------------");
+        LOG(LOG_DEBUG, 0, "---------------------------------------------------");
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb in use, %lld allocs, %lld frees.", memuse.tmr, memalloc.tmr, memfree.tmr);
     } else if (h) {
-        sprintf(buf, "-------------------------------------------------------\n");
+        buf = strFmt(1, "---------------------------------------------------\n", "");
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     }
 }

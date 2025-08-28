@@ -310,7 +310,7 @@ bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
 /**
 *   Remove multicast MFC from the kernel.
 */
-bool k_delMRoute(uint32_t src, uint32_t group, int vif) {
+bool k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
@@ -319,16 +319,17 @@ bool k_delMRoute(uint32_t src, uint32_t group, int vif) {
 #else
     struct mfcctl CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl));
-    CtlReq =  (struct mfcctl){ {src}, {group}, vif, {0}, 0, 0, 0, 0 };
+    CtlReq =  (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
 #endif
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-    k_deleteUpcall(src, group);
+    if (IfDp->conf->bwControl)
+        k_deleteUpcall(src, group);
 #endif
     // Remove mfc from kernel.
     LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
         inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent);
     if (!(errno = 0) && setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
-        LOG(LOG_WARNING, 1, "MRT_DEL_MFC %d - %s failed.", vif, inetFmt(group, 0));
+        LOG(LOG_WARNING, 1, "MRT_DEL_MFC %d - %s failed.", IfDp->index, inetFmt(group, 0));
     return errno;
 }
 

@@ -49,9 +49,10 @@ static inline bool  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave maxorigins hashtablesize routetables"
-                             " defaultdown defaultup defaultupdown defaultthreshold defaultratelimit defaultquerierver"
-                             " defaultquerierip defaultrobustness defaultqueryinterval defaultqueryrepsonseinterval"
+static const char *options = " include phyint user group chroot defaultquickleave quickleave defaultmaxorigins"
+                             " hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit"
+                             " defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
+                             " defaultqueryrepsonseinterval"
                              " defaultlastmemberinterval defaultlastmembercount defaultbwcontrol rescanvif rescanconf loglevel"
                              " defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream"
                              " disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval"
@@ -62,7 +63,7 @@ static const char *options = " include phyint user group chroot defaultquickleav
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
-                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol";
+                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins";
 
 // Daemon Configuration.
 static struct Config       conf, oldconf;
@@ -115,7 +116,6 @@ void freeConfig(bool old) {
         }
         _free(cConf, vif, VIFSZ);
     }
-
     if (old || SHUTDOWN || RESTART) {
         // Free default filters when clearing old config, or on shutdown / restart.
         while (dFil) {
@@ -185,7 +185,6 @@ static inline bool nextToken(char *token) {
                 // Newline, Null, CR, Tab and space are end of token, or ignored.
                 finished = (tokenPtr > 1);
                 break;
-
             default:
                 // Append char to token. When oversized do not increase tokenPtr and keep parsing until EOL.
                 if (!commentFound && !overSized)
@@ -465,6 +464,14 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicast.", tmpPtr->name);
             tmpPtr->proxyLocalMc = false;
 
+        } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
+            if ((intToken < DEFAULT_MAX_ORIGINS && intToken != 0) || intToken > 65535)
+                LOG(LOG_WARNING, 0, "Config: Default Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
+            else {
+                tmpPtr->maxOrigins = intToken;
+                LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", conf.maxOrigins);
+            }
+
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
             tmpPtr->qry.ip = inet_addr(token + 1);
             LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 0));
@@ -717,9 +724,9 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Quick leave mode enabled.");
             conf.quickLeave = true;
 
-        } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
-            if (intToken < DEFAULT_MAX_ORIGINS || intToken > 65535)
-                LOG(LOG_WARNING, 0, "Config: Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
+        } else if (strcmp(" defaultmaxorigins", token) == 0 && INTTOKEN) {
+            if ((intToken < DEFAULT_MAX_ORIGINS && intToken != 0) || intToken > 65535)
+                LOG(LOG_WARNING, 0, "Config: Default Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
             else {
                 conf.maxOrigins = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", conf.maxOrigins);
