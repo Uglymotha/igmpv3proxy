@@ -127,6 +127,10 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
         LOG(LOG_NOTICE, 0, "Not joining denied group %s on %s.", inetFmt(mct->group, 0), IfDp->Name);
         return false;
     } else if (dir) {
+        if (mct->stamp.tv_nsec) {
+            imc = (void *)timerClear((intptr_t)mct->stamp.tv_nsec, true);
+            delGroup(imc->mct, imc->IfDp, imc, 3);
+        }
         BIT_SET(mct->vifB.d, IfDp->index);
         SET_HASH(mct->dHostsHT, srcHash);
         IF_GETVIFL_IF((mct->vifB.uj | mct->vifB.ud) != uVifs, IfDp, IS_UPSTREAM(IfDp->state) && NOT_SET(mct, uj, IfDp))
@@ -215,10 +219,8 @@ struct ifMct *delGroup(struct mcTable* mct, struct IfDesc *IfDp, struct ifMct *_
         LOG(LOG_INFO, 0, "Deleting group %s from table %d.",inetFmt(mct->group, 0), mctHash);
         if (IS_SET(mct, qry, IfDp))
             delQuery(IfDp, NULL, mct, NULL);
-        if (mct->stamp.tv_nsec) {
-            imc = (void *)timerClear((intptr_t)mct->stamp.tv_nsec, true);
-            delGroup(imc->mct, imc->IfDp, imc, 3);
-        }
+        if (mct->stamp.tv_nsec)
+            timerClear((intptr_t)mct->stamp.tv_nsec, true);
         // If deleting group downstream Send Leave requests and remove group upstream. If deleting upstream remove downstream.
         GETVIFL_IF(If, dir ? IS_SET(mct, u, If) : IS_SET(mct, d, If))
             delGroup(mct, If, NULL, !dir);
@@ -666,7 +668,7 @@ void clearGroups(struct IfDesc *IfDp) {
                 k_deleteUpcall(mfc->src->ip, mct->group);
 #endif
     }
-    if ((CONFRELOAD || SHUP || STARTUP) && IfDp->conf->bwControl && !IfDp->bwTimer) {
+    if ((CONFRELOAD || SHUP || STARTUP || RESTART) && IfDp->conf->bwControl && !IfDp->bwTimer) {
         IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
@@ -889,11 +891,10 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     struct src      *src = _src;
     struct mcTable  *mct = src ? src->mct : findGroup(group, true);
     bool             add = true;
-    if (activate && !mct->vifB.d) {
+    if (activate && !mct->vifB.d && ! mct->stamp.tv_nsec) {
         addGroup(mct, IfDp, 3, 0, (uint32_t)-1);
-        if (!mct->stamp.tv_nsec)
-            timerSet(CONF->topQueryInterval * 30, strFmt(1, "Unresolved route (%s:%s)", "", inetFmt(ip, 0), inetFmt(group, 0)),
-                     ageUnknownGroup, IfDp->uMct);
+        mct->stamp.tv_nsec = timerSet(CONF->topQueryInterval * 30, strFmt(1, "Unresolved group (%s)", "", inetFmt(group, 0)),
+                                      ageUnknownGroup, IfDp->uMct);
     }
 
     LOG(LOG_INFO, 0, "%s for src: %s to group: %s on VIF #%d %s.", activate ? "Activation" : "Deactivation",

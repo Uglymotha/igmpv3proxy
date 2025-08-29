@@ -52,14 +52,13 @@ static inline bool  parsePhyintToken(char *token);
 static const char *options = " include phyint user group chroot defaultquickleave quickleave defaultmaxorigins"
                              " hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit"
                              " defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
-                             " defaultqueryrepsonseinterval"
-                             " defaultlastmemberinterval defaultlastmembercount defaultbwcontrol rescanvif rescanconf loglevel"
-                             " defaultproxylocalmc defaultnoquerierelection proxylocalmc noproxylocalmc upstream downstream"
-                             " disabled ratelimit threshold querierver querierip robustness queryinterval queryrepsonseinterval"
-                             " lastmemberinterval lastmembercount defaultnocksumverify nocksumverify cksumverify noquerierelection"
-                             " querierelection nocksumverify cksumverify noquerierelection querierelection defaultfilterany"
-                             " nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl defaulttable"
-                             " defaultdisableipmrules logfile";
+                             " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
+                             " rescanvif rescanconf loglevel defaultproxylocalmc defaultnoquerierelection proxylocalmc"
+                             " noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness"
+                             " queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify"
+                             " nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify"
+                             " defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl"
+                             " defaulttable defaultdisableipmrules logfile";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
@@ -96,40 +95,41 @@ inline struct vifConfig **getVifConf(void) {
 *   Frees the old vifconf list and associated filters.
 */
 void freeConfig(bool old) {
-    struct vifConfig *tConf, *cConf;
-    struct filters   *tFil,  *dFil  = old ? oldconf.defaultFilters : conf.defaultFilters,
-                     *tRate, *dRate = old ? oldconf.defaultRates   : conf.defaultRates;
+    struct vifConfig *tConf, **cConf;
+    struct filters   *tFil,  **dFil  = old ? &oldconf.defaultFilters : &conf.defaultFilters,
+                     *tRate, **dRate = old ? &oldconf.defaultRates   : &conf.defaultRates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
-    for (cConf = old ? ovifConf : vifConf; cConf; cConf = tConf) {
-        tConf = cConf->next;
+    for (cConf = old ? &ovifConf : &vifConf; *cConf; *cConf = tConf) {
+        tConf = (*cConf)->next;
         // Remove and free filters and ratelimits.
-        while (cConf->filters && cConf->filters != dFil) {
-            tFil = cConf->filters->next;
-            _free(cConf->filters, fil, FILSZ);
-            cConf->filters = tFil;
+        while ((*cConf)->filters && (*cConf)->filters != *dFil) {
+            tFil = (*cConf)->filters->next;
+            _free((*cConf)->filters, fil, FILSZ);
+            (*cConf)->filters = tFil;
         }
-        while (cConf->rates && cConf->rates != dRate) {
-            tRate = cConf->rates->next;
-            _free(cConf->rates, fil, FILSZ);
-            cConf->rates = tRate;
+        while ((*cConf)->rates && (*cConf)->rates != *dRate) {
+            tRate = (*cConf)->rates->next;
+            _free((*cConf)->rates, fil, FILSZ);
+            (*cConf)->rates = tRate;
         }
-        _free(cConf, vif, VIFSZ);
+        _free(*cConf, vif, VIFSZ);
     }
+    *cConf = NULL;
     if (old || SHUTDOWN || RESTART) {
         // Free default filters when clearing old config, or on shutdown / restart.
-        while (dFil) {
-            tFil = dFil->next;
-            _free(dFil, fil, FILSZ);
-            dFil = tFil;
+        while (*dFil) {
+            tFil = (*dFil)->next;
+            _free(*dFil, fil, FILSZ);
+            *dFil = tFil;
         }
-        while (dRate) {
-            tRate = dRate->next;
-            _free(dRate, fil, FILSZ);
-            dRate = tRate;
+        while (*dRate) {
+            tRate = (*dRate)->next;
+            _free(*dRate, fil, FILSZ);
+            *dRate = tRate;
         }
     }
-    if (SHUTDOWN) {
+    if (SHUTDOWN || RESTART) {
         // On Shutdown stop any running timers.
         timers.rescanConf = timerClear(timers.rescanConf, false);
         timers.rescanVif = timerClear(timers.rescanVif, false);
@@ -239,7 +239,7 @@ static inline void initCommonConfig(void) {
     // Number of (hashed) route tables.
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
-    conf.mcTables = STARTUP ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
+    conf.mcTables = STARTUP | RESTART ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
 
     // Default interface state and parameters.
     conf.defaultInterfaceState = IF_STATE_DISABLED;
@@ -850,7 +850,11 @@ bool loadConfig(char *cfgFile) {
             LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
 
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
+#ifdef HAVE_NETLINK
             conf.rescanVif = intToken > 0 ? intToken : 0;
+#else
+            conf.rescanVif = intToken == 1 ? 2 : intToken > 1 ? intToken : 0;
+#endif
             LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
 
         } else if (strcmp(" rescanconf", token) == 0 && INTTOKEN) {
@@ -925,7 +929,7 @@ bool loadConfig(char *cfgFile) {
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
     // Check rescanvif status and start or clear timers if necessary.
-    if (conf.rescanVif && timers.rescanVif == (intptr_t)NULL)
+    if (conf.rescanVif > 1 && timers.rescanVif == (intptr_t)NULL)
         timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
     else if (!conf.rescanVif && timers.rescanVif != (intptr_t)NULL)
         timers.rescanVif = timerClear(timers.rescanVif, false);
@@ -960,8 +964,7 @@ void reloadConfig(intptr_t *tid) {
         memcpy(&conf, &oldconf, sizeof(struct Config));
     } else {
         // Rebuild the interfaces config, then free the old configuration.
-        if (!STARTUP)
-            rebuildIfVc(NULL);
+        rebuildIfVc(NULL);
         freeConfig(1);
         LOG(LOG_NOTICE, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }

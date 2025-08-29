@@ -68,6 +68,7 @@
 #include <sys/param.h>
 #include <sys/poll.h>
 #include <sys/resource.h>
+#include <sys/file.h>
 
 #include <net/if.h>
 #include <arpa/inet.h>
@@ -315,23 +316,25 @@ struct IfDesc {
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
 // Signal Handling.
-#define GOT_SIGHUP  0x02
-#define GOT_SIGUSR1 0x04
-#define GOT_SIGUSR2 0x08
-#define GOT_SIGURG  0x10
-#define GOT_SIGCHLD 0x20
-#define GOT_SIGPIPE 0x40
-#define GOT_SIGTERM 0x80
-#define GOT_SIGINT  0x100
-#define NOSIG      (sigstatus == 0)
-#define STARTUP    (sigstatus & 0x01)
-#define CONFRELOAD (sigstatus & GOT_SIGUSR1)
-#define IFREBUILD  (sigstatus & GOT_SIGUSR2)
-#define SHUP       (sigstatus & GOT_SIGHUP)
-#define RESTART    (sigstatus & GOT_SIGURG)
-#define SCHLD      (sigstatus & GOT_SIGCHLD)
-#define SPIPE      (sigstatus & GOT_SIGPIPE)
-#define SHUTDOWN   (sigstatus & (GOT_SIGTERM | GOT_SIGINT))
+#define GOT_SIGHUP   0x02
+#define GOT_SIGUSR1  0x04
+#define GOT_SIGUSR2  0x08
+#define GOT_SIGURG   0x10
+#define GOT_SIGCHLD  0x20
+#define GOT_SIGPIPE  0x40
+#define GOT_SIGTERM  0x80
+#define GOT_SIGINT   0x100
+#define GOT_SIGPROXY 0x8000
+#define NOSIG        (sigstatus == 0)
+#define STARTUP      (sigstatus & 0x01)
+#define CONFRELOAD   (sigstatus & GOT_SIGUSR1)
+#define IFREBUILD    (sigstatus & GOT_SIGUSR2)
+#define SHUP         (sigstatus & GOT_SIGHUP)
+#define RESTART      (sigstatus & GOT_SIGURG)
+#define SCHLD        (sigstatus & GOT_SIGCHLD)
+#define SPIPE        (sigstatus & GOT_SIGPIPE)
+#define SPROXY       (sigstatus & GOT_SIGPROXY)
+#define SHUTDOWN     (sigstatus & (GOT_SIGTERM | GOT_SIGINT))
 
 static const char *SIGS[32] = { "", "SIGHUP", "SIGINT", "", "", "", "SIGABRT", "", "", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2",
                                 "SIGPIPE", "", "SIGTERM", "SIGURG", "SIGCHLD", "", "", "SIGCHLD", "", "", "SIGURG", "", "", "",
@@ -370,24 +373,24 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define STRBUF 256
 
 // Memory (de)allocation macro's, which check for valid size and counts.
-#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {       \
-                                getMemStats(0, -1);                                                                        \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid malloc() in %s() (%s:%d)",  __func__, __FILE__, __LINE__); }
+#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {            \
+                                getMemStats(0, -1);                                                                             \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid malloc(%p) in %s() (%s:%d)", p,  __func__, __FILE__, __LINE__); }
 #define _calloc(p,n,m,s)    if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {  \
                                 getMemStats(0, -1);                                                                            \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid calloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
-#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                         \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                             \
-                                getMemStats(0, -1);                                                                        \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid realloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
-#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                          \
-                                || (sp > sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                  \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                              \
-                                getMemStats(0,-1);                                                                          \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid recalloc() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }
+                                LOG(LOG_CRIT, SIGABRT, "Invalid calloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
+#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                  \
+                                getMemStats(0, -1);                                                                             \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid realloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
+#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                               \
+                                || (sp > sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                       \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                   \
+                                getMemStats(0,-1);                                                                               \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid recalloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
 #define _free(p, m, s)     {if ((p) && ((errno = 0) || s <= 0 || (memuse.m -=s) < 0 || (++memfree.m) <= 0)) {                 \
                                 getMemStats(0, -1);                                                                           \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid free() in %s() (%s:%d)", __func__, __FILE__, __LINE__); }     \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid free(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }\
                             if (p) { free(p); p = NULL; }                                                                     \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 
@@ -476,7 +479,7 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint8_t          sigstatus, logwarning;
+extern uint16_t         sigstatus, logwarning;
 
 // MRT route table id. Linux only, not supported on FreeBSD.
 extern struct chld      chld;
@@ -517,6 +520,8 @@ bool               loadConfig(char *cfgFile);
 /**
 *   cli.c
 */
+#define CLIFD getCliFd()
+int  getCliFd(void);
 int  initCli(int mode);
 int  closeCliFd(void);
 bool acceptCli(void);
@@ -548,7 +553,7 @@ void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
 /**
 *   igmp.c
 */
-int    initIgmp(int mode);
+void   initIgmp(int mode);
 void   acceptIgmp(int fd);
 void   sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query);
 void   sendGeneralMemberQuery(struct IfDesc *IfDp);
@@ -562,8 +567,8 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 #define         setHash(t, h)   if (h != (uint32_t)-1) BIT_SET(t[h / 64], h % 64)
 #define         clearHash(t, h) if (h != (uint32_t)-1) BIT_CLR(t[h / 64], h % 64)
 #define         testHash(t, h)  (BIT_TST(t[h / 64], h % 64))
-inline bool     noHash(register uint64_t *t) { register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
-                                               while(i < n && t[i] == 0) i++; return (i >= n); }
+bool            noHash(register uint64_t *t);
+char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 const char     *inetFmt(uint32_t addr, uint32_t mask);
 uint16_t        inetChksum(uint16_t *addr, int len);
 int             confFilter(const struct dirent *d);
@@ -578,7 +583,6 @@ const char     *grecKind(unsigned int type);
 uint16_t        grecType(struct igmpv3_grec *grec);
 uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
-char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 bool            myLog(int Serverity, const char *func, int Errno, const char *FmtSt, ...);
 void            getMemStats(int h, int cli_fd);
 void            ipRules(int tbl, bool activate);
@@ -587,6 +591,10 @@ void            ipRules(int tbl, bool activate);
 *   kern.c
 */
 #define MROUTERFD k_getMrouterFD()
+#define NLFD      k_getNlFD()
+void    k_enableNl(void);
+void    k_disableNl(void);
+int     k_getNlFD(void);
 void    k_set_rcvbuf(int bufsize);
 void    k_set_ttl(uint8_t ttl);
 void    k_set_loop(bool l);
@@ -594,8 +602,8 @@ void    k_set_if(struct IfDesc *IfDp);
 bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source);
 int     k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int     k_getMrouterFD(void);
-int     k_enableMRouter(void);
-int     k_disableMRouter(void);
+void    k_enableMRouter(void);
+void    k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
 bool    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);

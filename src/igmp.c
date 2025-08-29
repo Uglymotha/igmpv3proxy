@@ -57,25 +57,24 @@ static char *snd_buf = NULL;    // Output Packet buffer
 *   Open and initialize the igmp socket, and fill in the non-changing IP header fields in the output packet buffer.
 *   Returns pointer to the receive buffer.
 */
-int initIgmp(int mode) {
-    static int fd = -1;
-
-    if (mode == 2 && fd < 0)
-        return fd;
+void initIgmp(int mode) {
     // Close socket and free buffers.
-    if (mode != 1 && fd >= 0) {
+    if (mode != 1) {
         if (memuse.rcv > 0) {
             _free(rcv_buf, rcv, memuse.rcv);  // Alloced by Self
             _free(snd_buf, snd, memuse.snd);  // Alloced by Self
         }
-        if (!RESTART && !SHUP && !CONFRELOAD)
-            fd = k_disableMRouter();
+        if ((!RESTART || mrt_tbl < 0 || geteuid() == 0) && !SHUP && !CONFRELOAD)
+            k_disableMRouter();
+        k_disableNl();
     }
     // Open socket.
-    if (mode > 0 && fd == -1)
-        fd = k_enableMRouter();
+    if (mode > 0 && MROUTERFD < 0)
+        k_enableMRouter();
+    if (mode > 0 && NLFD < 0 && CONF->rescanVif == 1)
+        k_enableNl();
     // Allocate and initialize send and receive packet buffers.
-    if (mode > 0 && mrt_tbl >= 0 && fd >=0) {
+    if (mode > 0) {
         _calloc(rcv_buf, 1, rcv, CONF->pBufsz);  // Freed by Self
         _calloc(snd_buf, 1, snd, CONF->pBufsz);  // Freed by Self
         struct ip *ip = (struct ip *)snd_buf;
@@ -106,7 +105,6 @@ int initIgmp(int mode) {
     LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total buffers, %lld kernel, %lldb receive, %lldb send, %lld allocs, %lld frees.",
         memuse.rcv + memuse.snd, memuse.rcv - memuse.snd, memuse.rcv - (memuse.rcv - memuse.snd), memuse.snd,
         memalloc.rcv + memalloc.snd, memfree.rcv + memfree.snd);
-    return fd;
 }
 
 /**
@@ -146,8 +144,10 @@ void acceptIgmp(int fd) {
     struct IfDesc     *IfDp = NULL;
 
     // Receive the IGMP packet.
-    int recvlen = recvmsg(fd, &msgHdr, 0);
-    if (recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) {
+    int recvlen = recvmsg(fd, &msgHdr, MSG_DONTWAIT);
+    if (fd == NLFD)
+        return;  // We only receive netlink message, we don´t actually do anything with it.
+    else if (recvlen < (int)sizeof(struct ip) || (msgHdr.msg_flags & MSG_TRUNC)) {
         LOG(LOG_ERR, 1, "recvmsg() truncated datagram received.");
         return;
     } else if ((msgHdr.msg_flags & MSG_CTRUNC)) {

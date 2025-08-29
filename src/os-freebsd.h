@@ -8,6 +8,10 @@
 #include <netinet/ip_mroute.h>
 #include <netinet/ip.h>
 #include <netinet/igmp.h>
+#ifdef HAVE_NETLINK_NETLINK_ROUTE_H
+#include <netlink/netlink_route.h>
+#define HAVE_NETLINK 1
+#endif
 
 #if __FreeBSD_version >= 800069 && defined BURN_BRIDGES || __FreeBSD_version >= 800098
 #define IGMP_MEMBERSHIP_QUERY IGMP_HOST_MEMBERSHIP_QUERY

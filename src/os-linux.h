@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <linux/types.h>
 #include <linux/mroute.h>
+#ifdef HAVE_LINUX_RTNETLINK_H
+#include <linux/rtnetlink.h>
+#define HAVE_NETLINK 1
+#endif
 
 #define IGMP_V3_MEMBERSHIP_REPORT 0x22
 

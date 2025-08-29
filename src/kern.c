@@ -39,20 +39,60 @@
 
 #include "igmpv3proxy.h"
 
-static int      mrouterFD = -1;
+static int      mrouterFD = -1, nlFD = -1;
 static uint32_t vifBits   =  0;
 
 /**
- *   Returns the mrouter FD.
- */
-inline int k_getMrouterFD(void) {
+*   Returns the mrouter FD.
+*/
+int k_getMrouterFD(void) {
     return mrouterFD;
 }
 
 /**
- *   Initializes the mrouted API and locks it by this exclusively.
- */
-int k_enableMRouter(void) {
+*   Returns the netlink FD.
+*/
+int k_getNlFD(void) {
+    return nlFD;
+}
+
+/**
+*   Initializes the netlink API..
+*/
+void k_enableNl(void) {
+#ifdef HAVE_NETLINK
+    struct sockaddr_nl nl;
+    nl.nl_family = AF_NETLINK;
+    nl.nl_pid = getpid();
+    nl.nl_groups = RTMGRP_LINK;
+    if ((nlFD = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE)) < 0) {
+        LOG(LOG_ERR, 1, "Failed to open netlink socket.");
+    } else if (bind(nlFD, (struct sockaddr*)&nl, sizeof(nl)) < 0) {
+        nlFD = -1;
+        LOG(LOG_ERR, 1, "Failed netlink socket bind.");
+    } else
+        LOG(LOG_NOTICE, 0, "Opened netlink socket.");
+#endif
+}
+
+/**
+*   Closes netlink socket.
+*/
+void k_disableNl(void) {
+    if (nlFD == -1)
+        return;
+   else if (close(nlFD) < 0)
+        LOG(LOG_WARNING, 1, "Netlink socket CLOSE failed.");
+    else {
+        LOG(LOG_NOTICE, 0, "Closed netlink Socket.");
+        nlFD = -1;
+    }
+}
+
+/**
+*   Initializes the mrouted API and locks it by this exclusively.
+*/
+void k_enableMRouter(void) {
     int Va = 1;
 
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -83,15 +123,13 @@ int k_enableMRouter(void) {
     else
         LOG(LOG_NOTICE, 0, "Opened IGMP socket.");
     fcntl(mrouterFD, F_SETFD, O_NONBLOCK);
-
-    return mrouterFD;
 }
 
 /**
 *   Disable the mrouted API and relases by this the lock.
 */
-int k_disableMRouter(void) {
-    if (!STARTUP && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
+void k_disableMRouter(void) {
+    if (!STARTUP && !SPROXY && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
         LOG(LOG_WARNING, 1, "IGMP socket MRT_DONE failed.");
     if (close(mrouterFD) < 0)
         LOG(LOG_WARNING, 1, "%s socket CLOSE failed.", mrt_tbl < 0 ? "UDP" : "IGMP");
@@ -99,7 +137,6 @@ int k_disableMRouter(void) {
         LOG(LOG_NOTICE, 0, "Closed %s Socket.", mrt_tbl < 0 ? "UDP" : "IGMP");
         mrouterFD = -1;
     }
-    return mrouterFD;
 }
 
 /**
@@ -315,7 +352,7 @@ bool k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp) {
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
     struct mfcctl2 CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl2));
-    CtlReq = (struct mfcctl2){ {src}, {group}, vif, {0}, {0}, 0 };
+    CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
 #else
     struct mfcctl CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl));

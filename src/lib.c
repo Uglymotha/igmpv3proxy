@@ -184,6 +184,15 @@ uint32_t murmurhash3(register uint32_t x) {
 }
 
 /**
+*   Checks if hash table is clear.
+*/
+bool noHash(register uint64_t *t) {
+    register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
+    while(i++ < n && t[i] == 0);
+    return (i >= n);
+}
+
+/**
 *   Sort array in numerical asceding order, endianess is irrelevant.
 *   Reversed Insertion Sort with duplicates moved to end of list as 0xFFFF and removed (no valid IP).
 */
@@ -275,6 +284,7 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     char      LogMsg[512];
     FILE     *lfp = CONF->logFilePath ? fopen(CONF->logFilePath, "a") : stderr;
     va_list   ArgPt;
+    int fd = fileno(lfp);
 
     va_start(ArgPt, FmtSt);
     if (CONF->logLevel == LOG_DEBUG && Severity >= LOG_NOTICE)
@@ -284,29 +294,31 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
         snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; errno(%d): %s", err, strerror(err));
     va_end(ArgPt);
 
-    if ((CONF->logFilePath || CONF->log2Stderr) && lfp)
+    if ((CONF->logFilePath || CONF->log2Stderr) && lfp) {
+        flock(fd, LOCK_EX);
         if (mrt_tbl >= 0 && chld.onr > 0)
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, mrt_tbl, LogMsg);
         else
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, LogMsg);
-    else
+        flock(fd, LOCK_UN);
+    } else
         syslog(Severity, "%s", LogMsg);
 
     if (lfp && lfp != stderr)
         fclose(lfp);
-    if (Severity <= LOG_CRIT && !SHUTDOWN) {
+    if (Severity <= LOG_CRIT) {
         BLOCKSIGS;
-        sigstatus = GOT_SIGTERM;
-        IF_FOR_IF(mrt_tbl < 0 && chld.nr, (Ln = 0; Ln < chld.nr; Ln++), chld.c[Ln].pid > 0) {
+        IF_FOR_IF(!SHUTDOWN && mrt_tbl < 0 && chld.nr, (Ln = 0; Ln < chld.nr; Ln++), chld.c[Ln].pid > 0) {
             LOG(LOG_NOTICE, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
             kill(chld.c[Ln].pid, SIGINT);
         }
         if (Errno < 0)
             Errno = -Errno;
-        if (Errno == SIGABRT || Errno == SIGSEGV)
+        if (SHUTDOWN || Errno == SIGABRT || Errno == SIGSEGV)
             exit(Errno);
+        sigstatus = GOT_SIGTERM;
         igmpProxyCleanUp(Errno);
     }
 

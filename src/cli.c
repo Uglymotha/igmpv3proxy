@@ -48,6 +48,13 @@ static struct sockaddr_un    cli_sa;
 extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
 
 /**
+ *  Returns cli fd.
+**/
+int getCliFd(void) {
+    return cli_fd;
+}
+
+/**
 *   Opens, closes and binds a socket for cli connections.
 *   mode - 0: close, 1: open, 2: reopen.
 */
@@ -59,7 +66,7 @@ int initCli(int mode) {
         return cli_fd;
     // Close and unlink CLI socket.
     if (mode != 1 && cli_fd >= 0) {
-        if (mode == 0)
+        if (mode == 0 && !SPROXY)
             shutdown(cli_fd, SHUT_RDWR);
         if (close(cli_fd) < 0)
             LOG(LOG_ERR, 1, "CLI socket close %s failed", cli_sa.sun_path);
@@ -67,7 +74,7 @@ int initCli(int mode) {
             LOG(LOG_NOTICE, 0, "Closed CLI socket %s.", cli_sa.sun_path);
             cli_fd = -1;
         }
-        if (mode == 0)
+        if (mode == 0 && !SPROXY)
             unlink(cli_sa.sun_path);
     }
     // Open the socket, set permissions and mode.1
@@ -109,7 +116,7 @@ bool acceptCli(void)
 
     // Receive and answer the cli request.
     if ((fd = accept(cli_fd, &cli_sa, (socklen_t *)&s)) < 0 && ++i <= 10) {
-        LOG(errno == EAGAIN ? LOG_NOTICE : LOG_WARNING, 1, "failure %d in cli accept().");
+        LOG(errno == EAGAIN ? LOG_NOTICE : LOG_WARNING, 1, "failure %d in cli accept().", i);
         return true;
     } else if (i > 10) {
         LOG(LOG_ERR, errno, "Too many failures in cli accept(). Reopening socket.");

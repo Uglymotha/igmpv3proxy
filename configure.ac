@@ -18,6 +18,10 @@ AC_CHECK_MEMBERS([struct sockaddr.sa_len], [], [], [[
 #include <sys/types.h>
 #include <sys/socket.h>
 ]])
+AC_CHECK_HEADERS([linux/rtnetlink.h], [], [], [[
+]])
+AC_CHECK_HEADERS([netlink/netlink_route.h], [], [], [[
+]])
 AC_CHECK_MEMBERS([struct sockaddr_in.sin_len], [], [], [[
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -41,8 +45,6 @@ AC_CHECK_MEMBERS([struct vifctl.vifc_lcl_ifindex], [], [], [[
 #if defined __linux__
 #include <linux/types.h>
 #include <linux/mroute.h>
-#elif defined __DragonFly__
-#include <net/ip_mroute/ip_mroute.h>
 #else
 #include <netinet/ip_mroute.h>
 #endif
@@ -57,8 +59,6 @@ AC_CHECK_MEMBERS([struct mfcctl2.mfcc_ttls], [], [], [[
 #if defined __linux__
 #include <linux/types.h>
 #include <linux/mroute.h>
-#elif defined __DragonFly__
-#include <net/ip_mroute/ip_mroute.h>
 #else
 #include <netinet/ip_mroute.h>
 #endif
@@ -70,8 +70,6 @@ AC_CHECK_MEMBERS([struct bw_upcall.bu_src], [], [], [[
 #include <netinet/ip.h>
 #include <net/route.h>
 #include <netinet/igmp.h>
-#ifdef __DragonFly__
-#include <net/ip_mroute/ip_mroute.h>
 #else
 #include <netinet/ip_mroute.h>
 #endif

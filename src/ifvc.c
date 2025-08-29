@@ -96,16 +96,13 @@ void rebuildIfVc(intptr_t *tid) {
         sigstatus |= GOT_SIGUSR2;
     if (! IfDescL || IFREBUILD || SHUP || STARTUP)
         buildIfVc();
-    // Call configureVifs to link the new IfDesc table.
-    LOG(LOG_INFO, 0, "Configuring MC vifs.");
     configureVifs();
-    // Free removed interfaces.
     freeIfDescL();
 
     // Restart timer when doing timed reload.
-    if (!SHUTDOWN && CONF->rescanVif && tid)
+    if (!SHUTDOWN && CONF->rescanVif > 1 && tid)
         *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
-    if (IFREBUILD || STARTUP) {
+    if ((IFREBUILD || STARTUP) && CONF->logLevel == LOG_DEBUG) {
         sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
             memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
@@ -153,16 +150,13 @@ void buildIfVc(void) {
             IfDp->state |= 0x40;
             LOG(LOG_INFO, 0, "Found existing interface %s.", IfDp->Name);
         }
-
         // Set the interface flags, index and IP.
         IfDp->sysidx       = ix;
         IfDp->Flags        = tmpIfAddrsP->ifa_flags;
         IfDp->InAdr.s_addr = addr;
-
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
         memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-
         if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
             LOG(LOG_ERR, 1, "Failed to get MTU for %s, disabling.", IfDp->Name);
             IfDp->mtu = 0;
@@ -178,7 +172,6 @@ void buildIfVc(void) {
                 LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
             }
         }
-
         // Log the result...
         LOG(LOG_INFO, 0, "Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
             IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 0), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
@@ -202,8 +195,9 @@ void configureVifs(void) {
     struct IfDesc     *IfDp = NULL, *If;
     struct vifConfig  *vifConf = NULL;
     struct filters    *fil, *ofil;
-    bool               quickLeave = false, tbl0 = false;
+    bool               quickLeave = false;
     uint32_t           vifcount = 0, upvifcount = 0, downvifcount = 0;
+    LOG(LOG_INFO, 0, "Configuring MC vifs.");
 
     uVifs = 0;
     GETIFL(IfDp) {
@@ -223,14 +217,14 @@ void configureVifs(void) {
                 *VIFCONF = vifConf;
                 strcpy(vifConf->name, IfDp->Name);
                 vifConf->filters = CONF->defaultFilters;
+                // We will fork proxy for default table 0 on first seeing the first interface for that table.
+                if (mrt_tbl < 0 && chld.nr && vifConf->tbl == 0 && (igmpProxyFork(0)) == 0 && STARTUP)
+                    initIgmp(2), initCli(2);
             }
             // Link the configuration to the interface. And update the states.
             IfDp->oconf = IfDp->conf;
             IfDp->conf = vifConf;
         }
-        // We will fork proxy for default table 0 on first seeing the first interface for that table.
-        if (!SHUTDOWN && !RESTART && !IFREBUILD && mrt_tbl < 0 && chld.nr && IfDp->conf->tbl == 0 && !tbl0++)
-            igmpProxyFork(0);
         // Evaluate to old and new state of interface.
         if (!STARTUP && !CONFRELOAD && !(IfDp->state & 0x40)) {
             // If no state flag at this point it is because buildIfVc detected new or removed interface.
@@ -273,7 +267,6 @@ void configureVifs(void) {
                 IfDp->filCh = true;
             }
         }
-
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
@@ -314,6 +307,7 @@ void configureVifs(void) {
             if (IS_UPSTREAM(oldstate)   && upvifcount)
                 upvifcount--;
         }
+        IfDp->oconf = NULL;
     }
     if (mrt_tbl < 0)
         // Monitor process only needs config and state.
