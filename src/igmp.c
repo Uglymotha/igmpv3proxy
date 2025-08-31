@@ -290,11 +290,11 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
     k_set_if(IfDp);
     ip->ip_src.s_addr  = IfDp->querier.ip;
     ip->ip_dst.s_addr  = sdst.sin_addr.s_addr = query ? query->igmp_group.s_addr : allhosts_group;
-    igmpv3->igmp_type         = IGMP_MEMBERSHIP_QUERY;
-    igmpv3->igmp_code         = IfDp->querier.ver == 1 ? 0
-                                                       : query && query->igmp_code != 0 ? query->igmp_code
-                                                       : query ? IfDp->conf->qry.lmInterval
-                                                       : IfDp->querier.mrc;
+    igmpv3->igmp_type  = IGMP_MEMBERSHIP_QUERY;
+    igmpv3->igmp_code  = IfDp->querier.ver == 1 ? 0
+                                                : query && query->igmp_code != 0 ? query->igmp_code
+                                                : query ? IfDp->conf->qry.lmInterval
+                                                : IfDp->querier.mrc;
     igmpv3->igmp_group.s_addr = query ? query->igmp_group.s_addr : 0;
     igmpv3->igmp_misc         = (query && query->igmp_type & 0x1 ? 0x8 : 0) + IfDp->querier.qrv;    // set router suppress flag.
     igmpv3->igmp_qqi          = query ? IfDp->conf->qry.lmInterval : IfDp->querier.qqi;

@@ -660,7 +660,8 @@ void clearGroups(struct IfDesc *IfDp) {
         }
     }
     // Stop and start bandwidth control if required.
-    if (!IfDp->conf->bwControl || (!STARTUP && !IFREBUILD && IfDp->oconf && IfDp->oconf->bwControl != IfDp->conf->bwControl)) {
+    if (!IfDp->conf->bwControl || SHUTDOWN
+        || (!STARTUP && !IFREBUILD && IfDp->oconf && IfDp->oconf->bwControl != IfDp->conf->bwControl)) {
         IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
@@ -668,7 +669,7 @@ void clearGroups(struct IfDesc *IfDp) {
                 k_deleteUpcall(mfc->src->ip, mct->group);
 #endif
     }
-    if ((CONFRELOAD || SHUP || STARTUP || RESTART) && IfDp->conf->bwControl && !IfDp->bwTimer) {
+    if (!SHUTDOWN && IfDp->conf->tbl == mrt_tbl && IfDp->conf->bwControl && ! IfDp->bwTimer) {
         IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
@@ -677,7 +678,7 @@ void clearGroups(struct IfDesc *IfDp) {
 #endif
     }
 
-    if ((SHUTDOWN || RESTART) && IfDp->uMct) {
+    if ((SHUTDOWN) && IfDp->uMct) {
         // Dangling unresolved route, remove when shutting down jusst to be nice to the kernel.
         ((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec = timerClear(((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec, false);
         delGroup(((struct ifMct *)IfDp->uMct)->mct, IfDp, IfDp->uMct, 0);

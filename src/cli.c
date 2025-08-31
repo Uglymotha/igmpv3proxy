@@ -43,9 +43,9 @@
 static void cliSignalHandler(int sig);
 
 // Daemon CLI socket address.
-static int                   cli_fd = -1;
-static struct sockaddr_un    cli_sa;
-extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
+static int                cli_fd = -1;
+static struct sockaddr_un cli_sa;
+extern volatile uint64_t  sighandled;  // From igmpv3proxy.c signal handler.
 
 /**
  *  Returns cli fd.
@@ -122,7 +122,7 @@ bool acceptCli(void)
         LOG(LOG_ERR, errno, "Too many failures in cli accept(). Reopening socket.");
         i = 0;
         return false;
-    } else if ((pid = igmpProxyFork(-1)) != 0) {
+    } else if ((pid = igmpProxyFork(NULL)) != 0) {
         if (pid < 0)
             send(fd, "Cannot fork()\n", 14, MSG_DONTWAIT);
         close(fd);
@@ -136,14 +136,14 @@ bool acceptCli(void)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
     if (i > 10)
         exit(1);
-    LOG(LOG_INFO, 0, "RECV CLI Request #%d: '%s'.", chld.onr, buf);
+    LOG(LOG_INFO, 0, "RECV CLI Request: '%s'.", buf);
     h = len > 1 && buf[1] == 'h' ? 0 : 1;
     if (len <= 0 || len > STRBUF) {
         LOG(LOG_WARNING, 1, "Error receiving CLI (%d) command. %s", chld.onr, &buf);
         buf = strFmt(1, "Error connecting to daemon. %s", "", strerror(errno));
     } else if (buf[0] == 'r' || buf[0] == 'i' || buf[0] == 'f') {
         i = h ? 2 : 3;
-        if (len > i && (! (IfDp = getIf(0, &buf[i], FINDNAME | SRCHVIFL))
+        if (len > i && (! (IfDp = getIf(0, &buf[i], FINDNAME | (mrt_tbl < 0 ? 0 : SRCHVIFL)))
                     && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
             LOG(LOG_WARNING, 0, strFmt(buf[0] == 'r', "CLI (%d) %s invalid interface or subnet/mask. %s",
                                        "CLI (%d) interface %s not found.", chld.onr, &buf[i]));
@@ -186,7 +186,7 @@ bool acceptCli(void)
     if (strlen(buf))
         send(fd, buf, strlen(buf), MSG_DONTWAIT);
     close(fd);
-    LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI command #%d.", errno ? "Failed" : "Finished", chld.onr);
+    LOG(errno ? LOG_NOTICE : LOG_DEBUG, errno, "%s CLI command.", errno ? "Failed" : "Finished");
     exit(errno > 0);
 }
 
@@ -259,7 +259,7 @@ static void cliSignalHandler(int sig) {
     case SIGPIPE:
         if (sig == SIGPIPE)
             fprintf(stderr, "Connection reset by daemon. ");
-        if (srv_fd != -1)
+        if (srv_fd >= 0)
             close(srv_fd);
         fprintf(stderr, "Terminated.\n");
         exit(sig);

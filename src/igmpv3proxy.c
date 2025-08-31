@@ -47,9 +47,9 @@ static void igmpProxyMonitor(void);
 static void igmpProxyRun(void);
 
 // Global Variables Memory / Signal Handling / Timekeeping / Buffers etc.
-volatile sig_atomic_t sighandled;  // Should be as private as possible.
-uint16_t              sigstatus, logwarning;
-struct timespec       curtime, utcoff, starttime;
+volatile uint64_t     sighandled;  // Should be as private as possible.
+uint64_t              sigstatus, logwarning;
+struct timespec       curtime, utcoff, starttime = { 0 };
 char                 *rcv_buf = NULL, *fileName, tS[32], tE[32];
 struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
 const struct timespec nto = { 0, 0 };
@@ -170,7 +170,6 @@ int main(int ArgCn, char *ArgVc[]) {
             exit(-1);
         }
     }
-
     // Check for valid location to place socket and PID file, fork if running as daemon..
     for (path = strtok(RUN_PATHS, " "); path; path = strtok(NULL, " ")) {
         if (stat(path, &st) >= 0) {
@@ -193,7 +192,7 @@ int main(int ArgCn, char *ArgVc[]) {
         exit(-(pid < 0));
     }
 
-    sigstatus = 1;  // STARTUP
+    sigstatus = STARTING;  // STARTUP
     do {
         igmpProxyInit();
         if (mrt_tbl >= 0)
@@ -209,8 +208,8 @@ int main(int ArgCn, char *ArgVc[]) {
 /**
  *   Start a new igmpv3proxy process for route table cli connection (called with -1) or other (-2).
  */
-int igmpProxyFork(int tbl) {
-    int i, pid, size = 32 * sizeof(struct pt);
+int igmpProxyFork(struct IfDesc *IfDp) {
+    int            tbl = IfDp ? IfDp->conf->tbl : mrt_tbl, i, pid, size = (32 * sizeof(struct pt));
 
     // Initialize the child processes table. Alloc per 32 entries.
     if (chld.nr % 32 == 0)
@@ -226,14 +225,12 @@ int igmpProxyFork(int tbl) {
     } else if ((pid = fork()) < 0) {
         LOG(LOG_ERR, eNOFORK, "Cannot fork() %s %d.", strFmt(tbl >= 0, "proxy", "child"), chld.nr);
     } else if (pid == 0) {
-        // Child initializes its own start time, Closes sockets in use by monitor and opens new ones.
-        TIME_STR(tS, starttime);
         chld.onr = i + 1;     // Just so that we know who we are.
-        sigstatus = 1;        // STARTUP
-        if (tbl >= 0) {       // Start a new proxy for table tbl.
+        if (mrt_tbl < 0 && tbl >= 0) {       // Start a new proxy for table tbl.
             mrt_tbl = tbl;    // Set routing table for process.
-            _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * 32 * sizeof(struct pt)); // Alloced by Self.
+            _free(chld.c, var, (((chld.nr - 1) / 32) + 1) * size); // Alloced by Self.
             chld.nr = 0;
+            sigstatus = (RESTARTING | GOT_SIGPROXY);
         }
     } else {
         // Parent sets the new child info in table.
@@ -242,9 +239,13 @@ int igmpProxyFork(int tbl) {
         chld.c[i].st = 0;
         if (i == chld.nr)
             chld.nr++;
-        LOG(tbl >= 0 ? LOG_INFO : LOG_DEBUG, 0, "Forked %s: %d PID: %d%s.",
-            tbl >= 0 ? "proxy" : "child", i + 1, chld.c[i].pid, strFmt(tbl >= 0, " for table: %d", "", chld.c[i].tbl));
+        LOG(tbl >= 0 ? LOG_NOTICE : LOG_DEBUG, 0, "Forked %s: %d PID: %d%s.",
+            mrt_tbl < 0 && tbl >= 0 ? "proxy" : "child", i + 1, chld.c[i].pid,
+            strFmt(tbl >= 0, " for table: %d", "", chld.c[i].tbl));
+        if (mrt_tbl < 0 && IfDp && !IfDp->conf->disableIpMrules)
+            ipRules(IfDp, true);
     }
+
     return pid;
 }
 
@@ -253,25 +254,25 @@ int igmpProxyFork(int tbl) {
  */
 static void igmpProxyInit(void) {
     struct stat  st;
-    int          pid;
 
+    sigstatus &= ~(GOT_SIGTERM | GOT_SIGINT);
     umask(S_IROTH | S_IWOTH | S_IXOTH);
     SETSIGS;
+    if (starttime.tv_sec == 0)
+        TIME_STR(tS, starttime);
     // Load the config file. If no socket group was configured set it to configured users's group or root.
     if (!loadConfig(CONF->configFilePath))
         LOG(LOG_CRIT, eNOCONF, "Failed to load configuration from '%s'.", CONF->configFilePath);
     LOG(LOG_NOTICE, 0, "Loaded configuration from '%s'.", CONF->configFilePath);
 
     if (STARTUP) {
-        TIME_STR(tS, starttime);
         if (! CONF->group && !(CONF->group = getgrgid(CONF->user ? CONF->user->pw_gid : 0)))
             LOG(LOG_ERR, 1, "Failed to get group for %d.", CONF->user ? CONF->user->pw_gid : 0);
         unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
         // If no proxies forked we become table 0 (the default table).
-        if (mrt_tbl < 0 && chld.nr == 0)
+        if (mrt_tbl < 0 && !(sighandled & GOT_SIGPROXY))
             mrt_tbl = 0;
-
-        if (mrt_tbl < 0 || chld.onr == 0) {
+        if (mrt_tbl < 0 || !(sighandled & GOT_SIGPROXY)) {
             // Main daemon process writes PID.
             char  pidFile[strlen(CONF->runPath) + strlen(fileName) + 6];
             sprintf(pidFile, "%s/%s.pid", CONF->runPath, fileName);
@@ -286,6 +287,7 @@ static void igmpProxyInit(void) {
                 CONF->runPath, CONF->user->pw_name, CONF->group->gr_name);
         // Switch root if chroot is configured. The config file must be placed there.
         if (CONF->chroot) {
+            LOG(LOG_WARNING, 0, "Switching root to %s.", CONF->chroot);
             // Truncate config and log file path to /.
             char *b, *c;
             if (! (b = basename(CONF->configFilePath)) || ! (c = calloc(1, strlen(b) + 1)) || ! strcpy(c, b))
@@ -306,12 +308,14 @@ static void igmpProxyInit(void) {
             // Set permissions and swith root directory.
             if (!(stat(CONF->chroot, &st) == 0 && chown(CONF->chroot, uid, gid) == 0 && chmod(CONF->chroot, 0770) == 0
                 && chroot(CONF->chroot) == 0 && chdir("/") == 0))
-                LOG(LOG_CRIT, eNOINIT, "Failed to switch root to %s.",CONF->chroot);
-            LOG(LOG_WARNING, 0, "Switched root to %s.", CONF->chroot);
+                LOG(LOG_CRIT, eNOINIT, "Failed to switch root to %s (%d:%d).",CONF->chroot);
         }
         // Finally check log file permissions in case we need to run as user.
-        if (CONF->logFilePath && (chown(CONF->logFilePath, uid, gid) || chmod(CONF->logFilePath, 0640)))
-            LOG(LOG_ERR, 1, "Failed to chown log file %s to %s.", CONF->logFilePath, CONF->user->pw_name);
+        if (CONF->logFilePath) {
+            LOG(LOG_ERR, 0, "Changing ownership of %s to %s:%s.", CONF->logFilePath, CONF->user->pw_name, CONF->group->gr_name);
+            if (chown(CONF->logFilePath, uid, gid) || chmod(CONF->logFilePath, 0640))
+                LOG(LOG_ERR, 1, "Failed to chown log file %s to %d:%d.", CONF->logFilePath, uid, gid);
+        }
     }
 
     initIgmp(1);
@@ -332,42 +336,43 @@ static void igmpProxyInit(void) {
  *   Monitor process when multiple proxies are running.
  */
 static void igmpProxyMonitor(void) {
-    struct pollfd   pollFD[2];
-    struct timespec timeout = (struct timespec){ 0, 0 };
-    int             pid, status, i;
-    LOG(LOG_WARNING, 0, "Monitoring %d proxy processes.", chld.nr);
-    FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].tbl > 0 && !CONF->disableIpMrules)
-        ipRules(chld.c[i].tbl, true);
+    struct pollfd    pollFD[2] = { {CLIFD, POLLIN, 0}, {NLFD, POLLIN, 0} };
+    struct timespec  timeout = (struct timespec){ 0, 0 };
+    struct IfDesc   *IfDp;
+    int              pid, status, i;
+    LOG(LOG_WARNING, 0, "Starting IGMPv3 Proxy Monitor on %s.", tS);
 
     sigstatus = 0;
-    while (sighandled || ppoll(&pollFD[0], 2, timeout.tv_sec < 0 ? NULL : &timeout, NULL) || true) {
-        pollFD[0] = (struct pollfd){CLIFD, POLLIN, 0}, pollFD[1] = (struct pollfd){NLFD, POLLIN, 0};
+    while (!SHUTDOWN && (sighandled || ppoll(pollFD, 2, timeout.tv_sec < 0 ? NULL : &timeout, NULL) || true)) {
         if (sighandled) {
-            if (sighandled & GOT_SIGCHLD) {
+            sigstatus = sighandled;
+            if (sighandled & GOT_SIGPROXY) {
+                sighandled &= ~GOT_SIGPROXY;
+                GETIFL_IF(IfDp, igmpProxyFork(IfDp) == 0)
+                    return;    // To main() proxy loop.
+               sigstatus &= ~GOT_SIGPROXY;
+            } else if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
-                while (chld.nr && (pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF((i = 0; i < chld.nr; i++),
-                                                                                     chld.c[i].pid == pid) {
-                    chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
-                    LOG(WIFEXITED(status) ? LOG_INFO : chld.c[i].tbl >= 0 ? LOG_WARNING : LOG_NOTICE, 0,
-                        "%s: %d PID: %d%s%s (%i)", strFmt(chld.c[i].tbl >= 0, "Proxy", "Child"), i + 1,
-                        chld.c[i].pid, strFmt(chld.c[i].tbl >= 0, " for table: %d; ", "; ", chld.c[i].tbl),
-                        exitmsg[chld.c[i].st], chld.c[i].st);
-                    chld.c[i].pid = 0;
-                    if (chld.c[i].tbl >= 0 && (   chld.c[i].st == SIGTERM || chld.c[i].st == SIGABRT
-                                               || chld.c[i].st == SIGSEGV || chld.c[i].st == SIGKILL)) {
-                        // Start new proxy in case of unexpected shutdown.
-                        if (igmpProxyFork(chld.c[i].tbl) == 0 && (sigstatus = (GOT_SIGURG | GOT_SIGPROXY)))
-                            return; // to main() with status = SPROXY.
-                    } else if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
-                        ipRules(chld.c[i].tbl, false);
+                while (chld.nr && (pid = waitpid(-1, &status, WNOHANG)) > 0)
+                    FOR_IF((i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
+                        chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
+                        LOG(WIFEXITED(status) ? LOG_INFO : chld.c[i].tbl >= 0 ? LOG_WARNING : LOG_NOTICE, 0,
+                            "%s: %d PID: %d%s%s (%i)", strFmt(chld.c[i].tbl >= 0, "Proxy", "Child"), i + 1,
+                            chld.c[i].pid, strFmt(chld.c[i].tbl >= 0, " for table: %d; ", "; ", chld.c[i].tbl),
+                            exitmsg[chld.c[i].st], chld.c[i].st);
+                        chld.c[i].pid = 0;
+                        if (chld.c[i].tbl >= 0 && (   chld.c[i].st == SIGTERM || chld.c[i].st == SIGABRT
+                                                   || chld.c[i].st == SIGSEGV || chld.c[i].st == SIGKILL)) {
+                            // Start new proxy in case of unexpected shutdown.
+                            sighandled |= GOT_SIGPROXY;
+                        } else GETIFL_IF(IfDp, chld.c[i].tbl == IfDp->conf->tbl && !IfDp->conf->disableIpMrules)
+                            ipRules(IfDp, false);
                 }
-                if (pid < 0 && errno != ECHILD)
+                if (mrt_tbl < 0 && pid < 0 && errno != ECHILD)
                     LOG(LOG_ERR, 1, "SIGCHLD: waitpid() error.");
-            } else if (sighandled & (GOT_SIGTERM | GOT_SIGURG | GOT_SIGHUP | GOT_SIGUSR1)) {
-                sigstatus    = sighandled & GOT_SIGTERM ? GOT_SIGTERM : sighandled & GOT_SIGURG  ? GOT_SIGURG :
-                               sighandled & GOT_SIGHUP  ? GOT_SIGHUP  : sighandled & GOT_SIGUSR1 ? GOT_SIGUSR1 : GOT_SIGUSR2;
-                sighandled &= ~GOT_SIGURG & ~GOT_SIGHUP & ~GOT_SIGUSR1;
-                LOG(LOG_WARNING, 0, "%s", RESTART ? "SIGURG: Restarting." :
+            } else if (sighandled & (GOT_SIGTERM | GOT_SIGURG | GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2)) {
+                sighandled &= ~(GOT_SIGTERM | GOT_SIGURG | GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
+                LOG(LOG_NOTICE, 0, "%s", RESTART ? "SIGURG: Restarting." :
                                              SHUP ? "SIGHUP: Reloading config and rebuilding interfaces." :
                                          SHUTDOWN ? "SIGTERM: Exiting."   :
                                        CONFRELOAD ? "SIGUSR1: Reloading config." : "SIGUSR2: Rebuilding interfaces.");
@@ -375,24 +380,26 @@ static void igmpProxyMonitor(void) {
                     reloadConfig(NULL);
                 if (IFREBUILD || SHUP)
                     rebuildIfVc(NULL);
-                if (SHUTDOWN || RESTART || mrt_tbl > 0)
-                    break;
-                sigstatus &= ~(GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
-            } else if (sighandled & GOT_SIGPIPE)
+            } else if (sighandled & GOT_SIGPIPE) {
+                sighandled &= ~GOT_SIGPIPE;
                 LOG(LOG_WARNING, 0, "Ceci n'est pas une SIGPIPE.");
-        }
-
-        // Check if any cli connection needs to be handled.
-        if (mrt_tbl < 0 && pollFD[0].revents & POLLIN)
-            acceptCli();
-        if (mrt_tbl < 0 && pollFD[1].revents & POLLIN && (sighandled |= GOT_SIGUSR2)) {
-            acceptIgmp(pollFD[1].fd);
-            LOG(LOG_WARNING, 0, "RTNETLINK: Interfaces changed.");
-        }
-        if (mrt_tbl < 0 && !sighandled)
+            }
+            sigstatus &= ~(GOT_SIGCHLD | GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2 | GOT_SIGPIPE);
+        } else {
+            // Check if any cli / netlink request needs to be handled.
+            if (pollFD[0].revents & POLLIN && !acceptCli())
+                initCli(2);
+            if (pollFD[1].revents & POLLIN && (sighandled |= GOT_SIGUSR2)) {
+                acceptIgmp(pollFD[1].fd);
+                LOG(LOG_WARNING, 0, "RTNETLINK: Interfaces changed.");
+            }
             timeout = timerAgeQueue();
+            FOR_IF((int j=0; j < chld.nr; j++), (j != 0 || !(i = 0)) && chld.c[j].tbl >=0 && chld.c[j].pid > 0) i++;
+            LOG(LOG_INFO, 0, "Monitoring %s proxy process%s.", strFmt(i == 0, "no", "%d", i), i != 1 ? "es" : "");
+        }
         if (timeout.tv_nsec < 0)
             timeout.tv_nsec = 0;
+        pollFD[0] = (struct pollfd){CLIFD, POLLIN, 0}, pollFD[1] = (struct pollfd){NLFD, POLLIN, 0};
     }
 }
 
@@ -404,11 +411,12 @@ static void igmpProxyRun(void) {
     sigstatus = sighandled = 0;
 
     LOG(LOG_WARNING, 0, "Starting IGMPv3 Proxy on %s.", tS);
-    while (!(errno = 0) && !SHUTDOWN && !RESTART) {
+    while (!(errno = 0) && !SHUTDOWN) {
         struct pollfd pollFD[3] = { {MROUTERFD, POLLIN, 0}, {CLIFD, POLLIN, 0}, {NLFD, POLLIN, 0} };
         // Process signaling.
         struct timespec timeout;
-        while (sighandled && !RESTART && !SHUTDOWN) {
+        while (sighandled && !SHUTDOWN) {
+            sigstatus = sighandled;
             if (sighandled & GOT_SIGCHLD) {
                 sighandled &= ~GOT_SIGCHLD;
                 while ((pid = waitpid(-1, &status, WNOHANG)) > 0) FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
@@ -418,12 +426,9 @@ static void igmpProxyRun(void) {
                     chld.c[i].pid = 0;
                 }
             } else if (sighandled & (GOT_SIGURG | GOT_SIGTERM)) {
-                sigstatus = sighandled & GOT_SIGTERM ? GOT_SIGTERM : GOT_SIGURG;
-                LOG(LOG_WARNING, 0, "%s", SHUTDOWN ? "SIGTERM: Exiting." : "SIGURG: Restarting");
+                LOG(LOG_WARNING, 0, "%s", RESTART ? "SIGURG: Restarting" : "SIGTERM: Exiting.");
             } else if (sighandled & (GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2 | GOT_SIGURG | GOT_SIGTERM)) {
-                sigstatus = sighandled & GOT_SIGHUP ? GOT_SIGHUP : sighandled & GOT_SIGURG ? GOT_SIGURG :
-                            sighandled & GOT_SIGTERM ? GOT_SIGTERM : sighandled & GOT_SIGUSR1 ? GOT_SIGUSR1 : GOT_SIGUSR2;
-                sighandled &= ~(GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
+                sighandled &= ~(GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2 | GOT_SIGURG);
                 LOG(LOG_NOTICE, 0, "%s: %s%s.",
                     RESTART ? "SIGURG"     : SHUTDOWN ? "SIGTERM" : SHUP ? "SIGHUP" : CONFRELOAD ? "SIGUSR1" : "SIGUSR2",
                     RESTART ? "Restarting" : SHUTDOWN ? "Exiting" : SHUP|CONFRELOAD ? "Reloading config" : "Rebuilding interfaces",
@@ -432,11 +437,11 @@ static void igmpProxyRun(void) {
                     reloadConfig(NULL);
                 if (SHUP || IFREBUILD)
                     rebuildIfVc(NULL);
-                sigstatus &= ~(GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
             } else if (sighandled & GOT_SIGPIPE) {
                 sighandled &= ~GOT_SIGPIPE;
                 LOG(LOG_WARNING, 0, "Ceci n'est pas une SIGPIPE.");
             }
+            sigstatus &= ~(GOT_SIGCHLD | GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
         }
         if (!sighandled && (Rt <= 0 || i >= CONF->reqQsz)) {
             // Run queue aging (unless sigs pending), it wil return the time until next timer is scheduled.
@@ -465,7 +470,7 @@ static void igmpProxyRun(void) {
             clock_gettime(CLOCK_REALTIME, &curtime);
             LOG(LOG_DEBUG, 0, "Finished request %d in %dus", i, timeDiff(timeout, curtime).tv_nsec / 1000);
             // Keep handling request until timeout, signal or max nr of queued requests to process in 1 loop.
-        } while (!sighandled && !SHUTDOWN && !RESTART && i++ <= CONF->reqQsz && (Rt = ppoll(pollFD, 3, &nto, NULL)));
+        } while (!sighandled && i++ <= CONF->reqQsz && (Rt = ppoll(pollFD, 3, &nto, NULL)));
     }
 }
 
@@ -475,6 +480,7 @@ static void igmpProxyRun(void) {
 void igmpProxyCleanUp(int code) {
     int    nr = 0, pid, status;
 
+    BLOCKSIGS;
     FOR_IF ((int i = 0; i < chld.nr; i++), chld.c[i].pid > 0 && (SHUTDOWN || chld.c[i].tbl == mrt_tbl))
         nr++;
     if (code == 0 && mrt_tbl >= 0)
@@ -483,13 +489,14 @@ void igmpProxyCleanUp(int code) {
         if (nr)
             LOG(LOG_NOTICE, 0, "Waiting for %d process%s to finish.", nr, nr != 1 ? "es" : "");
         while (nr && (pid = waitpid(-1, &status, 0)) > 0) FOR_IF((int i = 0; i < chld.nr; i++), chld.c[i].pid == pid) {
+            struct IfDesc *IfDp;
             chld.c[i].st = WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status);
             LOG(chld.c[i].tbl != mrt_tbl ? LOG_NOTICE : LOG_INFO, 0, "%s %d, %sPID: %d, %s (%d).",
                 chld.c[i].tbl == mrt_tbl ? "Child" : "Proxy", i + 1,
                 strFmt(chld.c[i].tbl == mrt_tbl, "", "for table %d, ",  chld.c[i].tbl),  pid, exitmsg[chld.c[i].st], chld.c[i].st);
             chld.c[i].pid = nr = 0;
-            if (chld.c[i].tbl > 0 && !CONF->disableIpMrules)
-                ipRules(chld.c[i].tbl, false);
+            GETIFL_IF(IfDp, chld.c[i].tbl == IfDp->conf->tbl && !IfDp->conf->disableIpMrules)
+                ipRules(IfDp, false);
             FOR_IF ((int i = 0; i < chld.nr; i++), chld.c[i].pid > 0 && (!RESTART || chld.c[i].tbl == mrt_tbl))
                 nr++;
             if (nr)
@@ -522,7 +529,7 @@ void igmpProxyCleanUp(int code) {
     TIME_STR(tE, curtime);
     LOG(LOG_WARNING, 0, "%s on %s. Running since %s (%ds).", RESTART ? "Restarting" : "Shutting down",
                          tE, tS, timeDiff(starttime, curtime).tv_sec);
-    if (SHUTDOWN) {
+    if (!RESTART) {
         free(CONF->runPath);         // Alloced by main()
         free(CONF->chroot);          // Alloced by loadConfig()
         free(CONF->logFilePath);     // Alloced by loadConfig()
@@ -535,47 +542,17 @@ void igmpProxyCleanUp(int code) {
 *   Signal handler. Signal arrived set flag so that the main loop can take care of it.
 */
 static void signalHandler(int sig, siginfo_t* siginfo, void* context) {
-    int i = 0;
-
-    switch (sig) {
-    case SIGINT:
-        if ((mrt_tbl < 0 || (mrt_tbl == 0 && chld.onr == 0)) && !CONF->notAsDaemon)
-            return;  // Daemon / Monitor ignores SIGINT
-        sighandled |= GOT_SIGINT;  // Fallthrough
-    case SIGTERM:
-        BLOCKSIGS;
-        if (SHUTDOWN || sighandled & GOT_SIGTERM) {
-            // If SIGTERM received more than once, KILL childs and exit.
-            IF_FOR_IF(mrt_tbl < 0 && chld.nr, (i = 0; i < chld.nr; i++), chld.c[i].pid > 0) {
-                kill(chld.c[i].pid, SIGKILL);
-            }
-            exit(sig);
-        }
-        sighandled |= GOT_SIGTERM;
-        if (sig == SIGINT)
-            return;
-        break;
-    case SIGCHLD:
-        sighandled |= GOT_SIGCHLD;
+    if (SHUTDOWN || (sighandled & GOT_SIGTERM)) {
+        // If SIGTERM received more than once, KILL childs and exit.
+        IF_FOR_IF(mrt_tbl < 0 && chld.nr, (int i = 0; i < chld.nr; i++), chld.c && chld.c[i].pid > 0)
+            kill(chld.c[i].pid, SIGKILL);
+        exit(sig);
+    } else if (sig == SIGINT && (mrt_tbl < 0 || (mrt_tbl == 0 && chld.onr == 0)) && !CONF->notAsDaemon)
+        return;   // Daemon / Monitor ignores SIGINT.
+    sighandled |= sig == SIGINT ? (1 << (sig - 1)) | GOT_SIGTERM : 1 << (sig - 1);
+    if (sighandled & (GOT_SIGINT | GOT_SIGCHLD | GOT_SIGPIPE))
         return;
-    case SIGPIPE:
-        sighandled |= GOT_SIGPIPE;
-        return;
-    case SIGURG:
-        sighandled |= GOT_SIGURG;
-        break;
-    case SIGHUP:
-        sighandled |= GOT_SIGHUP;
-        break;
-    case SIGUSR1:
-        sighandled |= GOT_SIGUSR1;
-        break;
-    case SIGUSR2:
-        sighandled |= GOT_SIGUSR2;
-        break;
-    }
     // Send SIG to children, except for SIGINT SIGPIPE and SIGCHLD.
-    // If monitor is terminating we will end childs with SIGINT.
-    IF_FOR_IF(mrt_tbl < 0 && chld.c, (i = 0; i < chld.nr; i++), chld.c[i].pid > 0)
-        kill(chld.c[i].pid, sig == SIGTERM ? SIGINT : sig);
+    IF_FOR_IF(mrt_tbl < 0 && chld.c, (int i = 0; i < chld.nr; i++), chld.c[i].pid > 0)
+        kill(chld.c[i].pid, sig);
 }

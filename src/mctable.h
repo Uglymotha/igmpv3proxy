@@ -128,6 +128,8 @@ struct qlst {
 #define MFCSZ            (sizeof(struct mfc))
 #define QLSZ             (sizeof(struct qlst))
 #define QRYSZ(n)         (QLSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
+#define INCL              0
+#define EXCL              1
 #define IS_EX(x, y)       BIT_TST(x->mode, y->index)
 #define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
 #define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)

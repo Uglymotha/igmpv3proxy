@@ -49,30 +49,30 @@ static inline bool  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include phyint user group chroot defaultquickleave quickleave defaultmaxorigins"
-                             " hashtablesize routetables defaultdown defaultup defaultupdown defaultthreshold defaultratelimit"
+static const char *options = " include logfile loglevel rescanvif rescanconf phyint user group chroot mctables hashtablesize"
+                             " reqqueuesize timerqueuesize kbufsize pbufsize maxtbl defaulttable defaultquickleave quickleave"
+                             " defaultmaxorigins defaultdown defaultup defaultupdown defaultthreshold defaultratelimit"
                              " defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
                              " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
-                             " rescanvif rescanconf loglevel defaultproxylocalmc defaultnoquerierelection proxylocalmc"
-                             " noproxylocalmc upstream downstream disabled ratelimit threshold querierver querierip robustness"
-                             " queryinterval queryrepsonseinterval lastmemberinterval lastmembercount defaultnocksumverify"
-                             " nocksumverify cksumverify noquerierelection querierelection nocksumverify cksumverify"
-                             " defaultfilterany nodefaultfilter filter altnet whitelist reqqueuesize kbufsize pbufsize maxtbl"
-                             " defaulttable defaultdisableipmrules logfile";
+                             " defaultproxylocalmc defaultnoquerierelection defaultproxylocalmc defaultnocksumverify defaultfilter"
+                             " defaultfilterany nodefaultfilter defaultdisableipmrules ";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
-                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins";
+                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins ";
+
+// Process signaling.
+extern volatile uint64_t  sighandled;
 
 // Daemon Configuration.
-static struct Config       conf, oldconf;
+static struct Config      conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
-static struct vifConfig   *vifConf = NULL, *ovifConf = NULL;
-uint32_t                   uVifs;
+static struct vifConfig *vifConf = NULL, *ovifConf = NULL;
+uint32_t                  uVifs;
 
 // Keeps timer ids for configurable timed functions.
-static struct timers timers = { (intptr_t)NULL, (intptr_t)NULL };
+static struct timers      timers = { (intptr_t)NULL, (intptr_t)NULL };
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -116,7 +116,7 @@ void freeConfig(bool old) {
         _free(*cConf, vif, VIFSZ);
     }
     *cConf = NULL;
-    if (old || SHUTDOWN || RESTART) {
+    if (old || SHUTDOWN) {
         // Free default filters when clearing old config, or on shutdown / restart.
         while (*dFil) {
             tFil = (*dFil)->next;
@@ -129,7 +129,7 @@ void freeConfig(bool old) {
             *dRate = tRate;
         }
     }
-    if (SHUTDOWN || RESTART) {
+    if (SHUTDOWN) {
         // On Shutdown stop any running timers.
         timers.rescanConf = timerClear(timers.rescanConf, false);
         timers.rescanVif = timerClear(timers.rescanVif, false);
@@ -165,6 +165,7 @@ static inline bool nextToken(char *token) {
     uint32_t *readSize = (uint32_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE), *bufPtr = readSize + 1, tokenPtr = 1;
     bool      finished = false, overSized = false, commentFound = false;
 
+    token[0] = ' ';
     while (!finished && !(*bufPtr == *readSize && !(*bufPtr = 0) &&
                            (    (*readSize > 0 && *readSize < READ_BUFFER_SIZE && !(*readSize = 0))
                              || (*readSize = fread(cBuffer, sizeof(char), READ_BUFFER_SIZE, configFile(NULL, 1))) == 0)))
@@ -301,7 +302,6 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
                 LOG(LOG_WARNING, 0, "Config (%s): '%s' is not a valid filter action or direction.", in, token + 1);
                 fil = filErr;
             }
-
         } else if (!parseSubnetAddress(token + 1, &addr, &mask)) {
             // Unknown token. Ignore.
             LOG(LOG_WARNING, 0, "Config (%s): Uparsable subnet '%s'.", in, token + 1, list);
@@ -358,7 +358,7 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
 static inline bool parsePhyintToken(char *token) {
     struct vifConfig  *tmpPtr;
     struct filters   **filP, **rateP;
-    int64_t            intToken, i;
+    int64_t            intToken;
 
     if (!nextToken(token)) {
         // First token should be the interface name.
@@ -402,9 +402,8 @@ static inline bool parsePhyintToken(char *token) {
                 LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpPtr->name);
             else {
                 tmpPtr->tbl = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Assigning to table %d.", tmpPtr->name, intToken);
-                if (mrt_tbl < 0)
-                    igmpProxyFork(intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Assigned to table %d.", tmpPtr->name, intToken);
+                sighandled |= mrt_tbl < 0 ? GOT_SIGPROXY : 0;
             }
 #else
             LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
@@ -619,17 +618,14 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_ERR, 1, "Config: Failed to open config file '%s'.", cfgFile);
     } else
         LOG(LOG_NOTICE, 0, "Config: Loading config (%d) from '%s'.", conf.cnt, cfgFile);
-
-    _malloc(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Freed by self
-    token[0] = ' ';
-    *(uint64_t *)((char *)token + MAX_TOKEN_LENGTH + READ_BUFFER_SIZE) = 0;
+    _calloc(token, 1, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Freed by self
 
     // Loop though file tokens until all configuration is read or error encounterd.
     if (S_ISREG(st_mode)) while (!logwarning && nextToken(token)) {
         // Process parameters which will result in a next valid config token first.
-        while (token[1] && (strcmp(" phyint", token) == 0 || strcmp(" defaultfilter", token) == 0 || strstr(phyintopt, token))) {
-            if (strcmp(" phyint", token) == 0) {
-                parsePhyintToken(token);
+        while (token[1] && (!strcmp(" phyint", token) || !strcmp(" defaultfilter", token) || strstr(phyintopt, token))) {
+            if (strcmp(" phyint", token) == 0 && !parsePhyintToken(token)) {
+                return false;
             } else if (strcmp(" defaultfilter", token) == 0) {
                 if (conf.defaultFilters && *filP == conf.defaultFilters) {
                     LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
@@ -639,7 +635,7 @@ bool loadConfig(char *cfgFile) {
                     strcpy(token, "filter");
                     parseFilters("default", token, &filP, &rateP);
                 }
-            } else if (strstr(phyintopt, token)) {
+            } else if (strstr(phyintopt, token) && token[1] != '\0') {
                 if (strcmp(" quickleave", token) != 0) // Quickleave is valid for both config and phyint.
                     LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
                 break;
@@ -670,8 +666,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
                 conf.defaultTable = intToken;
-                if (mrt_tbl < 0 && igmpProxyFork(conf.defaultTable) > 0)
-                    LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
+                LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
+                sighandled |= mrt_tbl < 0 ? GOT_SIGPROXY : 0;
             }
 #else
             LOG(LOG_WARNING, 0, "Config: Default table id is only valid on linux.");
@@ -698,7 +694,7 @@ bool loadConfig(char *cfgFile) {
             if (! (conf.group = getgrnam(token + 1)))
                 LOG(LOG_WARNING, 1, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
             else
-                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s' (%d).", conf.group->gr_name, conf.group->gr_gid);
+                LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", conf.group->gr_name);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
             conf.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
@@ -852,11 +848,13 @@ bool loadConfig(char *cfgFile) {
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
 #ifdef HAVE_NETLINK
             conf.rescanVif = intToken > 0 ? intToken : 0;
+            if (conf.rescanVif == 1)
+                LOG(LOG_NOTICE, 0, "Config: Use netlink to detect interface changes.", intToken);
+            else
 #else
             conf.rescanVif = intToken == 1 ? 2 : intToken > 1 ? intToken : 0;
 #endif
-            LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
-
+                LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
         } else if (strcmp(" rescanconf", token) == 0 && INTTOKEN) {
             conf.rescanConf = intToken > 0 ? intToken : 0;
             LOG(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);

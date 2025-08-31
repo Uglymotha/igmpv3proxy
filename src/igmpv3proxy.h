@@ -316,17 +316,19 @@ struct IfDesc {
 #define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
 
 // Signal Handling.
-#define GOT_SIGHUP   0x02
-#define GOT_SIGUSR1  0x04
-#define GOT_SIGUSR2  0x08
-#define GOT_SIGURG   0x10
-#define GOT_SIGCHLD  0x20
-#define GOT_SIGPIPE  0x40
-#define GOT_SIGTERM  0x80
-#define GOT_SIGINT   0x100
-#define GOT_SIGPROXY 0x8000
+#define STARTING     ((uint64_t)1 << 63)
+#define RESTARTING   (GOT_SIGTERM | GOT_SIGURG)
+#define GOT_SIGHUP   (1 << (SIGHUP - 1))
+#define GOT_SIGUSR1  (1 << (SIGUSR1 - 1))
+#define GOT_SIGUSR2  (1 << (SIGUSR2 - 1))
+#define GOT_SIGURG   (1 << (SIGURG - 1))
+#define GOT_SIGCHLD  (1 << (SIGCHLD - 1))
+#define GOT_SIGPIPE  (1 << (SIGPIPE - 1))
+#define GOT_SIGTERM  (1 << (SIGTERM - 1))
+#define GOT_SIGINT   (1 << (SIGINT - 1))
+#define GOT_SIGPROXY ((uint64_t)1 << 62)
 #define NOSIG        (sigstatus == 0)
-#define STARTUP      (sigstatus & 0x01)
+#define STARTUP      (sigstatus & STARTING)
 #define CONFRELOAD   (sigstatus & GOT_SIGUSR1)
 #define IFREBUILD    (sigstatus & GOT_SIGUSR2)
 #define SHUP         (sigstatus & GOT_SIGHUP)
@@ -479,7 +481,7 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint16_t         sigstatus, logwarning;
+extern uint64_t         sigstatus, logwarning;
 
 // MRT route table id. Linux only, not supported on FreeBSD.
 extern struct chld      chld;
@@ -499,10 +501,10 @@ extern uint32_t         alligmp3_group;                // IGMPv3 addr in net ord
 /**
 *   igmpproxy.c
 */
-#define       TIME_STR(x,y) clock_gettime(CLOCK_REALTIME, &y); \
+#define       TIME_STR(x,y) {clock_gettime(CLOCK_REALTIME, &y); \
                             strcpy(x, asctime(localtime(&y.tv_sec))); \
-                            x[strlen(x) - 1] = '\0'
-int  igmpProxyFork(int tbl);
+                            x[strlen(x) - 1] = '\0';}
+int  igmpProxyFork(struct IfDesc *IfDp);
 void igmpProxyCleanUp(int code);
 
 /**
@@ -585,7 +587,7 @@ uint16_t        grecNscrs(struct igmpv3_grec *grec);
 uint16_t        getIgmpExp(register int val, register int d);
 bool            myLog(int Serverity, const char *func, int Errno, const char *FmtSt, ...);
 void            getMemStats(int h, int cli_fd);
-void            ipRules(int tbl, bool activate);
+void            ipRules(struct IfDesc *IfDp, bool activate);
 
 /**
 *   kern.c

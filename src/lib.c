@@ -284,7 +284,6 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     char      LogMsg[512];
     FILE     *lfp = CONF->logFilePath ? fopen(CONF->logFilePath, "a") : stderr;
     va_list   ArgPt;
-    int fd = fileno(lfp);
 
     va_start(ArgPt, FmtSt);
     if (CONF->logLevel == LOG_DEBUG && Severity >= LOG_NOTICE)
@@ -295,6 +294,8 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     va_end(ArgPt);
 
     if ((CONF->logFilePath || CONF->log2Stderr) && lfp) {
+        FILE *conf = fopen(CONF->configFilePath, "a");
+        int   fd   = conf ? fileno(conf) : -1;
         flock(fd, LOCK_EX);
         if (mrt_tbl >= 0 && chld.onr > 0)
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld [%d] %s\n", sec % 86400 / 3600, sec % 3600 / 60,
@@ -303,6 +304,8 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
             fprintf(lfp, "%02ld:%02ld:%02ld:%04ld %s\n", sec % 86400 / 3600, sec % 3600 / 60,
                           sec % 3600 % 60, nsec / 100000, LogMsg);
         flock(fd, LOCK_UN);
+        if (conf)
+            fclose(conf);
     } else
         syslog(Severity, "%s", LogMsg);
 
@@ -311,8 +314,8 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     if (Severity <= LOG_CRIT) {
         BLOCKSIGS;
         IF_FOR_IF(!SHUTDOWN && mrt_tbl < 0 && chld.nr, (Ln = 0; Ln < chld.nr; Ln++), chld.c[Ln].pid > 0) {
-            LOG(LOG_NOTICE, 0, "SIGINT: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
-            kill(chld.c[Ln].pid, SIGINT);
+            LOG(LOG_NOTICE, 0, "SIGTERM: To PID: %d for table: %d.", chld.c[Ln].pid, chld.c[Ln].tbl);
+            kill(chld.c[Ln].pid, SIGTERM);
         }
         if (Errno < 0)
             Errno = -Errno;
@@ -328,18 +331,13 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
 /**
 *   Sets or removes ip mrules for table.
 */
-void ipRules(int tbl, bool activate) {
-    struct IfDesc *IfDp;
-
-    LOG(LOG_NOTICE, 0, "%s mrules for table %d.", activate ? "Adding" : "Removing", tbl);
-    GETIFL_IF(IfDp, IfDp->conf->tbl == tbl && !IfDp->conf->disableIpMrules) {
-        LOG(LOG_INFO, 0, "%s ip mrules for interface %s.", activate ? "Adding" : "Removing", IfDp->Name);
-        FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(-2) == 0) {
-            execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table",
-                   strFmt(1, "%d", "", tbl), NULL);
-            LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
-            exit(ENOEXEC);
-        }
+void ipRules(struct IfDesc *IfDp, bool activate) {
+    LOG(LOG_INFO, 0, "%s ip mrules for interface %s, table %d.", activate ? "Adding" : "Removing", IfDp->Name, IfDp->conf->tbl);
+    FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(NULL) == 0) {
+        execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table",
+                strFmt(1, "%d", "", IfDp->conf->tbl), NULL);
+        LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
+        exit(ENOEXEC);
     }
 }
 

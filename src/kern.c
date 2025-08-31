@@ -64,7 +64,7 @@ void k_enableNl(void) {
     struct sockaddr_nl nl;
     nl.nl_family = AF_NETLINK;
     nl.nl_pid = getpid();
-    nl.nl_groups = RTMGRP_LINK;
+    nl.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR;
     if ((nlFD = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE)) < 0) {
         LOG(LOG_ERR, 1, "Failed to open netlink socket.");
     } else if (bind(nlFD, (struct sockaddr*)&nl, sizeof(nl)) < 0) {
@@ -81,7 +81,7 @@ void k_enableNl(void) {
 void k_disableNl(void) {
     if (nlFD == -1)
         return;
-   else if (close(nlFD) < 0)
+    else if (close(nlFD) < 0)
         LOG(LOG_WARNING, 1, "Netlink socket CLOSE failed.");
     else {
         LOG(LOG_NOTICE, 0, "Closed netlink Socket.");
@@ -131,10 +131,10 @@ void k_enableMRouter(void) {
 void k_disableMRouter(void) {
     if (!STARTUP && !SPROXY && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
         LOG(LOG_WARNING, 1, "IGMP socket MRT_DONE failed.");
-    if (close(mrouterFD) < 0)
+    if (mrouterFD >= 0 && close(mrouterFD) < 0)
         LOG(LOG_WARNING, 1, "%s socket CLOSE failed.", mrt_tbl < 0 ? "UDP" : "IGMP");
     else {
-        LOG(LOG_NOTICE, 0, "Closed %s Socket.", mrt_tbl < 0 ? "UDP" : "IGMP");
+        LOG(LOG_NOTICE, 0, "Closed %s Socket.", mrt_tbl < 0 || SPROXY ? "UDP" : "IGMP");
         mrouterFD = -1;
     }
 }

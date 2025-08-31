@@ -39,8 +39,6 @@
 
 #include "igmpv3proxy.h"
 
-extern volatile sig_atomic_t sighandled;  // From igmpv3proxy.c signal handler.
-
 // Queue definition.
 static struct timeOutQueue {
     void                (*func)(void *);   // function to call
@@ -58,11 +56,11 @@ static uint64_t id = 1;
 *   Returns -1,-1 if no timer is scheduled, 0, -1 if next timer has already expired.
 */
 struct timespec timerAgeQueue(void) {
-    struct timeOutQueue *node = queue;
-    uint64_t                i = 1;
+    struct timeOutQueue *node;
+    uint64_t             i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (; !sighandled && !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
+    for (node = queue; !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout (#%d) - %s - Missed by %dus", i, node->name,
             timeDiff(node->time, curtime).tv_nsec / 1000);
         clock_gettime(CLOCK_REALTIME, &node->time);
