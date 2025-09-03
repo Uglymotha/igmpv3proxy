@@ -868,17 +868,19 @@ void toInclude(struct ifMct *imc) {
     while (src) {
         // Remove all inactive sources from group on interface.
         if (IS_SET(src, d, imc->IfDp)) {
-            if (src->vifB.age[imc->IfDp->index] > 0)
-                LOG(LOG_WARNING, 0, "Remove source %s in group %s on %s age %d.", inetFmt(src->ip, 0),
+            if (src->vifB.age[imc->IfDp->index] > 0) {
+                keep = true;
+                LOG(LOG_INFO, 0, "Source %s in group %s on %s age %d.", inetFmt(src->ip, 0),
                     inetFmt(imc->mct->group, 0), src->vifB.age[imc->IfDp->index]);
-            else
+            } else {
                 LOG(LOG_INFO, 0, "Remove inactive source %s from group %s on %s.", inetFmt(src->ip, 0),
                     inetFmt(imc->mct->group, 0), imc->IfDp->Name);
-            src = delSrc(src, imc->IfDp, 1, false, (uint32_t)-1);
+                src = delSrc(src, imc->IfDp, 1, false, (uint32_t)-1);
+            }
         } else {
+            keep |= src->vifB.d;
             if (src->mfc && src->mfc->ttlVc[imc->IfDp->index] > 0)
                 activateRoute(src->mfc->IfDp, src,  src->ip, src->mct->group, true);
-            keep = true;
             src = src->next;
         }
     }
