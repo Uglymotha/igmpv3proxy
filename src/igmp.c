@@ -121,7 +121,7 @@ static bool checkIgmp(struct IfDesc *IfDp, register uint32_t src, register uint3
         // Filter local multicast 224.0.0.0/24
         LOG(LOG_DEBUG, 0, "Local multicast (%s) on %s from %s and proxylocalmc is not set. Ignoring.",
             inetFmt(group, 0), IfDp->Name, inetFmt(src, 0));
-    else if (src == IfDp->InAdr.s_addr || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
+    else if (src == IfDp->ip.ip || (IfDp->querier.ip == IfDp->conf->qry.ip && src == IfDp->querier.ip))
         LOG(LOG_DEBUG, 0, "The request from %s on %s is from myself. Ignoring.", inetFmt(src, 0), IfDp->Name);
     else if ((IfDp->state & ifstate) == 0 || IfDp->conf->tbl != mrt_tbl)
         LOG(LOG_INFO, 0, "Message for %s from %s was received on %s interface %s. Ignoring.",
@@ -199,7 +199,7 @@ void acceptIgmp(int fd) {
 #endif
             if (! (IfDp = getIf(ifindex, NULL, FINDSYSIX | SRCHVIFL))) {
                 char ifName[IF_NAMESIZE];
-                LOG(LOG_INFO, 0, "No valid interface found for src: %s dst: %s on %s.",
+                LOG(LOG_DEBUG, 0, "No valid interface found for src: %s dst: %s on %s.",
                     inetFmt(src, 0), inetFmt(dst, 0), ifindex ? if_indextoname(ifindex, ifName) : "unk");
                 return;
             }
@@ -271,8 +271,9 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
         LOG(LOG_ERR, eABNRML, "Requested to send packet on table %d interface %s.", IfDp->conf->tbl, IfDp->Name);
         return;
     } else if (IS_DISABLED(IfDp->state) || !IQUERY) {
-        LOG(LOG_WARNING, 0, "Not sending query for %s on %s interface %s.", query ? inetFmt(query->igmp_group.s_addr, 0) : "",
-            IS_DISABLED(IfDp->state) ? "disabled" : "non querier", IfDp->Name);
+        LOG(LOG_WARNING, 0, "Not sending query to %s on %s interface %s.",
+            query ? inetFmt(query->igmp_group.s_addr, 0) : "224.0.0.1", IS_DISABLED(IfDp->state) ? "disabled" : "non querier",
+            IfDp->Name);
         return;
     } else if (query && (IfDp->querier.ver == 1 || (IfDp->querier.ver == 2 && query->igmp_nsrcs > 0))) {
         LOG(LOG_WARNING, 0, "Not sending group and source specific query on %s while in v%d mode.", IfDp->Name, IfDp->querier.ver);

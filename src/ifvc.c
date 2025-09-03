@@ -93,7 +93,7 @@ void rebuildIfVc(intptr_t *tid) {
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
     if (tid)
         sigstatus |= GOT_SIGUSR2;
-    if (! IfDescL || IFREBUILD || SHUP || STARTUP)
+    if (! IfDescL || IFREBUILD || SHUP)
         buildIfVc();
     configureVifs();
     freeIfDescL();
@@ -114,55 +114,54 @@ void rebuildIfVc(intptr_t *tid) {
 
 /**
 *   Builds up a list with all usable interfaces of the machine.
+*   Sets bit 8 of IfDp->state when new interface is detected (DEFAULT_IFDESC).
+*   Sets bit 7 when existing interface is seen.
+*   These bits are used by configureVifs() below.
 */
 void buildIfVc(void) {
-    struct ifreq ifr;
-    struct ifaddrs *IfAddrsP = NULL, *tmpIfAddrsP;
-    struct IfDesc *IfDp;
+    struct ifreq    ifr;
+    struct ifaddrs *ifAddrs, *fifAddrs;
+    struct IfDesc  *IfDp;
 
     // Get the system interface list.
-    if ((getifaddrs(&IfAddrsP)) == -1)
+    if ((getifaddrs(&fifAddrs)) == -1)
         LOG(STARTUP ? LOG_CRIT : LOG_ERR, eNOINIT, "Cannot enumerate interfaces.");
-    else for (tmpIfAddrsP = IfAddrsP; tmpIfAddrsP; tmpIfAddrsP = tmpIfAddrsP->ifa_next) {
-        unsigned int ix = if_nametoindex(tmpIfAddrsP->ifa_name);
-        if (tmpIfAddrsP->ifa_flags & IFF_LOOPBACK || tmpIfAddrsP->ifa_addr->sa_family != AF_INET
-            || (!((tmpIfAddrsP->ifa_flags & IFF_UP) && (tmpIfAddrsP->ifa_flags & IFF_RUNNING)))
-            || s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr) == 0
+    else for (ifAddrs = fifAddrs; ifAddrs; ifAddrs = ifAddrs->ifa_next) {
+        if (   ifAddrs->ifa_flags & IFF_LOOPBACK   || ifAddrs->ifa_addr->sa_family != AF_INET
+            || (!((ifAddrs->ifa_flags & IFF_UP)    && (ifAddrs->ifa_flags & IFF_RUNNING)))
 #ifdef IFF_CANTCONFIG
-            || (!(tmpIfAddrsP->ifa_flags & IFF_MULTICAST) && (tmpIfAddrsP->ifa_flags & IFF_CANTCONFIG))
+            || (!(ifAddrs->ifa_flags & IFF_MULTICAST) && (ifAddrs->ifa_flags & IFF_CANTCONFIG))
 #endif
-            || ((IfDp = getIf(0, tmpIfAddrsP->ifa_name, FINDNAME)) && (IfDp->state & 0xC0))) {
+            || ((IfDp = getIf(0, ifAddrs->ifa_name, FINDNAME)) && (IfDp->state & 0xC0))) {
             // Only build Ifdesc for up & running IP interfaces (no aliases), and can be configured for multicast if not enabled.
             continue;
-        }
-
-        uint32_t addr = s_addr_from_sockaddr(tmpIfAddrsP->ifa_addr), mask = s_addr_from_sockaddr(tmpIfAddrsP->ifa_netmask);
-        if (! IfDp) {
+        } else if (! IfDp) {
             // New interface, allocate and initialize.
             _malloc(IfDp, ifd, IFSZ);  // Freed by freeIfDescL()
             *IfDp = DEFAULT_IFDESC;
             IfDescL = IfDp;
-            memcpy(IfDp->Name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
-            LOG(LOG_INFO, 0, "Found new interface %s.", IfDp->Name);
+            memcpy(IfDp->Name, ifAddrs->ifa_name, strlen(ifAddrs->ifa_name));
+            LOG(LOG_NOTICE, 0, "Found new interface %s.", IfDp->Name);
         } else {
             // Rebuild Interface. For disappeared interface state is not reset here and configureVifs() can mark it for deletion.
             IfDp->state |= 0x40;
             LOG(LOG_INFO, 0, "Found existing interface %s.", IfDp->Name);
         }
         // Set the interface flags, index and IP.
-        IfDp->sysidx       = ix;
-        IfDp->Flags        = tmpIfAddrsP->ifa_flags;
-        IfDp->InAdr.s_addr = addr;
+        IfDp->sysidx  = if_nametoindex(ifAddrs->ifa_name);
+        IfDp->Flags   = ifAddrs->ifa_flags;
+        IfDp->ip.ip   = uint32_t_from_sockaddr(ifAddrs->ifa_addr);
+        IfDp->ip.mask = uint32_t_from_sockaddr(ifAddrs->ifa_netmask);
         // Get interface mtu.
         memset(&ifr, 0, sizeof(struct ifreq));
-        memcpy(ifr.ifr_name, tmpIfAddrsP->ifa_name, strlen(tmpIfAddrsP->ifa_name));
+        memcpy(ifr.ifr_name, ifAddrs->ifa_name, strlen(ifAddrs->ifa_name));
         if (ioctl(MROUTERFD, SIOCGIFMTU, &ifr) < 0) {
             LOG(LOG_ERR, 1, "Failed to get MTU for %s, disabling.", IfDp->Name);
             IfDp->mtu = 0;
         } else
             IfDp->mtu = ifr.ifr_mtu;
         // Enable multicast if necessary.
-        if (! (IfDp->Flags & IFF_MULTICAST)) {
+        if (!(IfDp->Flags & IFF_MULTICAST)) {
             ifr.ifr_flags = IfDp->Flags | IFF_MULTICAST;
             if (ioctl(MROUTERFD, SIOCSIFFLAGS, &ifr) < 0)
                 LOG(LOG_ERR, 1, "Failed to enable multicast on %s, disabling.", IfDp->Name);
@@ -171,24 +170,21 @@ void buildIfVc(void) {
                 LOG(LOG_NOTICE, 0, "Multicast enabled on %s.", IfDp->Name);
             }
         }
-        // Log the result...
-        LOG(LOG_INFO, 0, "Interface %s, IP: %s/%d, Flags: 0x%04x, MTU: %d",
-            IfDp->Name, inetFmt(IfDp->InAdr.s_addr, 0), 33 - ffs(ntohl(mask)), IfDp->Flags, IfDp->mtu);
+        LOG(LOG_INFO, 0, "Interface %s, IP: %s, Flags: 0x%04x, MTU: %d", IfDp->Name,
+            inetFmt(IfDp->ip.ip, IfDp->ip.mask), IfDp->Flags, IfDp->mtu);
     }
-
-    free(IfAddrsP);   // Alloced by getiffaddrs()
+    freeifaddrs(fifAddrs);   // Alloced by getiffaddrs()
 }
 
 /**
 *   Configures all multicast vifs and links to interface configuration. This function is responsible for:
 *   - All active interfaces have a matching configuration. Either explicit through config file or implicit defaults.
-*   - Default filters are created for the interface if necessary.
 *   - Establish correct old and new state of interfaces.
-*   - Control querier process and do route maintenance on interface transitions.
-*   - Add and remove vifs from the kernel if needed.
-*   - IfDp->state represents the old and new state of interfaces as below.
+*   - Control querier process and do route maintenance when interfaces transitions.
+*   - Add and remove vifs from the kernel if needed and start/stop querier.
+*   - IfDp->state represents the old and new state of interfaces as below. bits 7 & 8 are set by buildIfVc().
 *      8        7         6       5       4       3       2       1
-*      removed  existing  unused  unused  olddown oldup   down    up
+*      new      existing  monitor unused  olddown oldup   down    up
 */
 void configureVifs(void) {
     struct IfDesc     *IfDp = NULL, *If;
@@ -202,7 +198,7 @@ void configureVifs(void) {
     GETIFL(IfDp) {
         // When config is reloaded, find and link matching config to interfaces.
         if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
-            for (;vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
+            for (vifConf = *VIFCONF; vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
             if (vifConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
             } else {
@@ -217,46 +213,41 @@ void configureVifs(void) {
                 strcpy(vifConf->name, IfDp->Name);
                 vifConf->filters = CONF->defaultFilters;
             }
-            // Link the configuration to the interface. And update the states.
             IfDp->oconf = IfDp->conf;
             IfDp->conf = vifConf;
-            if (mrt_tbl < 0 && (IfDp->state & 0x80))
-                // We will sigf proxy on seeing new interfaces.
+            if (mrt_tbl < 0 && (IfDp->state & 0x80) && (IfDp->state = 0x20))
+                // We will sig proxy on seeing new interfaces and set state to monitor disabled.
                 sighandled |= GOT_SIGPROXY;
         }
-        if (mrt_tbl < 0) {
-            IfDp->state = 0;
+        if (mrt_tbl < 0)
             // Monitor process only needs config.
             continue;
-        }
         // Evaluate to old and new state of interface.
-        if (!STARTUP && !CONFRELOAD && !(IfDp->state & 0x40)) {
-            // If no state flag at this point it is because buildIfVc detected new or removed interface.
-            if (!(IfDp->state & 0x80))
-                // Removed interface, oldstate is current state, newstate is disabled, flagged for removal.
-                IfDp->state = ((IfDp->state & 0x03) << 2) | 0x80;
-            else
-                // New interface, oldstate is disabled, newstate is configured state.
-                IfDp->state = IfDp->mtu && IfDp->Flags & IFF_MULTICAST ? IfDp->conf->state : IF_STATE_DISABLED;
-        } else
-            // Existing interface, oldstate is current state, newstate is configured state.
+        if ((CONFRELOAD || (IfDp->state & 0x40)) && IfDp->conf->tbl == mrt_tbl) {
+            // Existing interface, oldstate is curre nt state, newstate is configured state.= ((IfDp->state & 0x3) << 2)
             IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
-        if (IfDp->conf->tbl != mrt_tbl) {
-            // Check if Interface is in table for current process.
+        } else if (!(IfDp->state & 0xC0) || SHUTDOWN) {
+            // Removed interface. Old state is current, new is disabled, flagged for removal.
+            IfDp->state = ((IfDp->state & 0x03) << 2) | 0x80;
+        } else if ((IfDp->state & 0x80) && IfDp->conf->tbl != mrt_tbl) {
             LOG(LOG_INFO, 0, "Not enabling table %d interface %s", IfDp->conf->tbl, IfDp->Name);
+            IfDp->state &= ~0xC3;  // Keep old state, new state disabled.
+        } else if ((IfDp->state & 0x80)) {
+            // New interface, old state is disabled new state is configured state.
+            IfDp->state = IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : IF_STATE_DISABLED;
+        } else
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
-        }
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
         quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
 
         // Set configured querier ip to interface address if not configured
         // and set version to 3 for disabled/upstream only interface.
         if (IfDp->conf->qry.ip == (uint32_t)-1)
-            IfDp->conf->qry.ip = IfDp->InAdr.s_addr;
+            IfDp->conf->qry.ip = IfDp->ip.ip;
         if (!IS_DOWNSTREAM(IfDp->state))
             IfDp->conf->qry.ver = 3;
         if (IfDp->conf->qry.ver == 1)
-            IfDp->conf->qry.interval = 10, IfDp->conf->qry.responseInterval = 10;
+            IfDp->conf->qry.interval = IfDp->conf->qry.responseInterval = 10;
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
             for (fil = vifConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
@@ -281,16 +272,16 @@ void configureVifs(void) {
             if (IS_UPSTREAM(newstate)) {
                 upvifcount++;
                 BIT_SET(uVifs, IfDp->index);
-                IF_GETVIFL_IF(!STARTUP && !IS_UPSTREAM(oldstate), If, IS_DOWNSTREAM(If->index)) {
+                IF_GETVIFL_IF(!STARTUP && !IS_UPSTREAM(oldstate), If, If != IfDp && IS_DOWNSTREAM(If->state)) {
                     LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
-                    sendIgmp(IfDp, NULL);
+                    sendIgmp(If, NULL);
                 }
             } else
                 BIT_CLR(uVifs, IfDp->index);
             if (IS_DISABLED(oldstate) || (!STARTUP && oldstate != newstate))
                 ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
         }
-        if (!IFREBUILD || (IS_DISABLED(oldstate) && !IS_DISABLED(newstate)) || (!IS_DISABLED(oldstate) && IS_DISABLED(newstate)))
+        if ((newstate != oldstate || IfDp->filCh) && IfDp->conf->tbl == mrt_tbl)
             clearGroups(IfDp);
         IfDp->filCh = false;
         if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
@@ -311,7 +302,6 @@ void configureVifs(void) {
         IfDp->oconf = NULL;
     }
     if (mrt_tbl < 0)
-        // Monitor process only needs config and state.
         return;
 
     // Set hashtable size to 0 when quickleave is not enabled on any interface.
@@ -321,14 +311,13 @@ void configureVifs(void) {
         CONF->dHostsHTSize = 0;
     }
     // Check if quickleave was enabled or disabled due to config change.
-    if ((CONFRELOAD || SHUP) && OLDCONF->dHostsHTSize != CONF->dHostsHTSize && mrt_tbl >= 0) {
+    if ((CONFRELOAD || SHUP) && OLDCONF->dHostsHTSize != CONF->dHostsHTSize) {
         LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
             OLDCONF->dHostsHTSize, CONF->dHostsHTSize);
         sighandled |= GOT_SIGURG | GOT_SIGTERM;
     }
-
     // All vifs created / updated, check if there is an upstream and at least one downstream.
-    if (!SHUTDOWN && mrt_tbl >= 0 && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
+    if (!SHUTDOWN && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
         LOG(STARTUP || RESTART ? LOG_CRIT : LOG_ERR, -eNOINIT,
             "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }
@@ -364,7 +353,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
                          "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n", i++, IfDp->Name,
                      mrt_tbl < 0 ? strFmt(1, "%2d", "", IfDp->conf->tbl) :
                                    strFmt(IfDp->index == (uint8_t)-1, "-", "%2d",IfDp->index),
-                     IfDp->querier.ver, inetFmt(IfDp->InAdr.s_addr, 0),
+                     IfDp->querier.ver, inetFmt(IfDp->ip.ip, 0),
                          IS_DISABLED(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "Disabled" :
                      IS_UPDOWNSTREAM(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "UpDownstream" :
                        IS_DOWNSTREAM(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "Downstream" : "Upstream",

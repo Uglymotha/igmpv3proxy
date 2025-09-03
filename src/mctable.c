@@ -129,6 +129,7 @@ static inline bool addGroup(struct mcTable* mct, struct IfDesc *IfDp, int dir, i
     } else if (dir) {
         if (mct->stamp.tv_nsec) {
             imc = (void *)timerClear((intptr_t)mct->stamp.tv_nsec, true);
+            mct->stamp.tv_nsec = 0;
             delGroup(imc->mct, imc->IfDp, imc, 3);
         }
         BIT_SET(mct->vifB.d, IfDp->index);
@@ -669,7 +670,7 @@ void clearGroups(struct IfDesc *IfDp) {
                 k_deleteUpcall(mfc->src->ip, mct->group);
 #endif
     }
-    if (!SHUTDOWN && IfDp->conf->tbl == mrt_tbl && IfDp->conf->bwControl && ! IfDp->bwTimer) {
+    if (!SHUTDOWN && !IS_DISABLED(IfDp->state) && IfDp->conf->bwControl && ! IfDp->bwTimer) {
         IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
         for (imc = IfDp->uMct; imc; imc = imc ? imc->next : IfDp->uMct)
@@ -678,16 +679,16 @@ void clearGroups(struct IfDesc *IfDp) {
 #endif
     }
 
-    if ((SHUTDOWN) && IfDp->uMct) {
+    if (SHUTDOWN && IfDp->uMct) {
         // Dangling unresolved route, remove when shutting down jusst to be nice to the kernel.
         ((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec = timerClear(((struct ifMct *)IfDp->uMct)->mct->stamp.tv_nsec, false);
         delGroup(((struct ifMct *)IfDp->uMct)->mct, IfDp, IfDp->uMct, 0);
     }
 
     if (! MCT)
-        LOG(LOG_INFO, 0, "Multicast table is empty.");
+        LOG(LOG_INFO, 0, "(%s) Multicast table is empty.", IfDp->Name);
     else
-        logRouteTable("Clear Groups", 1, -1, (uint32_t)-1, (uint32_t)-1, IfDp);
+        logRouteTable(strFmt(1, "Clear Groups (%s)", "", IfDp->Name), 1, -1, (uint32_t)-1, (uint32_t)-1, IfDp);
     clock_gettime(CLOCK_REALTIME, &curtime);
     LOG(LOG_DEBUG, 0, "%s took %dus", IfDp->Name, timeDiff(start, curtime).tv_nsec / 1000);
 }
@@ -856,29 +857,36 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
 /**
 *   Switches a group from exclude to include mode on interface.
 */
-void toInclude(struct mcTable *mct, struct ifMct *imc) {
-    struct src *src  = mct->sources;
+void toInclude(struct ifMct *imc) {
+    struct src *src  = imc->mct->sources;
     bool        keep = false;
 
-    LOG(LOG_INFO, 0, "Switching to %s include mode on %s.", inetFmt(mct->group, 0), imc->IfDp->Name);
-    BIT_CLR(mct->mode, imc->IfDp->index);
-    BIT_CLR(mct->v2Bits, imc->IfDp->index);
-    mct->v2Age[imc->IfDp->index] = 0;
+    LOG(LOG_INFO, 0, "Switching %s to include mode on %s.", inetFmt(imc->mct->group, 0), imc->IfDp->Name);
+    BIT_CLR(imc->mct->mode, imc->IfDp->index);
+    BIT_CLR(imc->mct->v2Bits, imc->IfDp->index);
+    imc->mct->v2Age[imc->IfDp->index] = 0;
     while (src) {
         // Remove all inactive sources from group on interface.
-        if (NOT_SET(src, d, imc->IfDp) || src->vifB.age[imc->IfDp->index] == 0) {
-            LOG(LOG_DEBUG, 0, "Removed inactive source %s from group %s.", inetFmt(src->ip, 0), inetFmt(mct->group, 0));
-            src = delSrc(src, imc->IfDp, mct->mode ? 0 : 1, true, (uint32_t)-1);
+        if (IS_SET(src, d, imc->IfDp)) {
+            if (src->vifB.age[imc->IfDp->index] > 0)
+                LOG(LOG_WARNING, 0, "Remove source %s in group %s on %s age %d.", inetFmt(src->ip, 0),
+                    inetFmt(imc->mct->group, 0), src->vifB.age[imc->IfDp->index]);
+            else
+                LOG(LOG_INFO, 0, "Remove inactive source %s from group %s on %s.", inetFmt(src->ip, 0),
+                    inetFmt(imc->mct->group, 0), imc->IfDp->Name);
+            src = delSrc(src, imc->IfDp, 1, false, (uint32_t)-1);
         } else {
+            if (src->mfc && src->mfc->ttlVc[imc->IfDp->index] > 0)
+                activateRoute(src->mfc->IfDp, src,  src->ip, src->mct->group, true);
             keep = true;
             src = src->next;
         }
     }
-    if (!mct->mode && mct->nsrcs)
+    if (!imc->mct->mode && keep)
         // If this was the last interface switching to include for the group, upstream must switch filter mode to include too.
-        updateSourceFilter(mct, MCAST_INCLUDE);
-    else if (!mct->mode)
-        delGroup(mct, imc->IfDp, imc, 1);
+        updateSourceFilter(imc->mct, MCAST_INCLUDE);
+    else if (!imc->mct->mode)
+        delGroup(imc->mct, imc->IfDp, imc, 1);
     return;
 }
 
@@ -948,7 +956,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
     // Create and initialize an upstream source for new sender.
     if (! src->mfc) {
         _malloc(src->mfc, mfc, MFCSZ);  // Freed by Self.
-        *src->mfc = (struct mfc){ NULL, NULL, {0, 0}, src, IfDp, 0, 0 };
+        *src->mfc = (struct mfc){ NULL, NULL, {0, 0}, src, IfDp, {0}, 0, 0 };
         clock_gettime(CLOCK_REALTIME, &src->mfc->stamp);
         if (mct->mfc) {
             src->mfc->next = mct->mfc;
@@ -957,7 +965,6 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
         mct->mfc = src->mfc;
     }
     // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
-    uint8_t ttlVc[MAXVIFS] = {0};
     if (!IS_UPSTREAM(IfDp->state) || !checkFilters(IfDp, 0, src, mct)) {
         // Blackhole any mc traffic that is received on downstream only interface.
         LOG(LOG_DEBUG, 0, "Blackhole %s:%s on %s interface %s.", inetFmt(src->ip, 0), inetFmt(mct->group,0),
@@ -971,13 +978,13 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
                 inetFmt(mct->group, 0), IfDp->Name);
         } else if ( (IS_IN(mct, IfDp) && !NO_HASH(src->dHostsHT) && IS_SET(src, d, IfDp) && src->vifB.age[IfDp->index] > 0)
                  || (IS_EX(mct, IfDp) && !NO_HASH(mct->dHostsHT) && (NOT_SET(src, d, IfDp) || src->vifB.age[IfDp->index] == 0))) {
-            ttlVc[IfDp->index] = IfDp->conf->threshold;
+            src->mfc->ttlVc[IfDp->index] = IfDp->conf->threshold;
         } else
             LOG(LOG_DEBUG, 0, "Not forwarding source %s to group %s on %s.", inetFmt(src->ip, 0),
                 inetFmt(mct->group, 0), IfDp->Name);
-        LOG(LOG_DEBUG, 0, "Setting TTL for Vif %s (%d) to %d", IfDp->Name, IfDp->index, ttlVc[IfDp->index]);
+        LOG(LOG_DEBUG, 0, "Setting TTL for Vif #%d %s to %d", IfDp->index, IfDp->Name, src->mfc->ttlVc[IfDp->index]);
     }
-    if (!k_addMRoute(src->ip, mct->group, src->mfc->IfDp, ttlVc))
+    if (!k_addMRoute(src->ip, mct->group, src->mfc->IfDp, src->mfc->ttlVc))
         src->vifB.u = 0;
     LOG(LOG_DEBUG, 0, "mct Vif bits: 0x%08x src Vif bits:0x%08x src ubits:%08x", src->mct->vifB.d, src->vifB.d, src->vifB.u);
 
@@ -1023,7 +1030,7 @@ void ageGroups(struct IfDesc *IfDp) {
         // Next age group. Switch to include mode if exclude mode group has aged. Remove group if it's left with no sources.
         if (IS_EX(imc->mct, IfDp) && imc->mct->vifB.age[IfDp->index] == 0
                                   && !BIT_TST(imc->mct->v1Bits, IfDp->index))
-            toInclude(imc->mct, imc);
+            toInclude(imc);
         else if ((IS_IN(imc->mct, IfDp) && !keep) || (IS_EX(imc->mct, IfDp) && imc->mct->vifB.age[IfDp->index] == 0)) {
             LOG(LOG_INFO, 0, "Removed group %s from %s after aging.", inetFmt(imc->mct->group, 0), IfDp->Name);
             imc = delGroup(imc->mct, IfDp, imc, 1);

@@ -130,7 +130,7 @@ bool acceptCli(void)
         return true;
     }
 
-    // Child answers clie request.
+    // Child answers cli request.
     char *buf = strFmt(1, "", "");
     while (!(errno = 0) && (len = recv(fd, buf, STRBUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && ++i <= 10)
         nanosleep(&(struct timespec){0, 10000000}, NULL);
@@ -252,16 +252,11 @@ void cliCmd(char *cmd, int tbl) {
 }
 
 static void cliSignalHandler(int sig) {
-    switch (sig) {
-    case SIGINT:
-    case SIGTERM:
-    case SIGURG:
-    case SIGPIPE:
-        if (sig == SIGPIPE)
-            fprintf(stderr, "Connection reset by daemon. ");
-        if (srv_fd >= 0)
-            close(srv_fd);
+    if (sig == SIGPIPE)
+        fprintf(stderr, "Connection reset by daemon.\n");
+    else
         fprintf(stderr, "Terminated.\n");
-        exit(sig);
-    }
+    if (srv_fd >= 0)
+        close(srv_fd);
+    exit(sig);
 }

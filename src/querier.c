@@ -289,7 +289,7 @@ void groupSpecificQuery(struct qlst *qlst) {
                 // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
                 LOG(LOG_DEBUG, 0, "Switching group %s to include on %s after querying.", inetFmt(group, 0),
                     IfDp->Name);
-                toInclude(qlst->mct, qlst->imc);
+                toInclude(qlst->imc);
             }
         } else
             LOG(LOG_INFO, 0, "Done querying %s/%d on %s.", inetFmt(group, 0), nsrcs, IfDp->Name);

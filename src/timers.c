@@ -60,7 +60,7 @@ struct timespec timerAgeQueue(void) {
     uint64_t             i = 1;
 
     clock_gettime(CLOCK_REALTIME, &curtime);
-    for (node = queue; !STARTUP && i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
+    for (node = queue; i <= CONF->tmQsz && node && timeDiff(curtime, node->time).tv_nsec == -1; node = queue, i++) {
         LOG(LOG_INFO, 0, "About to call timeout (#%d) - %s - Missed by %dus", i, node->name,
             timeDiff(node->time, curtime).tv_nsec / 1000);
         clock_gettime(CLOCK_REALTIME, &node->time);
@@ -75,7 +75,6 @@ struct timespec timerAgeQueue(void) {
             _free(node, tmr, TMSZ(node->name));
         }
     }
-
     if (i > 1)
         DEBUGQUEUE("-Age Queue-", 1, -1);
     return queue ? timeDiff(curtime, queue->time) : (struct timespec){-1, -1};
@@ -107,7 +106,6 @@ intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
             ptr->next->prev = node;
         ptr->next = node;
     }
-
     LOG(LOG_INFO, 0, "Created timeout (#%d): %s - delay %d.%1d secs", i, node->name, delay / 10, delay % 10);
     DEBUGQUEUE("-Set Timer-", 1, -1);
     return (intptr_t)node;

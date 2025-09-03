@@ -73,6 +73,7 @@ struct mfc {
     struct timespec     stamp;                    // Time Route was installed or last traffic seen
     struct src         *src;                      // Pointer to source struct
     struct IfDesc      *IfDp;                     // Incoming interface
+    uint8_t             ttlVc[MAXVIFS];           // Outgoing interface tlls
     uint64_t            bytes, rate;              // Bwcontrol counters
 };
 
@@ -148,7 +149,7 @@ struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, bool leav
 void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join);
 bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
 struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
-void            toInclude(struct mcTable *mct, struct ifMct *imc);
+void            toInclude(struct ifMct *imc);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 void            groupSpecificQuery(struct qlst *qlst);
 void            delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src);

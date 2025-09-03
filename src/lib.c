@@ -96,7 +96,6 @@ const char *inetFmt(uint32_t addr, uint32_t mask) {
         sprintf(s[i], "%u.%u.0.0/%d",       a[0], a[1], bits);
     else
         sprintf(s[i], "%u.0.0.0/%d",          a[0], bits);
-
     return s[i];
 }
 
@@ -127,9 +126,9 @@ struct timespec timeDelay(int delay) {
 }
 
 /**
-*   Copies s_addr from struct sockaddr to struct sockaddr_in.
+*   Returns uint32_t ip address from struct sockaddr..
 */
-uint32_t s_addr_from_sockaddr(const struct sockaddr *addr) {
+uint32_t uint32_t_from_sockaddr(const struct sockaddr *addr) {
     return ((struct sockaddr_in *)addr)->sin_addr.s_addr;
 }
 
@@ -151,7 +150,6 @@ bool parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask) {
         *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
     if ((*addr | *mask) != *mask)
         *addr = (uint32_t)-1;
-
     return (*addr != (uint32_t)-1);
 }
 
@@ -188,7 +186,7 @@ uint32_t murmurhash3(register uint32_t x) {
 */
 bool noHash(register uint64_t *t) {
     register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
-    while(i++ < n && t[i] == 0);
+    while(i < n && t[i] == 0) i++;
     return (i >= n);
 }
 
@@ -294,7 +292,7 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     va_end(ArgPt);
 
     if ((CONF->logFilePath || CONF->log2Stderr) && lfp) {
-        FILE *conf = fopen(CONF->configFilePath, "a");
+        FILE *conf = fopen(CONF->configFilePath, "r");
         int   fd   = conf ? fileno(conf) : -1;
         flock(fd, LOCK_EX);
         if (mrt_tbl >= 0 && chld.onr > 0)
@@ -336,7 +334,7 @@ void ipRules(struct IfDesc *IfDp, bool activate) {
     FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(NULL) == 0) {
         execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table",
                 strFmt(1, "%d", "", IfDp->conf->tbl), NULL);
-        LOG(LOG_ERR, eNOFORK, "Cannot exec 'ip mrules'.");
+        LOG(LOG_WARNING, eNOFORK, "Cannot exec 'ip mrules'.");
         exit(ENOEXEC);
     }
 }

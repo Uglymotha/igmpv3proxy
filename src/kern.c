@@ -57,7 +57,7 @@ int k_getNlFD(void) {
 }
 
 /**
-*   Initializes the netlink API..
+*   Initializes the netlink API.
 */
 void k_enableNl(void) {
 #ifdef HAVE_NETLINK
@@ -132,7 +132,7 @@ void k_disableMRouter(void) {
     if (!STARTUP && !SPROXY && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
         LOG(LOG_WARNING, 1, "IGMP socket MRT_DONE failed.");
     if (mrouterFD >= 0 && close(mrouterFD) < 0)
-        LOG(LOG_WARNING, 1, "%s socket CLOSE failed.", mrt_tbl < 0 ? "UDP" : "IGMP");
+        LOG(LOG_WARNING, 1, "%s socket CLOSE failed.", mrt_tbl < 0 || SPROXY ? "UDP" : "IGMP");
     else {
         LOG(LOG_NOTICE, 0, "Closed %s Socket.", mrt_tbl < 0 || SPROXY ? "UDP" : "IGMP");
         mrouterFD = -1;
@@ -169,10 +169,8 @@ void k_set_rcvbuf(int bufsize) {
 }
 
 void k_set_ttl(uint8_t ttl) {
-#ifndef RAW_OUTPUT_IS_RAW
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl)) < 0)
         LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_TTL %u", ttl);
-#endif
 }
 
 void k_set_loop(bool loop) {
@@ -181,9 +179,9 @@ void k_set_loop(bool loop) {
 }
 
 void k_set_if(struct IfDesc *IfDp) {
-    struct in_addr adr = { IfDp ? IfDp->InAdr.s_addr : INADDR_ANY };
-    if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&adr, sizeof(adr)) < 0)
-        LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_IF %s", inetFmt(adr.s_addr, 0));
+    struct ip_mreqn vif = { {0}, (struct in_addr){IfDp->ip.ip}, IfDp->sysidx };
+    if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&vif, sizeof(vif)) < 0)
+        LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_IF %s", IfDp->Name);
 }
 
 /**
@@ -200,13 +198,12 @@ bool k_addVIF(struct IfDesc *IfDp) {
         return false;
     }
     for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
-
     // Set the vif parameters, reset bw counters.
     memset(&vifCtl, 0, sizeof(struct vifctl));
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
-    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {{IfDp->InAdr.s_addr}}, {INADDR_ANY} };
+    vifCtl = (struct vifctl){ Ix, VIFF_USE_IFINDEX, IfDp->conf->threshold, 0, {IfDp->sysidx}, {INADDR_ANY} };
 #else
-    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {IfDp->InAdr.s_addr}, {INADDR_ANY} };
+    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, (struct in_addr){IfDp->ip.ip}, {INADDR_ANY} };
 #endif
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
@@ -216,9 +213,10 @@ bool k_addVIF(struct IfDesc *IfDp) {
     }
     IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
     IfDp->index = Ix;
+    IfDp->nextvif = getIfL(true);
     BIT_SET(vifBits, IfDp->index);
     LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
-        vifCtl.vifc_flags, inetFmt(vifCtl.vifc_lcl_addr.s_addr, 0), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
+        vifCtl.vifc_flags, inetFmt(IfDp->ip.ip, 0), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
     return true;
 }
 
@@ -231,7 +229,7 @@ void k_delVIF(struct IfDesc *IfDp) {
 
     vifCtl.vifc_vifi = IfDp->index;
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
-        IfDp->Flags, inetFmt(IfDp->InAdr.s_addr, 0), IfDp->conf->threshold, IfDp->conf->ratelimit);
+        IfDp->Flags, inetFmt(IfDp->ip.ip, 0), IfDp->conf->threshold, IfDp->conf->ratelimit);
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)
         LOG(LOG_ERR, 1, "Error removing VIF %d:%s", IfDp->index, IfDp->Name);
 
@@ -356,7 +354,7 @@ bool k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp) {
 #else
     struct mfcctl CtlReq;
     memset(&CtlReq, 0, sizeof(struct mfcctl));
-    CtlReq =  (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
+    CtlReq = (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
 #endif
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (IfDp->conf->bwControl)

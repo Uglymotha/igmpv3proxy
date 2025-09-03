@@ -14,13 +14,13 @@ case $host_os in
 esac
 AC_CONFIG_LINKS([src/os.h:src/os-${os}.h])
 
-AC_CHECK_MEMBERS([struct sockaddr.sa_len], [], [], [[
-#include <sys/types.h>
-#include <sys/socket.h>
-]])
 AC_CHECK_HEADERS([linux/rtnetlink.h], [], [], [[
 ]])
 AC_CHECK_HEADERS([netlink/netlink_route.h], [], [], [[
+]])
+AC_CHECK_MEMBERS([struct sockaddr.sa_len], [], [], [[
+#include <sys/types.h>
+#include <sys/socket.h>
 ]])
 AC_CHECK_MEMBERS([struct sockaddr_in.sin_len], [], [], [[
 #include <sys/types.h>
@@ -70,6 +70,9 @@ AC_CHECK_MEMBERS([struct bw_upcall.bu_src], [], [], [[
 #include <netinet/ip.h>
 #include <net/route.h>
 #include <netinet/igmp.h>
+#if defined __linux__
+#include <linux/types.h>
+#include <linux/mroute.h>
 #else
 #include <netinet/ip_mroute.h>
 #endif

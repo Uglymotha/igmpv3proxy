@@ -1,3 +1,4 @@
+#ifndef _LINUX_IN_H
 #define _LINUX_IN_H
 #define _GNU_SOURCE
 #include <netinet/in.h>
@@ -18,3 +19,4 @@
 #define IPDATALEN ntohs(ip->ip_len) - (ip->ip_hl << 2)
 
 #define IPSETLEN ip->ip_len = htons(len);
+#endif

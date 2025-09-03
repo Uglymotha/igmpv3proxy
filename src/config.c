@@ -49,10 +49,10 @@ static inline bool  parseFilters(char *in, char *token, struct filters ***filP, 
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
-static const char *options = " include logfile loglevel rescanvif rescanconf phyint user group chroot mctables hashtablesize"
-                             " reqqueuesize timerqueuesize kbufsize pbufsize maxtbl defaulttable defaultquickleave quickleave"
-                             " defaultmaxorigins defaultdown defaultup defaultupdown defaultthreshold defaultratelimit"
-                             " defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
+static const char *options = " include logfile loglevel rescanvif rescanvifnl rescanconf phyint user group chroot mctables"
+                             " hashtablesize reqqueuesize timerqueuesize kbufsize pbufsize maxtbl defaulttable defaultquickleave"
+                             " quickleave defaultmaxorigins defaultdown defaultup defaultupdown defaultthreshold"
+                             " defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
                              " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
                              " defaultproxylocalmc defaultnoquerierelection defaultproxylocalmc defaultnocksumverify defaultfilter"
                              " defaultfilterany nodefaultfilter defaultdisableipmrules ";
@@ -102,7 +102,7 @@ void freeConfig(bool old) {
     // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
     for (cConf = old ? &ovifConf : &vifConf; *cConf; *cConf = tConf) {
         tConf = (*cConf)->next;
-        // Remove and free filters and ratelimits.
+        // Remove and free filters and ratelimits, be careful not to free default filters here.
         while ((*cConf)->filters && (*cConf)->filters != *dFil) {
             tFil = (*cConf)->filters->next;
             _free((*cConf)->filters, fil, FILSZ);
@@ -344,7 +344,6 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
             struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
             _calloc(***n, 1, fil, FILSZ);  // Freed by freeConfig()
             ****n = fil;
-
             **n = &(****n).next;
             fil = filNew;
         }
@@ -403,7 +402,7 @@ static inline bool parsePhyintToken(char *token) {
             else {
                 tmpPtr->tbl = intToken;
                 LOG(LOG_NOTICE, 0, "Config (%s): Assigned to table %d.", tmpPtr->name, intToken);
-                sighandled |= mrt_tbl < 0 ? GOT_SIGPROXY : 0;
+                sighandled = STARTUP && tmpPtr->tbl > 0 ? GOT_SIGPROXY : 0;
             }
 #else
             LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
@@ -500,8 +499,8 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpPtr->name);
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
-            tmpPtr->bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken);
-            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
+            tmpPtr->bwControl = (intToken < 3 ? 0 : intToken > 3600 ? 3600 : intToken);
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting bandwidth control interval to %ds.", tmpPtr->name, intToken * 10);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -667,7 +666,7 @@ bool loadConfig(char *cfgFile) {
             else {
                 conf.defaultTable = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default to table %d for interfaces.", conf.defaultTable);
-                sighandled |= mrt_tbl < 0 ? GOT_SIGPROXY : 0;
+                sighandled = STARTUP && conf.defaultTable > 0 ? GOT_SIGPROXY : 0;
             }
 #else
             LOG(LOG_WARNING, 0, "Config: Default table id is only valid on linux.");
@@ -845,9 +844,15 @@ bool loadConfig(char *cfgFile) {
             conf.bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken) ;
             LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
 
+        } else if (strcmp(" rescanvifnl", token) == 0) {
+#ifdef HAVE_NETLINK
+            conf.rescanVif = 1;
+#else
+            LOG(LOG_WARNING, 0, "Netlink is not supported on this system.");
+#endif
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
 #ifdef HAVE_NETLINK
-            conf.rescanVif = intToken > 0 ? intToken : 0;
+            conf.rescanVif = conf.rescanVif != 1 && intToken > 0 ? intToken : conf.rescanVif;
             if (conf.rescanVif == 1)
                 LOG(LOG_NOTICE, 0, "Config: Use netlink to detect interface changes.", intToken);
             else
@@ -855,6 +860,7 @@ bool loadConfig(char *cfgFile) {
             conf.rescanVif = intToken == 1 ? 2 : intToken > 1 ? intToken : 0;
 #endif
                 LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
+
         } else if (strcmp(" rescanconf", token) == 0 && INTTOKEN) {
             conf.rescanConf = intToken > 0 ? intToken : 0;
             LOG(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);

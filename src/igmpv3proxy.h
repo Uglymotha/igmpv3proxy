@@ -215,7 +215,7 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultThreshold,           \
+#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultThreshold,    \
                                             CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,     \
                                             CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,               \
                                             CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount, 0, 0}, CONF->maxOrigins,    \
@@ -251,7 +251,7 @@ struct ifStats {
 };
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
-    struct in_addr                InAdr;                 // Primary IP
+    struct subnet                 ip;                    // Primary IP
     uint32_t                      Flags;                 // Operational flags
     uint32_t                      mtu;                   // Interface MTU
     uint8_t                       state;                 // Operational state
@@ -270,7 +270,7 @@ struct IfDesc {
     struct IfDesc                *next;
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {0}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
+#define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
                                         {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
@@ -370,9 +370,6 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define  eNOFORK  4
 #define  eNOMEM   5
 #define  eNOCONF -7
-
-// CLI Defines.
-#define STRBUF 256
 
 // Memory (de)allocation macro's, which check for valid size and counts.
 #define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {            \
@@ -563,6 +560,7 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 /**
 *   lib.c
 */
+#define         STRBUF 256
 #define         LOG(x, ...) (   ((logwarning |= ((x) <= LOG_WARNING)) || true)                \
                              && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
                              && !(errno = 0))
@@ -576,7 +574,7 @@ uint16_t        inetChksum(uint16_t *addr, int len);
 int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
 struct timespec timeDelay(int delay);
-uint32_t        s_addr_from_sockaddr(const struct sockaddr *addr);
+uint32_t        uint32_t_from_sockaddr(const struct sockaddr *addr);
 bool            parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
 uint16_t        sortArr(register uint32_t *arr, register uint16_t nr);
