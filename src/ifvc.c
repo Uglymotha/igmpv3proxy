@@ -41,6 +41,7 @@
 
 // Linked list of igmpv3proxy system interfaces and ulticast vifs.
 static struct   IfDesc   *IfDescL = NULL, *vifL = NULL;
+int             vifcount, upvifcount, downvifcount;
 extern volatile uint64_t  sighandled;  // From igmpv3proxy.c signal handler.
 
 static void configureVifs(void);
@@ -53,7 +54,7 @@ void freeIfDescL(void) {
     while (IfDp) {
         if (SHUTDOWN || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
             // Remove interface marked for deletion.
-            LOG(LOG_NOTICE, 0, "Interface %s was removed.", SHUTDOWN || IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
+            LOG(LOG_WARNING, 0, "Interface %s was removed.", SHUTDOWN || IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
             fIfDp = SHUTDOWN || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
             if (SHUTDOWN || IfDp->state & 0x80)
                 IfDescL = IfDp = IfDp->next;
@@ -70,8 +71,8 @@ void freeIfDescL(void) {
 /**
 *   Returns pointer to the list of system interfaces.
 */
-inline struct IfDesc *getIfL(bool vifl) {
-    return vifl ? vifL : IfDescL;
+inline struct IfDesc **getIfL(bool vifl) {
+    return vifl ? &vifL : &IfDescL;
 }
 
 /**
@@ -191,10 +192,9 @@ void configureVifs(void) {
     struct vifConfig  *vifConf = NULL;
     struct filters    *fil, *ofil;
     bool               quickLeave = false;
-    uint32_t           vifcount = 0, upvifcount = 0, downvifcount = 0;
     LOG(LOG_INFO, 0, "Configuring MC vifs.");
 
-    uVifs = 0;
+    uVifs = vifcount = upvifcount = downvifcount = 0;
     GETIFL(IfDp) {
         // When config is reloaded, find and link matching config to interfaces.
         if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
@@ -262,10 +262,11 @@ void configureVifs(void) {
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
+        // Reinitialize vif if ratelimit changed.
+        if ((CONFRELOAD || SHUP) && IfDp->oconf->ratelimit != IfDp->conf->ratelimit)
+            k_addVIF(IfDp);
         // Check if vifs need to be added or removed and (re)init the group table.
-        if (!IS_DISABLED(newstate)) {
-            if (IfDp->index == (uint8_t)-1 && k_addVIF(IfDp))
-                IfDp->nextvif = vifL, vifL = IfDp;
+        if (!IS_DISABLED(newstate) && (IfDp->index >= 0 || k_addVIF(IfDp))) {
             vifcount++;
             if (IS_DOWNSTREAM(newstate))
                 downvifcount++;
@@ -284,14 +285,12 @@ void configureVifs(void) {
         if ((newstate != oldstate || IfDp->filCh) && IfDp->conf->tbl == mrt_tbl)
             clearGroups(IfDp);
         IfDp->filCh = false;
-        if (IS_DISABLED(newstate) && IfDp->index != (uint8_t)-1) {
+        if (IS_DISABLED(newstate) && IfDp->index >= 0) {
             IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
             if (!IS_DISABLED(oldstate))
                 ctrlQuerier(0, IfDp);
             BIT_CLR(uVifs, IfDp->index);
             k_delVIF(IfDp);
-            for (If = vifL; If->nextvif && If->nextvif != IfDp; If = If->nextvif);
-            vifL == IfDp ? (vifL = IfDp->nextvif) : (If->nextvif = IfDp->nextvif);
             if (vifcount)
                 vifcount--;
             if (IS_DOWNSTREAM(oldstate) && downvifcount)
@@ -352,7 +351,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
         buf = strFmt(h, "%4d |%15s|%3s| v%1d|%15s|%12s|%8s|%10s|%15s|%14lld B | %10lld B/s | %10lld B/s\n",
                          "%d %s %d %d %s %s %s %s %s %lld %lld %lld\n", i++, IfDp->Name,
                      mrt_tbl < 0 ? strFmt(1, "%2d", "", IfDp->conf->tbl) :
-                                   strFmt(IfDp->index == (uint8_t)-1, "-", "%2d",IfDp->index),
+                                   strFmt(IfDp->index < 0, "-", "%2d", IfDp->index),
                      IfDp->querier.ver, inetFmt(IfDp->ip.ip, 0),
                          IS_DISABLED(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "Disabled" :
                      IS_UPDOWNSTREAM(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "UpDownstream" :

@@ -93,8 +93,10 @@ void k_disableNl(void) {
 *   Initializes the mrouted API and locks it by this exclusively.
 */
 void k_enableMRouter(void) {
-    int Va = 1;
-
+    int      Va  = 1;
+#ifdef __Solaris
+    uint32_t opt = htonl((IPOPT_RA << 24) + (4 << 16));
+#endif
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         LOG(LOG_CRIT, eNOINIT, "Failed to open UDP socket.");
     else if (mrt_tbl < 0)
@@ -113,6 +115,10 @@ void k_enableMRouter(void) {
         LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_INIT Failed");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
         LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_IFINFO Failed");
+#ifdef __Solaris
+    else if (setsockopt(mrouterFD, IPPROTO_IP, IP_OPTIONS, (void *)&opt, sizeof(opt)) < 0)
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_OPTIONS:IPOPT_RTRALERT Failed");
+#endif
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     else if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
              || ! (Va & MRT_MFC_BW_UPCALL)) {
@@ -145,7 +151,6 @@ void k_disableMRouter(void) {
 */
 void k_set_rcvbuf(int bufsize) {
     int minsize = 48*1024, delta = bufsize / 2, i = 0;      // No less than 48Kb of kernel ring bufer space.
-
     if (setsockopt(mrouterFD, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, sizeof(bufsize)) < 0) {
         bufsize -= delta;
         while (1) {
@@ -164,7 +169,6 @@ void k_set_rcvbuf(int bufsize) {
         }
     }
     memuse.rcv += bufsize;
-
     LOG(LOG_DEBUG, 0, "Got %d byte buffer size in %d iterations", bufsize, i);
 }
 
@@ -179,7 +183,12 @@ void k_set_loop(bool loop) {
 }
 
 void k_set_if(struct IfDesc *IfDp) {
+#ifdef __Solaris
+    struct in_addr vif;
+    vif.s_addr = IfDp->ip.ip;
+#else
     struct ip_mreqn vif = { {0}, (struct in_addr){IfDp->ip.ip}, IfDp->sysidx };
+#endif
     if (setsockopt(mrouterFD, IPPROTO_IP, IP_MULTICAST_IF, (char *)&vif, sizeof(vif)) < 0)
         LOG(LOG_WARNING, 1, "setsockopt IP_MULTICAST_IF %s", IfDp->Name);
 }
@@ -188,33 +197,39 @@ void k_set_if(struct IfDesc *IfDp) {
  *   Adds the interface '*IfDp' as virtual interface to the mrouted API
  */
 bool k_addVIF(struct IfDesc *IfDp) {
-    struct vifctl   vifCtl;
-    uint8_t         Ix;
-
+    struct vifctl  vifCtl = {0};
+    int8_t         Ix;
     // Find available vif index.
-    if (vifBits == (uint32_t)-1) {
-        LOG(LOG_WARNING, 0, "Out of VIF space");
-        IfDp->state &= ~0x03;
-        return false;
+    if (IfDp->index == -1) {
+        if (vifBits == (uint32_t)-1) {
+            LOG(LOG_WARNING, 0, "Out of VIF space");
+            IfDp->state &= ~0x03;
+            return false;
+        } else for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
     }
-    for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
     // Set the vif parameters, reset bw counters.
-    memset(&vifCtl, 0, sizeof(struct vifctl));
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
     vifCtl = (struct vifctl){ Ix, VIFF_USE_IFINDEX, IfDp->conf->threshold, 0, {IfDp->sysidx}, {INADDR_ANY} };
 #else
-    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, (struct in_addr){IfDp->ip.ip}, {INADDR_ANY} };
+    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {0}, {0} };
+    vifCtl.vifc_lcl_addr.s_addr = IfDp->ip.ip;
+    vifCtl.vifc_rmt_addr.s_addr = INADDR_ANY;
 #endif
+    vifCtl.vifc_rate_limit = IfDp->conf->ratelimit;
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
         LOG(LOG_ERR, 1, "Error adding VIF %d:%s", Ix, IfDp->Name);
         IfDp->state &= ~0x03;
+        IfDp->index = -1;
         return false;
     }
-    IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
-    IfDp->index = Ix;
-    IfDp->nextvif = getIfL(true);
-    BIT_SET(vifBits, IfDp->index);
+    if (IfDp->index == -1) {
+        IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
+        IfDp->index = Ix;
+        IfDp->nextvif = VIFL;
+        VIFL = IfDp;
+        BIT_SET(vifBits, IfDp->index);
+    }
     LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
         vifCtl.vifc_flags, inetFmt(IfDp->ip.ip, 0), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
     return true;
@@ -224,18 +239,23 @@ bool k_addVIF(struct IfDesc *IfDp) {
  *   Delete vif when removed from config or disappeared from system.
  */
 void k_delVIF(struct IfDesc *IfDp) {
-    struct vifctl vifCtl;
-    memset(&vifCtl, 0, sizeof(struct vifctl));
-
-    vifCtl.vifc_vifi = IfDp->index;
+#ifdef __Solaris
+    vifi_t vif = IfDp->index;
+#else
+    struct vifctl vif = {0};
+    vif.vifc_vifi = IfDp->index;
+#endif
     LOG(LOG_NOTICE, 0, "Removing VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, IfDp->index,
         IfDp->Flags, inetFmt(IfDp->ip.ip, 0), IfDp->conf->threshold, IfDp->conf->ratelimit);
-    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0)
-        LOG(LOG_ERR, 1, "Error removing VIF %d:%s", IfDp->index, IfDp->Name);
-
+    if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vif, sizeof(vif)) < 0)
+        LOG(LOG_ERR, 1, "Error removing VIF #%d %s", IfDp->index, IfDp->Name);
     // Reset vif index.
     BIT_CLR(vifBits, IfDp->index);
-    IfDp->index = (uint8_t)-1;
+    IfDp->index = -1;
+    if (VIFL == IfDp)
+        VIFL = IfDp->next;
+    else FOR_IF((struct IfDesc *If = VIFL; If; If = If ? If->nextvif : NULL), If->nextvif && If->nextvif == IfDp)
+        If->nextvif = IfDp->nextvif, If = NULL;
 }
 
 /**
@@ -250,8 +270,10 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
     struct sockaddr_in grp = { sizeof(struct sockaddr_in), AF_INET, 0, group };
     struct sockaddr_in src = { sizeof(struct sockaddr_in), AF_INET, 0, source };
 #else
-    struct sockaddr_in grp = { AF_INET, 0, {group}, {0} };
-    struct sockaddr_in src = { AF_INET, 0, {source}, {0} };
+    struct sockaddr_in grp = { AF_INET, 0, {0}, {0} };
+    struct sockaddr_in src = { AF_INET, 0, {0}, {0} };
+    grp.sin_addr.s_addr = group;
+    src.sin_addr.s_addr = source;
 #endif
     source == (uint32_t)-1 ? (grpReq.gr_interface = IfDp->sysidx) : (grpSReq.gsr_interface = IfDp->sysidx);
     memcpy(source == (uint32_t)-1 ? &grpReq.gr_group : &grpSReq.gsr_group, &grp, sizeof(grp));
@@ -282,7 +304,7 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
 /**
 *   Sets group filter for group on iupstream interface.
 */
-inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
+void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
     uint32_t i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
 
@@ -300,12 +322,14 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
 #endif
     LOG(LOG_INFO, 0, "Setting source filter on %s for %s (%s) with %d sources.", IfDp->Name, inetFmt(group, 0),
         fmode ? "IN" : "EX", nsrcs);
-    if (setsourcefilter(mrouterFD, if_nametoindex(IfDp->Name), (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
-                        fmode, nsrcs, ss) < 0 && ((err = errno) != er || nsrcs == 0))
+    if (setsourcefilter(mrouterFD, IfDp->sysidx, (struct sockaddr *)&sin, sizeof(struct sockaddr_in),
+                        fmode, nsrcs, ss) < 0 && ((err = errno) == er) && fmode == MCAST_EXCLUDE)
+        // ADDRNOTAVAIL/EINVAL may be returned if group was set to include no sources upstream (unjoined). Rejoin and retry.
+        if (k_updateGroup(IfDp, true, group, 1, (uint32_t)-1) && nsrcs > 0)
+            err = setsourcefilter(mrouterFD, IfDp->sysidx, (struct sockaddr *)&sin, sizeof(struct sockaddr_in), fmode, nsrcs, ss);
+    if (err)
         LOG(LOG_WARNING, 1, "Failed to update source filter list for %s on %s.", inetFmt(group, 0), IfDp->Name);
-
     _free(ss, var, size);  // Alloced by self.
-    return err ? EADDRNOTAVAIL : 0;
 }
 
 /**
@@ -314,13 +338,11 @@ inline int k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode
 bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
-    struct mfcctl2 CtlReq;
-    memset(&CtlReq, 0, sizeof(struct mfcctl2));
-    CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
+    struct mfcctl2 CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
 #else
-    struct mfcctl CtlReq;
-    memset(&CtlReq, 0, sizeof(struct mfcctl));
-    CtlReq = (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
+    struct mfcctl  CtlReq =  (struct mfcctl){ 0, 0, IfDp->index, 0, 0, 0, 0, 0 };
+    CtlReq.mfcc_origin.s_addr   = src;
+    CtlReq.mfcc_mcastgrp.s_addr = group;
 #endif
     memcpy(CtlReq.mfcc_ttls, ttlVc, sizeof(CtlReq.mfcc_ttls));
 
@@ -348,23 +370,22 @@ bool k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlV
 bool k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp) {
     // Inialize the mfc control structure.
 #ifdef HAVE_STRUCT_MFCCTL2_MFCC_TTLS
-    struct mfcctl2 CtlReq;
-    memset(&CtlReq, 0, sizeof(struct mfcctl2));
-    CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
+    struct mfcctl2 CtlReq = (struct mfcctl2){ {src}, {group}, IfDp->index, {0}, {0}, 0 };
 #else
-    struct mfcctl CtlReq;
-    memset(&CtlReq, 0, sizeof(struct mfcctl));
-    CtlReq = (struct mfcctl){ {src}, {group}, IfDp->index, {0}, 0, 0, 0, 0 };
+    struct mfcctl CtlReq = (struct mfcctl){ 0, 0, IfDp->index, 0, 0, 0, 0, 0 };
+    CtlReq.mfcc_origin.s_addr   = src;
+    CtlReq.mfcc_mcastgrp.s_addr = group;
 #endif
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     if (IfDp->conf->bwControl)
         k_deleteUpcall(src, group);
 #endif
     // Remove mfc from kernel.
-    LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, InpVIf: %d", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
-        inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent);
+    LOG(LOG_INFO, 0, "Removing MFC: %s -> %s, Vif: #%d %s", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
+        inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent, IfDp->Name);
     if (!(errno = 0) && setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_MFC, (void *)&CtlReq, sizeof(CtlReq)) < 0)
-        LOG(LOG_WARNING, 1, "MRT_DEL_MFC %d - %s failed.", IfDp->index, inetFmt(group, 0));
+        LOG(LOG_WARNING, 1, "MRT_DEL_MFC: %s -> %s, Vif: #%d %s failed.", inetFmt(CtlReq.mfcc_origin.s_addr, 0),
+            inetFmt(CtlReq.mfcc_mcastgrp.s_addr, 0), (int)CtlReq.mfcc_parent, IfDp->Name);
     return errno;
 }
 

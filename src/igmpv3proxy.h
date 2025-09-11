@@ -59,6 +59,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <libgen.h>
+#include <getopt.h>
 
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -261,7 +262,7 @@ struct IfDesc {
     struct querier                querier;               // igmp querier for interface
     struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
-    uint8_t                       index;                 // MCast vif index
+    int8_t                        index;                 // MCast vif index
     intptr_t                      bwTimer;               // BW Control timerd id
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
@@ -271,7 +272,7 @@ struct IfDesc {
 };
 #define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
-                                        {0, 0, 0, 0}, 0, (uint8_t)-1, 0, NULL, NULL, NULL, NULL, IfDescL }
+                                        {0, 0, 0, 0}, 0, -1, 0, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -372,25 +373,34 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define  eNOCONF -7
 
 // Memory (de)allocation macro's, which check for valid size and counts.
-#define _malloc(p,m,s)      if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {            \
-                                getMemStats(0, -1);                                                                             \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid malloc(%p) in %s() (%s:%d)", p,  __func__, __FILE__, __LINE__); }
-#define _calloc(p,n,m,s)    if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {  \
-                                getMemStats(0, -1);                                                                            \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid calloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
-#define _realloc(p,m,sp,sm) if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                  \
-                                getMemStats(0, -1);                                                                             \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid realloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
-#define _recalloc(p,m,sp,sm) if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                               \
-                                || (sp > sm && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                       \
-                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                   \
-                                getMemStats(0,-1);                                                                               \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid recalloc(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }
-#define _free(p, m, s)     {if ((p) && ((errno = 0) || s <= 0 || (memuse.m -=s) < 0 || (++memfree.m) <= 0)) {                 \
-                                getMemStats(0, -1);                                                                           \
-                                LOG(LOG_CRIT, SIGABRT, "Invalid free(%p) in %s() (%s:%d)", p, __func__, __FILE__, __LINE__); }\
-                            if (p) { free(p); p = NULL; }                                                                     \
+#define _malloc(p,m,s)      ({if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {            \
+                                getMemStats(0, -1);                                                                               \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid malloc(%p) of size %d in %s() (%s:%d)", p, s, __func__, __FILE__, \
+                                    __LINE__); }                                                                                  \
+                              p;})
+#define _calloc(p,n,m,s)    ({if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {   \
+                                getMemStats(0, -1);                                                                               \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid calloc(%p) of size %d in %s() (%s:%d)", p, s, __func__, __FILE__, \
+                                    __LINE__); }                                                                                  \
+                              p;})
+#define _realloc(p,m,sp,sm) ({if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                    \
+                                getMemStats(0, -1);                                                                               \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid realloc(%p) of size %d-%d in %s() (%s:%d)", p, sp, sm, __func__,  \
+                                    __FILE__, __LINE__); }                                                                        \
+                              p;})
+#define _recalloc(p,m,sp,sm) ({if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
+                                || ((sp) > (sm) && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                    \
+                                || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                    \
+                                getMemStats(0,-1);                                                                                \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid recalloc(%p) of size %d-%d in %s() (%s:%d)", p, sp, sm, __func__, \
+                                    __FILE__, __LINE__); }                                                                        \
+                               p;})
+#define _free(p, m, s)     {if ((p) && ((errno = 0) || (s) <= 0 || (memuse.m -= (s)) < 0 || (++memfree.m) <= 0)) {                \
+                                getMemStats(0, -1);                                                                               \
+                                LOG(LOG_CRIT, SIGABRT, "Invalid free(%p) size %d in %s() (%s:%d)", p, s, __func__, __FILE__,      \
+                                    __LINE__); }                                                                                  \
+                            if (p) { free(p); p = NULL; }                                                                         \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 
 // Bit manipulation macros.
@@ -425,33 +435,33 @@ struct cmsghdr cmsgHdr;
 
 // IGMP Query Definition.
 struct igmpv3_query {
-    u_char          igmp_type;                         // version & type of IGMP message
-    u_char          igmp_code;                         // subtype for routing msgs
-    u_short         igmp_cksum;                        // IP-style checksum
-    struct in_addr  igmp_group;                        // group address being reported
-    u_char          igmp_misc;                         // reserved/suppress/robustness
-    u_char          igmp_qqi;                          // querier's query interval
-    u_short         igmp_nsrcs;                        // number of sources
-    struct in_addr  igmp_src[];                        // source addresses
+    uint8_t        igmp_type;                         // version & type of IGMP message
+    uint8_t        igmp_code;                         // subtype for routing msgs
+    uint16_t       igmp_cksum;                        // IP-style checksum
+    struct in_addr igmp_group;                        // group address being reported
+    uint8_t        igmp_misc;                         // reserved/suppress/robustness
+    uint8_t        igmp_qqi;                          // querier's query interval
+    uint16_t       igmp_nsrcs;                        // number of sources
+    struct in_addr igmp_src[];                        // source addresses
 };
 
 // IGMP v3 Group Record Definition.
 struct igmpv3_grec {
-    u_int8_t grec_type;                                // Group record type
-    u_int8_t grec_auxwords;                            // Nr of auxwords data after sources
-    u_int16_t grec_nsrcs;                              // Nr of sources in group report
-    struct in_addr grec_mca;                           // Group multicast address
-    struct in_addr grec_src[];                         // Array of source addresses
+    uint8_t        grec_type;                         // Group record type
+    uint8_t        grec_auxwords;                     // Nr of auxwords data after sources
+    uint16_t       grec_nsrcs;                        // Nr of sources in group report
+    struct in_addr grec_mca;                          // Group multicast address
+    struct in_addr grec_src[];                        // Array of source addresses
 };
 
 // IGMP Report Definition.
 struct igmpv3_report {
-    u_int8_t igmp_type;                                // IGMP Report type
-    u_int8_t igmp_resv1;
-    u_int16_t igmp_cksum;                              // IGMP checksum
-    u_int16_t igmp_resv2;
-    u_int16_t igmp_ngrec;                              // Nr. of group records in report
-    struct igmpv3_grec igmp_grec[];                    // Array of group records
+    uint8_t            igmp_type;                     // IGMP Report type
+    uint8_t            igmp_resv1;
+    uint16_t           igmp_cksum;                    // IGMP checksum
+    uint16_t           igmp_resv2;
+    uint16_t           igmp_ngrec;                    // Nr. of group records in report
+    struct igmpv3_grec igmp_grec[];                   // Array of group records
 };
 
 // IGMP Defines.
@@ -529,10 +539,10 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define        IFL                    getIfL(false)
+#define        IFL                    *getIfL(false)
 #define        GETIFL(x)              for (x = IFL; x; x = x->next)
 #define        GETIFL_IF(x, y)        GETIFL(x) if (y)
-#define        VIFL                   getIfL(true)
+#define        VIFL                   *getIfL(true)
 #define        GETVIFL(x)             for (x = VIFL; x; x = x->nextvif)
 #define        IF_GETVIFL(y, x)       if (y) GETVIFL(x)
 #define        GETVIFL_IF(x, y)       GETVIFL(x) if (y)
@@ -544,7 +554,7 @@ void cliCmd(char *cmd, int tbl);
 void           freeIfDescL(void);
 void           rebuildIfVc(intptr_t *tid);
 void           buildIfVc(void);
-struct IfDesc *getIfL(bool vifl);
+struct IfDesc **getIfL(bool vifl);
 struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void           getIfStats(struct IfDesc *IfDp, int h, int fd);
 void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -600,7 +610,7 @@ void    k_set_ttl(uint8_t ttl);
 void    k_set_loop(bool l);
 void    k_set_if(struct IfDesc *IfDp);
 bool    k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uint32_t source);
-int     k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
+void    k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist);
 int     k_getMrouterFD(void);
 void    k_enableMRouter(void);
 void    k_disableMRouter(void);

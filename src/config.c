@@ -193,7 +193,6 @@ static inline bool nextToken(char *token) {
                 if (tokenPtr == MAX_TOKEN_LENGTH - 1)
                     overSized = true;
         } while (++*bufPtr < *readSize && !finished);
-
     token[tokenPtr] = '\0';  // Make sure token is null terminated string.
     return (tokenPtr > 1);   // Return false if no more valid tokens.
 }
@@ -929,16 +928,13 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", conf.queryInterval, f);
     }
 
-    // Check if buffer sizes have changed.
+    // Check if buffer sizes or timers have changed, reinit accordingly.
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
-    // Check rescanvif status and start or clear timers if necessary.
     if (conf.rescanVif > 1 && timers.rescanVif == (intptr_t)NULL)
         timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
     else if (!conf.rescanVif && timers.rescanVif != (intptr_t)NULL)
         timers.rescanVif = timerClear(timers.rescanVif, false);
-
-    // Check rescanconf status and start or clear timers if necessary.
     if (conf.rescanConf && timers.rescanConf == (intptr_t)NULL)
         timers.rescanConf = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
     else if (!conf.rescanConf && timers.rescanConf != (intptr_t)NULL)
@@ -957,20 +953,19 @@ void reloadConfig(intptr_t *tid) {
     if (tid)
         sigstatus |= GOT_SIGUSR1;
 
-    // Load the new configuration keep reference to the old.
+    // Load the new configuration keep reference to the old. If loading fails, retstore current config.
     memcpy(&oldconf, &conf, sizeof(struct Config));
     conf.cnt = 0;
     if (!loadConfig(conf.configFilePath)) {
-        LOG(LOG_WARNING, 0, "Failed to reload config from '%s', keeping current.", conf.configFilePath);
+        LOG(LOG_ERR, 0, "Failed to reload config from '%s', keeping current.", conf.configFilePath);
         if (vifConf)
             freeConfig(0);
         vifConf = ovifConf;
         memcpy(&conf, &oldconf, sizeof(struct Config));
     } else {
-        // Rebuild the interfaces config, then free the old configuration.
         rebuildIfVc(NULL);
         freeConfig(1);
-        LOG(LOG_NOTICE, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
+        LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
     if (conf.rescanConf && tid) {
         *tid = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);

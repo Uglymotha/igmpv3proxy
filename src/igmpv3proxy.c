@@ -63,7 +63,7 @@ struct chld           chld = { 0 };
 */
 int main(int ArgCn, char *ArgVc[]) {
     int          c = 0, i = 0, j = 0, h = 0, tbl = -1, pid;
-    char        *opts[2] = { ArgVc[0], NULL }, cmd[20] = "", *path;
+    char        *opts[2] = { ArgVc[0], NULL }, cmd[IF_NAMESIZE * 2] = "", *path;
     struct stat  st;
     fileName = basename(ArgVc[0]);
 
@@ -76,7 +76,7 @@ int main(int ArgCn, char *ArgVc[]) {
     CONF->logLevel = LOG_WARNING;
 
     // Parse the commandline options and setup basic settings..
-    for (c = getopt(ArgCn, ArgVc, "cvVdnht::"); c != -1; c = getopt(ArgCn, ArgVc, "cvVdnht::")) {
+    for (c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0); c != -1; c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0)) {
         switch (c) {
         case 'v':
             if (CONF->logLevel == LOG_WARNING)
@@ -98,11 +98,12 @@ int main(int ArgCn, char *ArgVc[]) {
             exit(1);
 #endif
         case 'c':
-            c = getopt(ArgCn, ArgVc, "cbr::i::mf::thp");
+            c = getopt_long(ArgCn, ArgVc, "cbr::i::mf::thp", NULL, 0);
             while (c != -1 && c != '?') {
                 memset(cmd, 0, sizeof(cmd));
                 cmd[0] = c;
-                if (c != 'r' && c != 'i' && c != 'f' && (h = getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp")) == 'h')
+                if (c != 'r' && c != 'i' && c != 'f' &&
+                    (h = getopt_long(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp", NULL, 0)) == 'h')
                     strcat(cmd, "h");
                 else if (h == '?')
                     break;
@@ -116,11 +117,12 @@ int main(int ArgCn, char *ArgVc[]) {
                         strncat(strcat(cmd, " "), optarg, IF_NAMESIZE);
                 }
                 cliCmd(cmd, tbl);
-                c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ? getopt(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp") : h;
+                c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ?
+                     getopt_long(j ? 2 : ArgCn, j ? opts : ArgVc, "cbr::i::mf::thp", NULL, 0) : h;
                 if (c == -1 && j == 1) {
                     free(opts[1]); // Alloced by Self
                     optind = i, j = 0;
-                    c = getopt(ArgCn, ArgVc, "cbr::i::mf::tp");
+                    c = getopt_long(ArgCn, ArgVc, "cbr::i::mf::tp", NULL, 0);
                 }
                 if (c != -1 && c != '?')
                     fprintf(stdout, "\n");
@@ -397,7 +399,8 @@ static void igmpProxyMonitor(void) {
             strFmt(i == 0, "no", "%d", i), i != 1 ? "es" : "", i == 0 ? " Terminating." : "");
         if (i == 0)
             sigstatus = GOT_SIGTERM;
-        timeout = timerAgeQueue();
+        else if (!sighandled)
+            timeout = timerAgeQueue();
         if (timeout.tv_nsec < 0)
             timeout.tv_nsec = 0;
         pollFD[0] = (struct pollfd){CLIFD, POLLIN, 0}, pollFD[1] = (struct pollfd){NLFD, POLLIN, 0};
@@ -444,11 +447,12 @@ static void igmpProxyRun(void) {
                 LOG(LOG_WARNING, 0, "Ceci n'est pas une SIGPIPE.");
             }
             sigstatus &= ~(GOT_SIGCHLD | GOT_SIGHUP | GOT_SIGUSR1 | GOT_SIGUSR2);
+            Rt = 0;
         }
         if (!sighandled && (Rt <= 0 || i >= CONF->reqQsz)) {
             // Run queue aging (unless sigs pending), it wil return the time until next timer is scheduled.
+            // Wait for input indefinitely if no next timer, do not wait if next timer has already expired.
             timeout = timerAgeQueue();
-            // Wait for input, indefinitely if no next timer, do not wait if next timer has already expired.
             Rt = ppoll(pollFD, 3, timeout.tv_sec == -1 ? NULL : timeout.tv_nsec == -1 ? &nto : &timeout, NULL);
             Errno = errno, i = 1;
         }
@@ -458,14 +462,12 @@ static void igmpProxyRun(void) {
         else if (!SHUTDOWN && !sighandled && Rt > 0) do {
             Errno = errno, errno = 0;
             clock_gettime(CLOCK_REALTIME, &timeout);
-            // Handle incoming IGMP request first.
             if (pollFD[0].revents & POLLIN || pollFD[2].revents & POLLIN) {
                 LOG(pollFD[0].revents & POLLIN ? LOG_DEBUG : LOG_WARNING, 0,
                     pollFD[0].revents & POLLIN ? "RECV IGMP Request %d." : "RTNETLINK: Interfaces changed.", i);
                 acceptIgmp(pollFD[pollFD[0].revents & POLLIN ? 0 : 2].fd);
                 sighandled |= pollFD[2].revents & POLLIN ? GOT_SIGUSR2 : 0;
             }
-            // Check if any cli connection needs to be handled.
             if (pollFD[1].revents & POLLIN && !acceptCli())
                 pollFD[1].fd = initCli(2);
             clock_gettime(CLOCK_REALTIME, &curtime);

@@ -64,7 +64,6 @@ int initCli(int mode) {
     // Do not reopen socket if it is not open.
     if (mode == 2 && cli_fd < 0)
         return cli_fd;
-    // Close and unlink CLI socket.
     if (mode != 1 && cli_fd >= 0) {
         if (mode == 0 && !SPROXY)
             shutdown(cli_fd, SHUT_RDWR);
@@ -77,7 +76,7 @@ int initCli(int mode) {
         if (mode == 0 && !SPROXY)
             unlink(cli_sa.sun_path);
     }
-    // Open the socket, set permissions and mode.1
+    // Open the socket, set permissions and mode.
     if (mode > 0 && cli_fd == -1) {
         memset(&cli_sa, 0, sizeof(struct sockaddr_un));
         cli_sa.sun_family = AF_UNIX;
@@ -129,7 +128,6 @@ bool acceptCli(void)
         i = 0;
         return true;
     }
-
     // Child answers cli request.
     char *buf = strFmt(1, "", "");
     while (!(errno = 0) && (len = recv(fd, buf, STRBUF, MSG_DONTWAIT)) <= 0 && errno == EAGAIN && ++i <= 10)
@@ -209,7 +207,6 @@ void cliCmd(char *cmd, int tbl) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
     sigaction(SIGURG, &sa, NULL);
-
     memset(&srv_sa, 0, sizeof(struct sockaddr_un));
     srv_sa.sun_family = AF_UNIX;
 #ifdef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN

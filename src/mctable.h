@@ -74,7 +74,8 @@ struct mfc {
     struct src         *src;                      // Pointer to source struct
     struct IfDesc      *IfDp;                     // Incoming interface
     uint8_t             ttlVc[MAXVIFS];           // Outgoing interface tlls
-    uint64_t            bytes, rate;              // Bwcontrol counters
+    uint64_t            bytes;
+    uint64_t            rate;                     // Bwcontrol counters
 };
 
 struct mcTable {
@@ -137,10 +138,13 @@ struct qlst {
 #define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
 #define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
 #define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
-#define NO_HASH(x)        (IfDp->conf->quickLeave && noHash(x))
+#define NO_HASH(x)        ({register uint64_t i = 0, n = CONF->dHostsHTSize >> 3; \
+                            while(i < n && x[i] == 0) i++; i >= n; })
 #define GETMRT(x)         if (MCT)                                                   \
                               for (uint16_t iz = 0; iz < CONF->mcTables; iz++)       \
                                    for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
+// Vif counter from ifvc.c.
+extern int      vifcount, upvifcount, downvifcount;
 
 // Prototypes
 struct mcTable *findGroup(register uint32_t group, bool create);
@@ -152,6 +156,6 @@ struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *
 void            toInclude(struct ifMct *imc);
 void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
 void            groupSpecificQuery(struct qlst *qlst);
-void            delQuery(struct IfDesc *IfDP, void *qry, void *route, void *_src);
+void            delQuery(struct IfDesc *IfDP, struct qlst *qry, struct mcTable *mct, struct src *src);
 
 #endif // MCTABLE_H_INCLUDED

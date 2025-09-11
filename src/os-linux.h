@@ -11,12 +11,8 @@
 #include <linux/rtnetlink.h>
 #define HAVE_NETLINK 1
 #endif
-
 #define IGMP_V3_MEMBERSHIP_REPORT 0x22
-
 #define INADDR_ALLIGMPV3_GROUP ((in_addr_t) 0xe0000016)
-
 #define IPDATALEN ntohs(ip->ip_len) - (ip->ip_hl << 2)
-
 #define IPSETLEN ip->ip_len = htons(len);
 #endif

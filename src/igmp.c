@@ -88,15 +88,17 @@ void initIgmp(int mode) {
         * - Checksum (let the kernel fill it in)
         */
         ip->ip_v   = IPVERSION;
-        ip->ip_hl  = (sizeof(struct ip) + 4) >> 2; // +4 for Router Alert option
+        ip->ip_hl  = IP_HEADER_RAOPT_LEN >> 2;
         ip->ip_tos = 0xc0;                         // Internet Control
         ip->ip_ttl = 1;                            // IGMP TTL = 1
         ip->ip_p   = IPPROTO_IGMP;
-        /* Add Router Alert option */
+#ifndef __Solaris
+        /* Add Router Alert option. On Solaris kernel will do this. */
         ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[0] = IPOPT_RA;
         ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[1] = 0x04;
         ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[2] = 0x00;
         ((unsigned char*)snd_buf + MIN_IP_HEADER_LEN)[3] = 0x00;
+#endif
         allhosts_group   = htonl(INADDR_ALLHOSTS_GROUP);
         allrouters_group = htonl(INADDR_ALLRTRS_GROUP);
         alligmp3_group   = htonl(INADDR_ALLIGMPV3_GROUP);
@@ -198,9 +200,8 @@ void acceptIgmp(int fd) {
             ifindex = sdl->sdl_index;
 #endif
             if (! (IfDp = getIf(ifindex, NULL, FINDSYSIX | SRCHVIFL))) {
-                char ifName[IF_NAMESIZE];
                 LOG(LOG_DEBUG, 0, "No valid interface found for src: %s dst: %s on %s.",
-                    inetFmt(src, 0), inetFmt(dst, 0), ifindex ? if_indextoname(ifindex, ifName) : "unk");
+                    inetFmt(src, 0), inetFmt(dst, 0), strFmt(ifindex, "%s", "unk", if_indextoname(ifindex, rcv_buf)));
                 return;
             }
             break;
@@ -222,7 +223,6 @@ void acceptIgmp(int fd) {
         struct igmpv3_grec   *grec     = &igmpv3gr->igmp_grec[0];
         LOG(LOG_DEBUG, 0, "RECV %s from %s to %s on %s%s.", igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
             inetFmt(src, 0), inetFmt(dst, 0), IfDp->Name, IfDp->conf->cksumVerify ? " (checksum correct)" : "");
-
         switch (igmp->igmp_type) {
         case IGMP_V1_MEMBERSHIP_REPORT:
         case IGMP_V2_LEAVE_GROUP:
@@ -263,7 +263,11 @@ void acceptIgmp(int fd) {
 */
 void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
     struct ip           *ip     = (struct ip *)snd_buf;
+#ifdef __Solaris
+    struct igmpv3_query *igmpv3 = (struct igmpv3_query *)(snd_buf + sizeof(struct ip));
+#else
     struct igmpv3_query *igmpv3 = (struct igmpv3_query *)(snd_buf + IP_HEADER_RAOPT_LEN);
+#endif
     int                  len    = 0;
     struct sockaddr_in   sdst;
 
@@ -309,7 +313,6 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
 
         // Set packet length and calculate checksum.
         len = IfDp->querier.ver == 3 ? IGMPV3_MINLEN + j * sizeof(struct in_addr) : 8;
-        igmpv3->igmp_cksum = 0;
         igmpv3->igmp_cksum = inetChksum((uint16_t *)igmpv3, len);
         len += IP_HEADER_RAOPT_LEN;
         IPSETLEN;

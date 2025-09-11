@@ -182,15 +182,6 @@ uint32_t murmurhash3(register uint32_t x) {
 }
 
 /**
-*   Checks if hash table is clear.
-*/
-bool noHash(register uint64_t *t) {
-    register uint64_t i = 0, n = CONF->dHostsHTSize >> 3;
-    while(i < n && t[i] == 0) i++;
-    return (i >= n);
-}
-
-/**
 *   Sort array in numerical asceding order, endianess is irrelevant.
 *   Reversed Insertion Sort with duplicates moved to end of list as 0xFFFF and removed (no valid IP).
 */

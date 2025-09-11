@@ -100,7 +100,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
         LOG(LOG_DEBUG, 0, "addSrcToQlst: Adding source %s to query list for %s (%d).",
             inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), nsrcs + 1);
         if ((nsrcs % 32) == 0)
-            _realloc(qlst, qry, QRYSZ(nsrcs), QRYSZ(nsrcs - 1));  // Freed by delQuery().
+            _realloc(qlst, qry, QRYSZ(nsrcs), nsrcs ? QRYSZ(nsrcs - 1) : 0);  // Freed by delQuery().
         if (nsrcs == 0)
             *qlst = (struct qlst){ NULL, NULL, src->mct, NULL, 0, 4, IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0, 0 };
         BIT_SET(src->vifB.d, IfDp->index);
@@ -128,7 +128,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
     // If no group found for query, not active or denied on interface return.
     if (! mct || NOT_SET(mct, d, IfDp)) {
         LOG(LOG_DEBUG, 0, "Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 0),
-            ! mct ? "not found." : "not active.");
+            ! mct ? "not found" : "not active");
     } else if (nsrcs == 0 && NOT_SET(mct, lm, IfDp)) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "Group specific query for %s on %s.", inetFmt(mct->group, 0), IfDp->Name);
@@ -232,7 +232,7 @@ void groupSpecificQuery(struct qlst *qlst) {
                     BIT_CLR(qlst->src[i]->vifB.lm, IfDp->index);
                     if (IS_IN(qlst->mct, IfDp)) {
                         // Aged source in include mode should be removed.
-                        LOG(LOG_INFO, 0, "Removed inactive source %s from group %s on %s.",
+                        LOG(LOG_INFO, 0, "Removing inactive source %s from group %s on %s.",
                             inetFmt(qlst->src[i]->ip, 0), inetFmt(group, 0), IfDp->Name);
                         delSrc(qlst->src[i], IfDp, 0, true, (uint32_t)-1);
                     } else {
@@ -271,7 +271,7 @@ void groupSpecificQuery(struct qlst *qlst) {
     if (qlst->cnt <= qlst->misc && (   (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, IfDp))
                                     || (BIT_TST(qlst->type, 2) && qlst->nsrcs > 0))) {
         // Set timer for next round if there is still aging to do.
-        uint32_t timeout = (BIT_TST(qlst->type, 3)            ? qlst->code
+        uint32_t timeout = (BIT_TST(qlst->type, 3)      ? qlst->code
                          :  IfDp->querier.ver == 3      ? getIgmpExp(IfDp->conf->qry.lmInterval, 0)
                          :  IfDp->conf->qry.lmInterval) + 1;
         qlst->tid = timerSet(timeout, strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qlst->nsrcs),
@@ -310,15 +310,16 @@ void groupSpecificQuery(struct qlst *qlst) {
 *     mct / mct & src - Removes all queries for (source within) group from interface.
 *   Do NOT use ql->mct here, it may have already been deleted by delGroup().
 */
-void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src) {
-    struct mcTable *mct = qry ? ((struct qlst *)qry)->mct : _mct;
+void delQuery(struct IfDesc *IfDp, struct qlst *qry, struct mcTable *mct, struct src *src) {
     struct qlst    *nql;
+    if (qry)
+        mct = qry->mct;
 
     for (struct qlst *ql = qry ? qry : IfDp->qLst; ql; ql = qry ? NULL : nql) {
         if (qry || ! mct || ql->mct == mct) {
-            if (_src) {
+            if (src) {
                 uint32_t i;
-                for (i = 0; ql && i < ql->nsrcs && ql->src[i] != _src; i++);
+                for (i = 0; ql && i < ql->nsrcs && ql->src[i] != src; i++);
                 if (ql && i < ql->nsrcs) {
                     LOG(LOG_INFO, 0, "Removing source %s from query for group %s on %s.",
                         inetFmt(ql->src[i]->ip, 0), inetFmt(ql->mct->group, 0), ql->imc->IfDp->Name);
@@ -330,7 +331,7 @@ void delQuery(struct IfDesc *IfDp, void *qry, void *_mct, void *_src) {
             } else for (uint32_t i = 0; i < ql->nsrcs; BIT_CLR(ql->src[i]->vifB.lm, IfDp->index),
                                                        BIT_CLR(ql->src[i]->vifB.qry, IfDp->index), i++);
             nql = ql->next;
-            if (! _src || (!ql->nsrcs && BIT_TST(ql->type, 2))) {
+            if (! src || (!ql->nsrcs && BIT_TST(ql->type, 2))) {
                 LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(ql->group, 0), IfDp->Name);
                 if (! qry)
                     timerClear(ql->tid, false);
