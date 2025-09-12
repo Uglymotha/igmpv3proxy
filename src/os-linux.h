@@ -1,5 +1,6 @@
 #ifndef _LINUX_IN_H
-#define _LINUX_IN_H
+#define _LINUX_IN_H 1
+#define __Linux__ 1
 #define _GNU_SOURCE
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -15,4 +16,4 @@
 #define INADDR_ALLIGMPV3_GROUP ((in_addr_t) 0xe0000016)
 #define IPDATALEN ntohs(ip->ip_len) - (ip->ip_hl << 2)
 #define IPSETLEN ip->ip_len = htons(len);
-#endif
+#endif // _LINUX_IN_H

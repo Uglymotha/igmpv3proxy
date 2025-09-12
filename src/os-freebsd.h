@@ -1,3 +1,6 @@
+#ifndef _FREEBSD_IN_H
+#define _FREEBSD_IN_H 1
+#define __FreeBSD__ 1
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <libgen.h>
@@ -32,3 +35,4 @@
 #else
 #define IPSETLEN ip->ip_len = len
 #endif
+#endif  //_FREEBSD_IN_H

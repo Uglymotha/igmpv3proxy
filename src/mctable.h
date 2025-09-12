@@ -83,7 +83,7 @@ struct mcTable {
     struct mcTable     *prev;                     // Pointer to the previous group in table.
     struct mcTable     *next;                     // Pointer to the next group in table.
     uint32_t            group;                    // The group to route
-    uint32_t            nsrcs;                    // Number of sources for group
+    uint32_t            nsrcs[2];                 // Nr of sources, 0 = include mode sources, 1 = origins.
     struct src         *sources;                  // Downstream source list for group
     struct mfc         *mfc;                      // Active upstream sources for group
 
@@ -118,7 +118,7 @@ struct qlst {
     uint8_t            misc;                      // Query misc (RA/QRV)
     uint8_t            cnt;                       // Nr of queries sent
     uint32_t           group;                     // Group for query
-    uint32_t           nsrcs;                     // Nr of sources in query
+    uint32_t           nsrcs[2];                  // Nr of sources in query, 0 = original, 1 = current
     struct src        *src[];                     // Array of pointers to sources
 };
 #define MCTSZ            (CONF->mcTables * sizeof(void *))

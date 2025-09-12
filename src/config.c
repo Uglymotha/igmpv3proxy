@@ -208,56 +208,44 @@ static inline void initCommonConfig(void) {
     conf.chroot         = STARTUP ? NULL : conf.chroot;
     conf.user           = STARTUP ? NULL : conf.user;
     conf.group          = STARTUP ? NULL : conf.group;
-
     // Defaul Query Parameters.
     conf.robustnessValue = DEFAULT_ROBUSTNESS;
     conf.queryInterval = conf.topQueryInterval = DEFAULT_INTERVAL_QUERY;
     conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
     conf.bwControl = 0;
-
     // Request queue size. This many request buffered requests will be handled before other work is done.
     conf.reqQsz = REQQSZ;
     conf.tmQsz  = TMQSZ;
     conf.kBufsz = K_BUF_SIZE;
     conf.pBufsz = BUF_SIZE;
-
     // Default values for leave intervals...
     conf.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
     conf.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
-
     // Sent leave message upstream on leave messages from downstream.
     conf.quickLeave = false;
-
     // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
     conf.maxOrigins = DEFAULT_MAX_ORIGINS;
-
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
     conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
-
     // Number of (hashed) route tables.
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
     conf.mcTables = STARTUP | RESTART ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
-
     // Default interface state and parameters.
     conf.defaultInterfaceState = IF_STATE_DISABLED;
     conf.defaultThreshold      = DEFAULT_THRESHOLD;
     conf.defaultRatelimit      = DEFAULT_RATELIMIT;
     conf.defaultFilters        = NULL;
     conf.defaultRates          = NULL;
-
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
-
     // Default no timed rebuild interfaces / reload config.
     conf.rescanVif  = 0;
     conf.rescanConf = 0;
-
     // Do not proxy local mc by default.
     conf.proxyLocalMc = false;
-
     // Default igmpv3, validate checksums and participate in querier election by default.
     conf.querierIp = (uint32_t)-1;
     conf.querierVer = 3;
@@ -274,6 +262,7 @@ static inline void initCommonConfig(void) {
 static inline bool parseFilters(char *in, char *token, struct filters ***filP, struct filters ***rateP) {
     int64_t  intToken;
     uint32_t addr, mask;
+
     char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
     struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
                    filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
@@ -298,7 +287,7 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
             else if (strcmp(" block", token) == 0 || strcmp(" b", token) == 0 || strcmp(" 0", token) == 0)
                 fil.action = BLOCK;
             else if (!strstr(filteropt, token)) {
-                LOG(LOG_WARNING, 0, "Config (%s): '%s' is not a valid filter action or direction.", in, token + 1);
+                LOG(LOG_WARNING, 0, "Config (%s): '%s' is not a valid filter action.", in, token + 1);
                 fil = filErr;
             }
         } else if (!parseSubnetAddress(token + 1, &addr, &mask)) {

@@ -410,7 +410,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 
 // Conditional loop macro's.
 #define IF_FOR(x, y)       if  (x) for y
-#define FOR_IF(x, y)       for x if  (y)
+#define FOR_IF(x, y)       for x if (y)
 #define IF_FOR_IF(x, y, z) if  (x) for y if (z)
 
 //#################################################################################

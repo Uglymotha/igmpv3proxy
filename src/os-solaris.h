@@ -24,4 +24,4 @@
 #define IPSETLEN (ip->ip_len = htons(len))
 #define setresuid(x, y, z) setreuid(x, y)
 #define setresgid(x, y, z) setregid(x, y)
-#endif 
+#endif  // _IN_OS_SOLARIS

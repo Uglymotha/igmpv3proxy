@@ -305,17 +305,19 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
 *   Sets group filter for group on iupstream interface.
 */
 void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
-    uint32_t i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
+    uint32_t                 i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
-
+#if defined __Solaris || defined __FreeBSD__
+    int er = EADDRNOTAVAIL;  // Freebsd / Solaris errno when group is not joined.
+#else
+    int er = EINVAL;         // Linux errno when group is not joined.
+#endif
     _malloc(ss, var, size);  // Freed by self.
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
-    int er = EADDRNOTAVAIL;  // Freebsd errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, group };
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ sizeof(struct sockaddr_in), AF_INET, 0, slist[i]};
 #else
-    int er = EINVAL;  // Linux errno when group is not joined.
     struct sockaddr_in sin = (struct sockaddr_in){ AF_INET, 0, {group}, {0} };
     for(i = 0; i < nsrcs; i++)
         *(struct sockaddr_in *)(ss + i) = (struct sockaddr_in){ AF_INET, 0, {slist[i]}, {0} };
