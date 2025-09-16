@@ -55,11 +55,12 @@ static const char *options = " include logfile loglevel rescanvif rescanvifnl re
                              " defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
                              " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
                              " defaultproxylocalmc defaultnoquerierelection defaultproxylocalmc defaultnocksumverify defaultfilter"
-                             " defaultfilterany nodefaultfilter defaultdisableipmrules ";
+                             " defaultfilterany nodefaultfilter defaultdisableipmrules defaultssmrange ";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
                                " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
-                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins ";
+                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins"
+                               " ssmrange ";
 
 // Process signaling.
 extern volatile uint64_t  sighandled;
@@ -236,6 +237,7 @@ static inline void initCommonConfig(void) {
     // Default interface state and parameters.
     conf.defaultInterfaceState = IF_STATE_DISABLED;
     conf.defaultThreshold      = DEFAULT_THRESHOLD;
+    parseSubnetAddress(DEFAULT_SSMRANGE, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask);
     conf.defaultRatelimit      = DEFAULT_RATELIMIT;
     conf.defaultFilters        = NULL;
     conf.defaultRates          = NULL;
@@ -363,7 +365,7 @@ static inline bool parsePhyintToken(char *token) {
         memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
         tmpPtr->name[IF_NAMESIZE - 1] = '\0';
         if (strlen(token + 1) >= IF_NAMESIZE)
-            LOG(LOG_NOTICE, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
+            LOG(LOG_WARNING, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
         filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
     } else {
         // If any (default) filters have already been set, find the end of the list.
@@ -373,7 +375,7 @@ static inline bool parsePhyintToken(char *token) {
 
     // Parse the rest of the config.
     LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpPtr->name);
-    while (!logwarning && nextToken(token)) {
+    while (!logerr && nextToken(token)) {
         while (token[1] && (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)) {
             LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
             if (!parseFilters(tmpPtr->name, token, &filP, &rateP))
@@ -384,7 +386,7 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Not setting default filters.", tmpPtr->name);
 
         } else if (strcmp(" table", token) == 0 && INTTOKEN) {
-#ifdef __linux__
+#ifdef __Linux__
             if (intToken < 0 || intToken > 999999999)
                 LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpPtr->name);
             else {
@@ -396,7 +398,7 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
 #endif
         } else if (strcmp(" disableipmrules", token) == 0) {
-#ifdef __linux__
+#ifdef __Linux__
             LOG(LOG_NOTICE, 0, "Config (%s): Will disable ip mrules.", tmpPtr->name);
             tmpPtr->disableIpMrules = true;
 #else
@@ -470,6 +472,17 @@ static inline bool parsePhyintToken(char *token) {
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting querier version %d.", tmpPtr->name, intToken);
             }
 
+        } else if (strcmp(" ssmrange", token) == 0 && nextToken(token)) {
+            if (!parseSubnetAddress(token + 1, &tmpPtr->ssmRange.ip, &tmpPtr->ssmRange.mask)
+                || (tmpPtr->ssmRange.ip != 0 && !IN_MULTICAST(ntohl(tmpPtr->ssmRange.ip)))) {
+                LOG(LOG_NOTICE, 0, "%s is not a valid multicast address, using default %s.",
+                    inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask),
+                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask));
+                tmpPtr->ssmRange = conf.defaultSsmRange;
+            } else
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting SSM Range to %s.", tmpPtr->name,
+                    inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask));
+
         } else if (strcmp(" noquerierelection", token) == 0) {
             tmpPtr->qry.election = false;
             LOG(LOG_NOTICE, 0, "Config (%s): Will not participate in IGMP querier election.", tmpPtr->name);
@@ -534,15 +547,12 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (!strstr(options, token) && token[1] != '\0') {
             // Unknown token, return error. Token may be " " if parseFilters() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config (%s): Unknown token '%s'.", tmpPtr->name, token + 1);
+            LOG(LOG_ERR, 0, "Config (%s): Unknown token '%s'.", tmpPtr->name, token + 1);
 
         } else if (!strstr(phyintopt, token) || token[1] == '\0')
             break;
     }
 
-    // Return false if error in interface config was detected. freeConfig will cleanup.
-    if (logwarning)
-        return false;
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10
                           > tmpPtr->qry.interval) {
@@ -557,12 +567,14 @@ static inline bool parsePhyintToken(char *token) {
     if (!tmpPtr->noDefaultFilter)
         *filP = conf.defaultFilters;
 
-    LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
-        tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
-        tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
-        tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
-        tmpPtr->cksumVerify ? "Enabled" : "Disabled", tmpPtr->quickLeave ? "Enabled" : "Disabled");
-    return true;
+    // Return false if error in interface config was detected.
+    if (!logerr)
+        LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
+            tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
+            tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
+            tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
+            tmpPtr->cksumVerify ? "Enabled" : "Disabled", tmpPtr->quickLeave ? "Enabled" : "Disabled");
+    return !logerr;
 }
 
 /**
@@ -579,7 +591,7 @@ bool loadConfig(char *cfgFile) {
 
     if (conf.cnt++ == 0) {
         // Initialize common config on first entry.
-        logwarning = 0;
+        logerr = 0;
         initCommonConfig();
         filP  = &conf.defaultFilters;
         rateP = &conf.defaultRates;
@@ -595,7 +607,7 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_NOTICE, 0, "Config: Searching for config files in '%s'.", cfgFile);
         if ((n = scandir(cfgFile, &d, confFilter, alphasort)) > 0) while (n--) {
             char file[strlen(cfgFile) + strlen(d[n]->d_name) + 2];
-            if ((sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file)) && !logwarning)
+            if ((sprintf(file, "%s/%s", cfgFile, d[n]->d_name) == 0 || !loadConfig(file)) && !logerr)
                 LOG(LOG_ERR, 0, "Config: Failed to load config from '%s'", file);
             free(d[n]);
         }
@@ -608,14 +620,14 @@ bool loadConfig(char *cfgFile) {
     _calloc(token, 1, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Freed by self
 
     // Loop though file tokens until all configuration is read or error encounterd.
-    if (S_ISREG(st_mode)) while (!logwarning && nextToken(token)) {
+    if (S_ISREG(st_mode)) while (!logerr && nextToken(token)) {
         // Process parameters which will result in a next valid config token first.
         while (token[1] && (!strcmp(" phyint", token) || !strcmp(" defaultfilter", token) || strstr(phyintopt, token))) {
             if (strcmp(" phyint", token) == 0 && !parsePhyintToken(token)) {
                 return false;
             } else if (strcmp(" defaultfilter", token) == 0) {
                 if (conf.defaultFilters && *filP == conf.defaultFilters) {
-                    LOG(LOG_WARNING, 0, "Config: Defaultfilterany cannot be combined with default filters.");
+                    LOG(LOG_ERR, 0, "Config: Defaultfilterany cannot be combined with default filters.");
                     break;
                 } else {
                     LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
@@ -624,7 +636,7 @@ bool loadConfig(char *cfgFile) {
                 }
             } else if (strstr(phyintopt, token) && token[1] != '\0') {
                 if (strcmp(" quickleave", token) != 0) // Quickleave is valid for both config and phyint.
-                    LOG(LOG_WARNING, 0, "Config: '%s' without phyint.", token + 1);
+                    LOG(LOG_ERR, 0, "Config: '%s' without phyint.", token + 1);
                 break;
             }
         }
@@ -633,22 +645,22 @@ bool loadConfig(char *cfgFile) {
             // Load the config from include file and restore current.
             if (loadConfig(token + 1))
                 LOG(LOG_NOTICE, 0, "Config: Succesfully included config from '%s'.", token + 1);
-            else if (!logwarning)
-                LOG(LOG_WARNING, 0, "Config: Failed to include config from '%s'.", token + 1);
+            else if (!logerr)
+                LOG(LOG_ERR, 0, "Config: Failed to include config from '%s'.", token + 1);
             configFile(confFilePtr, 2);
         } else if (strcmp(" chroot", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.chroot = malloc(strlen(token))))   // Freed by igmpProxyCleanUp() or Self
                 LOG(LOG_CRIT, eNOMEM, "Config: Out of Memory.");
             memcpy(conf.chroot, token + 1, strlen(token));
             if (stat(token + 1, &st) != 0 && !(stat(dirname(token + 1), &st) == 0 && mkdir(conf.chroot, 0770) == 0)) {
-                LOG(LOG_WARNING, 1, "Config: Could not find or create %s.", conf.chroot);
+                LOG(LOG_ERR, 1, "Config: Could not find or create %s.", conf.chroot);
                 free(conf.chroot);  // Alloced by Self
                 conf.chroot = NULL;
             } else
                 LOG(LOG_NOTICE, 0, "Config: Chroot to %s.", conf.chroot);
 
         } else if (strcmp(" defaulttable", token) == 0 && INTTOKEN) {
-#ifdef __linux__
+#ifdef __Linux__
             if (intToken < 0 || intToken > 999999999)
                 LOG(LOG_WARNING, 0, "Config: Default table id should be between 0 and 999999999.");
             else {
@@ -657,21 +669,21 @@ bool loadConfig(char *cfgFile) {
                 sighandled = STARTUP && conf.defaultTable > 0 ? GOT_SIGPROXY : 0;
             }
 #else
-            LOG(LOG_WARNING, 0, "Config: Default table id is only valid on linux.");
+            LOG(LOG_ERR, 0, "Config: Default table id is only valid on linux.");
 #endif
 
         } else if (strcmp(" user", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
-#ifdef __linux__
+#ifdef __Linux__
             if (! (conf.user = getpwnam(token + 1)))
-                LOG(LOG_WARNING, 0, "Config: User '%s' does not exist.", token + 1);
+                LOG(LOG_ERR, 0, "Config: User '%s' does not exist.", token + 1);
             else
                 LOG(LOG_NOTICE, 0, "Config: Running daemon as '%s' (%d)", conf.user->pw_name, conf.user->pw_uid);
 #else
-            LOG(LOG_WARNING, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
+            LOG(LOG_ERR, 0, "Config: Run as user '%s' is only valid for linux.", token + 1);
 #endif
 
         } else if (strcmp(" defaultdisableipmrules", token) == 0) {
-#ifdef __linux__
+#ifdef __Linux__
             LOG(LOG_NOTICE, 0, "Config: Will disable ip mrules for mc route tables.");
             conf.disableIpMrules = true;
 #else
@@ -679,7 +691,7 @@ bool loadConfig(char *cfgFile) {
 #endif
         } else if (strcmp(" group", token) == 0 && nextToken(token) && (STARTUP || (token[1] = '\0'))) {
             if (! (conf.group = getgrnam(token + 1)))
-                LOG(LOG_WARNING, 1, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
+                LOG(LOG_ERR, 1, "Config: Incorrect CLI group '%s'.", token + 1, conf.group->gr_gid);
             else
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", conf.group->gr_name);
 
@@ -724,32 +736,20 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" defaultupdown", token) == 0) {
-            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
-            else {
-                conf.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
-                LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
-            }
+            conf.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
+            LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
 
         } else if (strcmp(" defaultup", token) == 0) {
-            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
-            else {
-                conf.defaultInterfaceState = IF_STATE_UPSTREAM;
-                LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
-            }
+            conf.defaultInterfaceState = IF_STATE_UPSTREAM;
+            LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
 
         } else if (strcmp(" defaultdown", token) == 0) {
-            if (conf.defaultInterfaceState != IF_STATE_DISABLED)
-                LOG(LOG_WARNING, 0, "Config: Default interface state already set.");
-            else {
-                conf.defaultInterfaceState = IF_STATE_DOWNSTREAM;
-                LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
-            }
+            conf.defaultInterfaceState = IF_STATE_DOWNSTREAM;
+            LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
 
         } else if (strcmp(" defaultfilterany", token) == 0) {
             if (conf.defaultFilters)
-                LOG(LOG_WARNING, 0, "Config: Default filters cannot be combined with defaultfilterany.");
+                LOG(LOG_ERR, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
                 _calloc(conf.defaultFilters, 1, fil, FILSZ);  // Freed by freeConfig()
@@ -783,6 +783,16 @@ bool loadConfig(char *cfgFile) {
                 conf.querierVer = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting default querier version to %d.", intToken);
             }
+
+        } else if (strcmp(" defaultssmrange", token) == 0 && nextToken(token)) {
+            if (!parseSubnetAddress(token + 1, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask)
+                || (conf.defaultSsmRange.ip != 0 && !IN_MULTICAST(ntohl(conf.defaultSsmRange.ip)))) {
+                LOG(LOG_WARNING, 0, "%s is not a valid multicast address, using default %s.",
+                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask), DEFAULT_SSMRANGE);
+                parseSubnetAddress(DEFAULT_SSMRANGE, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask);
+            } else
+                LOG(LOG_NOTICE, 0, "Config: Setting default SSM Range to %s.",
+                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask));
 
         } else if (strcmp(" defaultrobustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -893,7 +903,7 @@ bool loadConfig(char *cfgFile) {
 
         } else if (token[1] != '\0')
             // Token may be " " if parsePhyintToken() returns without valid token.
-            LOG(LOG_WARNING, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
+            LOG(LOG_ERR, 0, "Config: Unknown token '%s' in config file '%s'.", token + 1, cfgFile);
     }
     if (! vifConf)
         LOG(LOG_WARNING, 0, "No valid interfaces configuration. Everything will be set to defaults.");
@@ -902,9 +912,8 @@ bool loadConfig(char *cfgFile) {
     _free(token, var, MAX_TOKEN_LENGTH + READ_BUFFER_SIZE + 2 * sizeof(uint32_t));  // Alloced by self
     if (confFilePtr && (confFilePtr = configFile(NULL, 0)))
         LOG(LOG_ERR, 1, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
-    if (--conf.cnt > 0 || logwarning)
-        return !logwarning;
-
+    if (--conf.cnt > 0 || logerr)
+        return !logerr;
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
     if ((conf.querierVer != 3 ? conf.queryResponseInterval
                               : getIgmpExp(conf.queryResponseInterval, 0)) / 10 > conf.queryInterval) {
@@ -916,7 +925,6 @@ bool loadConfig(char *cfgFile) {
                                         : getIgmpExp(conf.queryResponseInterval, 0)) / 10;
         LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", conf.queryInterval, f);
     }
-
     // Check if buffer sizes or timers have changed, reinit accordingly.
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
@@ -929,7 +937,7 @@ bool loadConfig(char *cfgFile) {
     else if (!conf.rescanConf && timers.rescanConf != (intptr_t)NULL)
         timers.rescanConf = timerClear(timers.rescanConf, false);
 
-    return !logwarning;
+    return !logerr;
 }
 
 /**

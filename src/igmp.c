@@ -181,7 +181,7 @@ void acceptIgmp(int fd) {
 #endif
 #ifdef IGMPMSG_WRONGVIF
         case IGMPMSG_WRONGVIF:
-            LOG(LOG_NOTICE, 0, "WRONGVIF Upcall for Src %s Dst %s on %s.",
+            LOG(LOG_WARNING, 0, "WRONGVIF Upcall for Src %s Dst %s on %s.",
                 inetFmt(igmpMsg->im_src.s_addr, 0), inetFmt(igmpMsg->im_dst.s_addr, 0), IfDp->Name);
             return;
 #endif

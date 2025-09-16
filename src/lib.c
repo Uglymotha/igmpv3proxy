@@ -146,8 +146,11 @@ bool parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask) {
     str = strtok(NULL, "/");
     if (str && ((bitcnt = atoi(str)) < 0 || bitcnt > 32))
         *addr = *mask = (uint32_t)-1;
+    else if (! str && *addr == 0)
+        *mask = 0;
     else
         *mask = bitcnt == 0 ? 0 : ntohl(0xFFFFFFFF << (32 - bitcnt));
+
     if ((*addr | *mask) != *mask)
         *addr = (uint32_t)-1;
     return (*addr != (uint32_t)-1);
@@ -313,7 +316,6 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
         sigstatus = GOT_SIGTERM;
         igmpProxyCleanUp(Errno);
     }
-
     return true;
 }
 
@@ -321,7 +323,7 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
 *   Sets or removes ip mrules for table.
 */
 void ipRules(struct IfDesc *IfDp, bool activate) {
-    LOG(LOG_INFO, 0, "%s ip mrules for interface %s, table %d.", activate ? "Adding" : "Removing", IfDp->Name, IfDp->conf->tbl);
+    LOG(LOG_NOTICE, 0, "%s ip mrules for interface %s, table %d.", activate ? "Adding" : "Removing", IfDp->Name, IfDp->conf->tbl);
     FOR_IF((int i = 0; i < 2; i++), igmpProxyFork(NULL) == 0) {
         execlp("ip", "ip", "mrule", activate ? "add" : "del", i ? "iif" : "oif", IfDp->Name, "table",
                 strFmt(1, "%d", "", IfDp->conf->tbl), NULL);

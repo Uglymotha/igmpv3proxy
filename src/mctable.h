@@ -149,8 +149,8 @@ extern int      vifcount, upvifcount, downvifcount;
 // Prototypes
 struct mcTable *findGroup(register uint32_t group, bool create);
 struct ifMct   *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
-struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int mode, bool leave, uint32_t srcHash);
-void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join);
+struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int dir, int mode, bool leave, uint32_t srcHash);
+void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join, int mode);
 bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
 struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
 void            toInclude(struct ifMct *imc);

@@ -94,35 +94,38 @@ void k_disableNl(void) {
 */
 void k_enableMRouter(void) {
     int      Va  = 1;
-#ifdef __Solaris
-    uint32_t opt = htonl((IPOPT_RA << 24) + (4 << 16));
-#endif
+
     if (mrt_tbl < 0 && (mrouterFD = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
         LOG(LOG_CRIT, eNOINIT, "Failed to open UDP socket.");
     else if (mrt_tbl < 0)
         LOG(LOG_NOTICE, 0, "Opened UDP socket.");
     else if ((mrouterFD = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0)
-        LOG(LOG_CRIT, eNOINIT, "IGMP socket open Failed");
-#ifdef __linux__
-    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
-        errno == ENOPROTOOPT ? LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_TABLE Failed. Make sure your kernel has"
-                                                      "CONFIG_IP_MROUTE_MULTIPLE_TABLES=y")
-                             : LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_TABLE Failed.");
-#endif
+        LOG(LOG_CRIT, eNOINIT, "IGMP socket open Failed.");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IP_HDRINCL, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_HDRINCL Failed");
-    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_CRIT, eNOINIT, "IGMP socket MRT_INIT Failed");
+        LOG(LOG_CRIT, eNOINIT, "IP_HDRINCL Failed.");
     else if (setsockopt(mrouterFD, IPPROTO_IP, IFINFO, (void *)&Va, sizeof(Va)) < 0)
-        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_IFINFO Failed");
+        LOG(LOG_CRIT, eNOINIT, "IP_IFINFO Failed.");
+#ifdef __Linux__
+    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_TABLE, &mrt_tbl, sizeof(mrt_tbl)) < 0)
+        errno == ENOPROTOOPT ? LOG(LOG_CRIT, eNOINIT, "MRT_TABLE Failed. Make sure your kernel has"
+                                                      "CONFIG_IP_MROUTE_MULTIPLE_TABLES=y.")
+                             : LOG(LOG_CRIT, eNOINIT, "MRT_TABLE Failed.");
+#endif
+    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_INIT, (void *)&Va, sizeof(Va)) < 0)
+        LOG(LOG_CRIT, eNOINIT, "MRT_INIT Failed");
+#ifdef IGMPMSG_WRONGVIF
+    else if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ASSERT, (void *)&Va, sizeof(Va)) < 0)
+        LOG(LOG_WARNING, eNOINIT, "MRT_ASSERT Failed");
+#endif
 #ifdef __Solaris
-    else if (setsockopt(mrouterFD, IPPROTO_IP, IP_OPTIONS, (void *)&opt, sizeof(opt)) < 0)
-        LOG(LOG_CRIT, eNOINIT, "IGMP socket IP_OPTIONS:IPOPT_RTRALERT Failed");
+    else if ((Va = htonl((IPOPT_RA << 24) + (4 << 16)))
+             && setsockopt(mrouterFD, IPPROTO_IP, IP_OPTIONS, (void *)&Va, sizeof(Va)) < 0)
+        LOG(LOG_CRIT, eNOINIT, "IP_OPTIONS:IPOPT_RTRALERT Failed");
 #endif
 #ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
     else if (((Va = MRT_MFC_BW_UPCALL) && setsockopt(mrouterFD, IPPROTO_IP, MRT_API_CONFIG, (void *)&Va, sizeof(Va)) < 0)
              || ! (Va & MRT_MFC_BW_UPCALL)) {
-        LOG(LOG_WARNING, 1, "IGMP socket MRT_API_CONFIG Failed. Disabling bandwidth control.");
+        LOG(LOG_WARNING, 1, "MRT_API_CONFIG:MRT_MFC_BW_UPCALL Failed. Disabling bandwidth control.");
         CONF->bwControl = (uint32_t)-1;
     }
 #endif
@@ -135,6 +138,11 @@ void k_enableMRouter(void) {
 *   Disable the mrouted API and relases by this the lock.
 */
 void k_disableMRouter(void) {
+#ifdef MRT_FLUSH
+    int Va = 1;
+    if (!STARTUP && !SPROXY && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_FLUSH, &Va, sizeof(Va)) != 0)
+        LOG(LOG_WARNING, 1, "IGMP socket MRT_FLUSH failed.");
+#endif
     if (!STARTUP && !SPROXY && mrt_tbl >= 0 && setsockopt(mrouterFD, IPPROTO_IP, MRT_DONE, NULL, 0) != 0)
         LOG(LOG_WARNING, 1, "IGMP socket MRT_DONE failed.");
     if (mrouterFD >= 0 && close(mrouterFD) < 0)
@@ -291,7 +299,7 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
             inetFmt(group, 0), source == (uint32_t)-1 ? "" : ":", source == (uint32_t)-1 ? "" : inetFmt(source, 0), IfDp->Name);
         if (errno == ENOBUFS) {
             LOG(LOG_WARNING, 0, "Maximum number of multicast groups or sources was exceeded");
-#ifdef __linux__
+#ifdef __Linux__
             LOG(LOG_WARNING, 0, "Check settings of '/sbin/sysctl net.ipv4.igmp_max_memberships / net.ipv4.igmp_max_msf'.");
 #endif
         }

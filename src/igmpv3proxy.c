@@ -48,7 +48,7 @@ static void igmpProxyRun(void);
 
 // Global Variables Memory / Signal Handling / Timekeeping / Buffers etc.
 volatile uint64_t     sighandled;  // Should be as private as possible.
-uint64_t              sigstatus, logwarning;
+uint64_t              sigstatus, logerr;
 struct timespec       curtime, utcoff, starttime = { 0 };
 char                 *rcv_buf = NULL, *fileName, tS[32], tE[32];
 struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
@@ -90,7 +90,7 @@ int main(int ArgCn, char *ArgVc[]) {
             CONF->notAsDaemon = true;
             break;
         case 't':
-#ifdef __linux__
+#ifdef __Linux__
             tbl = ! optarg ? -1 : atoll(optarg);
             break;
 #else

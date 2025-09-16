@@ -81,6 +81,12 @@
 // Keeps common configuration settings.
 static char RUN_PATHS[]="/run /var/run /tmp /var/tmp";
 static char CFG_PATHS[]="/etc/ /usr/local/etc/ /var/etc/ /usr/local/var/etc/";
+
+struct subnet {
+    uint32_t  ip;
+    uint32_t  mask;
+};
+
 struct Config {
     uint8_t             cnt;
     // Daemon parameters.
@@ -119,6 +125,7 @@ struct Config {
     uint8_t             defaultInterfaceState;
     uint8_t             defaultThreshold;
     uint64_t            defaultRatelimit;
+    struct subnet       defaultSsmRange;                    // IGMPv3 SSM Range (232.0.0.0/8)
     struct filters     *defaultFilters, *defaultRates;
     // Logging Parameters.
     uint8_t             logLevel;
@@ -164,11 +171,6 @@ struct timers {
     intptr_t rescanVif;
 };
 
-// Linked list of filters.
-struct subnet {
-    uint32_t  ip;
-    uint32_t  mask;
-};
 struct filters {
     struct subnet         src;                          // Source / Sender) address
     struct subnet         dst;                          // Destination multicast group
@@ -201,6 +203,7 @@ struct vifConfig {
     char                name[IF_NAMESIZE];
     int                 tbl;                            // Mroute Table for Interface
     uint8_t             state;                          // Configured interface state
+    struct subnet       ssmRange;                       // IGMPv3 SSM Range
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
@@ -216,12 +219,12 @@ struct vifConfig {
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultThreshold,    \
-                                            CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,     \
-                                            CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,               \
-                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount, 0, 0}, CONF->maxOrigins,    \
-                                            CONF->bwControl, CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave,    \
-                                            CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultSsmRange,            \
+                                            CONF->defaultThreshold, CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer,    \
+                                            CONF->querierElection, CONF->robustnessValue, CONF->queryInterval,                     \
+                                            CONF->queryResponseInterval, CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount,\
+                                            0, 0}, CONF->maxOrigins, CONF->bwControl, CONF->disableIpMrules, false,                \
+                                            CONF->cksumVerify, CONF->quickLeave, CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -473,6 +476,7 @@ struct igmpv3_report {
 #define IGMPV3_BLOCK_OLD_SOURCES  6
 #define IGMPV3_MINLEN            12
 #define IGMP_LOCAL(x)            ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
+#define DEFAULT_SSMRANGE         "232.0.0.0/8"
 
 //##################################################################################
 //  Global Variables.
@@ -488,7 +492,7 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint64_t         sigstatus, logwarning;
+extern uint64_t         sigstatus, logerr;
 
 // MRT route table id. Linux only, not supported on FreeBSD.
 extern struct chld      chld;
@@ -571,7 +575,7 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 *   lib.c
 */
 #define         STRBUF 256
-#define         LOG(x, ...) (   ((logwarning |= ((x) <= LOG_WARNING)) || true)                \
+#define         LOG(x, ...) (   ((logerr |= ((x) <= LOG_ERR)) || true)                        \
                              && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
                              && !(errno = 0))
 #define         setHash(t, h)   if (h != (uint32_t)-1) BIT_SET(t[h / 64], h % 64)

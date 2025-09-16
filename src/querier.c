@@ -113,7 +113,7 @@ inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct ql
             LOG(LOG_INFO, 0, "Last downstream host, quickleave source %s in group %s on %s.",
                 inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), IfDp->Name);
             GETVIFL_IF(IfDp, IS_UPSTREAM(IfDp->state) && IS_SET(src, uj, IfDp))
-                joinBlockSrc(src, IfDp, false);
+                joinBlockSrc(src, IfDp, false, 0);
         }
     }
     return qlst;
@@ -221,12 +221,12 @@ void groupSpecificQuery(struct qlst *qlst) {
             *query1 = (struct igmpv3_query){ qlst->type      , qlst->code, 0, {group}, qlst->misc, 0, 0 };
             *query2 = (struct igmpv3_query){ qlst->type | 0x1, qlst->code, 0, {group}, qlst->misc, 0, 0 };
             while (i < qlst->nsrcs[1]) {
-                if (NOT_SET(qlst->src[i], lm, IfDp) || NOT_SET(qlst->src[i], d, IfDp)) {
+                if (NOT_SET(qlst->src[i], lm, IfDp) && IS_SET(qlst->src[i], d, IfDp)) {
                     // Source no longer in last member state.
                     LOG(LOG_INFO, 0, "Source %s for group %s no longer in last member state on %s.",
                         inetFmt(qlst->src[i]->ip, 0), inetFmt(group, 0), IfDp->Name);
                     query2->igmp_src[query2->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
-                } else if (--qlst->src[i]->vifB.age[IfDp->index] == 0) {
+                } else if (qlst->src[i]->vifB.age[IfDp->index] > 0 && --qlst->src[i]->vifB.age[IfDp->index] == 0) {
                     // Aged source in include mode should be removed.
                     // In exclude mode sources should be kept and MFC updated, as traffic should no longer be forwarded.
                     BIT_CLR(qlst->src[i]->vifB.qry, IfDp->index);
@@ -234,9 +234,9 @@ void groupSpecificQuery(struct qlst *qlst) {
                     LOG(LOG_INFO, 0, strFmt(IS_IN(qlst->mct, IfDp), "Removing inactive source %s from group %s on %s.",
                                             "Source %s from group %s on %s expired.", inetFmt(qlst->src[i]->ip, 0),
                                             inetFmt(group, 0), IfDp->Name));
-                    delSrc(qlst->src[i], IfDp, IS_EX(qlst->mct, IfDp) ? 2 : 0, true, (uint32_t)-1);
+                    delSrc(qlst->src[i], IfDp, 1, IS_EX(qlst->mct, IfDp) ? 2 : 0, IS_IN(qlst->mct, IfDp), (uint32_t)-1);
                     qlst->src[i] = qlst->src[--qlst->nsrcs[1]];
-                } else
+                } else if (IS_SET(qlst->src[i], d, IfDp))
                     // Source still in last member state, add to  query.
                     query1->igmp_src[query1->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
             }
@@ -282,9 +282,9 @@ void groupSpecificQuery(struct qlst *qlst) {
                     delGroup(qlst->mct, IfDp, qlst->imc, 1);
                 }
             } else if (BIT_TST(qlst->type, 1) && qlst->mct->vifB.age[IfDp->index] == 0
-                                              && IS_SET(qlst->mct, lm, IfDp) && !BIT_TST(qlst->mct->v1Bits, IfDp->index)) {
+                                              && IS_SET(qlst->mct, lm, IfDp) && !BIT_TST(qlst->mct->v2Bits, IfDp->index)
+                                              && !BIT_TST(qlst->mct->v1Bits, IfDp->index)) {
                 // Group in exclude mode has aged, switch to include.
-                // RFC says v2 groups should not switch and age normally, but v2 hosts must respond to query, so should be safe.
                 LOG(LOG_DEBUG, 0, "Switching group %s to include on %s after querying.", inetFmt(group, 0),
                     IfDp->Name);
                 toInclude(qlst->imc);
