@@ -50,17 +50,17 @@ static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
 static const char *options = " include logfile loglevel rescanvif rescanvifnl rescanconf phyint user group chroot mctables"
-                             " hashtablesize reqqueuesize timerqueuesize kbufsize pbufsize maxtbl defaulttable defaultquickleave"
-                             " quickleave defaultmaxorigins defaultdown defaultup defaultupdown defaultthreshold"
+                             " defaulthashtablesize reqqueuesize timerqueuesize kbufsize pbufsize maxtbl defaulttable"
+                             " defaultquickleave quickleave defaultmaxorigins defaultdown defaultup defaultupdown defaultthreshold"
                              " defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
                              " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
                              " defaultproxylocalmc defaultnoquerierelection defaultproxylocalmc defaultnocksumverify defaultfilter"
                              " defaultfilterany nodefaultfilter defaultdisableipmrules defaultssmrange ";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
-                               " noquickleave ratelimit threshold nocksumverify cksumverify noquerierelection querierelection"
-                               " querierip querierver robustnessvalue queryinterval queryrepsonseinterval lastmemberinterval"
-                               " lastmembercount defaultfilter filter altnet whitelist disableipmrules bwcontrol maxorigins"
-                               " ssmrange ";
+                               " noquickleave hashtablesize ratelimit threshold nocksumverify cksumverify noquerierelection"
+                               " querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval"
+                               " lastmemberinterval lastmembercount defaultfilter filter altnet whitelist disableipmrules"
+                               " bwcontrol maxorigins ssmrange ";
 
 // Process signaling.
 extern volatile uint64_t  sighandled;
@@ -97,8 +97,8 @@ inline struct vifConfig **getVifConf(void) {
 */
 void freeConfig(bool old) {
     struct vifConfig *tConf, **cConf;
-    struct filters   *tFil,  **dFil  = old ? &oldconf.defaultFilters : &conf.defaultFilters,
-                     *tRate, **dRate = old ? &oldconf.defaultRates   : &conf.defaultRates;
+    struct filters   *tFil,  **dFil  = old ? &oldconf.filters : &conf.filters,
+                     *tRate, **dRate = old ? &oldconf.rates   : &conf.rates;
 
     // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
     for (cConf = old ? &ovifConf : &vifConf; *cConf; *cConf = tConf) {
@@ -209,16 +209,17 @@ static inline void initCommonConfig(void) {
     conf.chroot         = STARTUP ? NULL : conf.chroot;
     conf.user           = STARTUP ? NULL : conf.user;
     conf.group          = STARTUP ? NULL : conf.group;
-    // Defaul Query Parameters.
-    conf.robustnessValue = DEFAULT_ROBUSTNESS;
-    conf.queryInterval = conf.topQueryInterval = DEFAULT_INTERVAL_QUERY;
-    conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
-    conf.bwControl = 0;
+    conf.mcTables = STARTUP | RESTART ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
     // Request queue size. This many request buffered requests will be handled before other work is done.
     conf.reqQsz = REQQSZ;
     conf.tmQsz  = TMQSZ;
     conf.kBufsz = K_BUF_SIZE;
     conf.pBufsz = BUF_SIZE;
+    // Defaul Query Parameters.
+    conf.robustnessValue = DEFAULT_ROBUSTNESS;
+    conf.queryInterval = conf.topQueryInterval = DEFAULT_INTERVAL_QUERY;
+    conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
+    conf.bwControl = 0;
     // Default values for leave intervals...
     conf.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
     conf.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
@@ -229,18 +230,16 @@ static inline void initCommonConfig(void) {
     conf.maxOrigins = DEFAULT_MAX_ORIGINS;
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
-    conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
-    // Number of (hashed) route tables.
+    conf.dHostsHTSize    = DEFAULT_HASHTABLE_SIZE;
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
-    conf.mcTables = STARTUP | RESTART ? DEFAULT_ROUTE_TABLES : oldconf.mcTables;
     // Default interface state and parameters.
-    conf.defaultInterfaceState = IF_STATE_DISABLED;
-    conf.defaultThreshold      = DEFAULT_THRESHOLD;
-    parseSubnetAddress(DEFAULT_SSMRANGE, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask);
-    conf.defaultRatelimit      = DEFAULT_RATELIMIT;
-    conf.defaultFilters        = NULL;
-    conf.defaultRates          = NULL;
+    conf.InterfaceState = IF_STATE_DISABLED;
+    conf.threshold      = DEFAULT_THRESHOLD;
+    parseSubnetAddress(DEFAULT_SSMRANGE, &conf.ssmRange.ip, &conf.ssmRange.mask);
+    conf.rateLimit      = DEFAULT_RATELIMIT;
+    conf.filters        = NULL;
+    conf.rates          = NULL;
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
     // Default no timed rebuild interfaces / reload config.
@@ -369,8 +368,8 @@ static inline bool parsePhyintToken(char *token) {
         filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
     } else {
         // If any (default) filters have already been set, find the end of the list.
-        for (filP = &tmpPtr->filters; *filP && *filP != conf.defaultFilters; filP = &(*filP)->next);
-        for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.defaultRates; rateP = &(*rateP)->next);
+        for (filP = &tmpPtr->filters; *filP && *filP != conf.filters; filP = &(*filP)->next);
+        for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.rates; rateP = &(*rateP)->next);
     }
 
     // Parse the rest of the config.
@@ -444,6 +443,14 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpPtr->name);
             tmpPtr->quickLeave = false;
 
+        } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
+            if (intToken < 8 || intToken > 65536)
+                LOG(LOG_WARNING, 0, "Config (%s): Hash Table size must be 8 to 65536 bytes (multiples of 8).");
+            else {
+                tmpPtr->dhtSz = intToken % 8 == 0 ? intToken : intToken + (8 - (intToken % 8));
+                LOG(LOG_NOTICE, 0, "Config (%s): Hash table size for quickleave is %d.", tmpPtr->dhtSz);
+            }
+
         } else if (strcmp(" proxylocalmc", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicast.", tmpPtr->name);
             tmpPtr->proxyLocalMc = true;
@@ -477,8 +484,8 @@ static inline bool parsePhyintToken(char *token) {
                 || (tmpPtr->ssmRange.ip != 0 && !IN_MULTICAST(ntohl(tmpPtr->ssmRange.ip)))) {
                 LOG(LOG_NOTICE, 0, "%s is not a valid multicast address, using default %s.",
                     inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask),
-                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask));
-                tmpPtr->ssmRange = conf.defaultSsmRange;
+                    inetFmt(conf.ssmRange.ip, conf.ssmRange.mask));
+                tmpPtr->ssmRange = conf.ssmRange;
             } else
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting SSM Range to %s.", tmpPtr->name,
                     inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask));
@@ -565,7 +572,7 @@ static inline bool parsePhyintToken(char *token) {
             tmpPtr->name, tmpPtr->qry.interval, f);
     }
     if (!tmpPtr->noDefaultFilter)
-        *filP = conf.defaultFilters;
+        *filP = conf.filters;
 
     // Return false if error in interface config was detected.
     if (!logerr)
@@ -593,8 +600,8 @@ bool loadConfig(char *cfgFile) {
         // Initialize common config on first entry.
         logerr = 0;
         initCommonConfig();
-        filP  = &conf.defaultFilters;
-        rateP = &conf.defaultRates;
+        filP  = &conf.filters;
+        rateP = &conf.rates;
     }
     if (conf.cnt == 0xFF) {
         // Check recursion and return if exceeded.
@@ -626,7 +633,7 @@ bool loadConfig(char *cfgFile) {
             if (strcmp(" phyint", token) == 0 && !parsePhyintToken(token)) {
                 return false;
             } else if (strcmp(" defaultfilter", token) == 0) {
-                if (conf.defaultFilters && *filP == conf.defaultFilters) {
+                if (conf.filters && *filP == conf.filters) {
                     LOG(LOG_ERR, 0, "Config: Defaultfilterany cannot be combined with default filters.");
                     break;
                 } else {
@@ -727,40 +734,40 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", conf.maxOrigins);
             }
 
-        } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
-            if (intToken < 8 || intToken > 131072)
-                LOG(LOG_WARNING, 0, "Config: hashtablesize must be 8 to 131072 bytes (multiples of 8).");
+        } else if (strcmp(" defaulthashtablesize", token) == 0 && INTTOKEN) {
+            if (intToken < 8 || intToken > 65536)
+                LOG(LOG_WARNING, 0, "Config: Default Hash Table size must be 8 to 65536 bytes (multiples of 8).");
             else {
                 conf.dHostsHTSize = intToken % 8 == 0 ? intToken : intToken + (8 - (intToken % 8));
-                LOG(LOG_NOTICE, 0, "Config: Hash table size for quickleave is %d.", conf.dHostsHTSize);
+                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", conf.dHostsHTSize);
             }
 
         } else if (strcmp(" defaultupdown", token) == 0) {
-            conf.defaultInterfaceState = IF_STATE_UPDOWNSTREAM;
+            conf.InterfaceState = IF_STATE_UPDOWNSTREAM;
             LOG(LOG_NOTICE, 0, "Config: Interfaces default to updownstream.");
 
         } else if (strcmp(" defaultup", token) == 0) {
-            conf.defaultInterfaceState = IF_STATE_UPSTREAM;
+            conf.InterfaceState = IF_STATE_UPSTREAM;
             LOG(LOG_NOTICE, 0, "Config: Interfaces default to upstream.");
 
         } else if (strcmp(" defaultdown", token) == 0) {
-            conf.defaultInterfaceState = IF_STATE_DOWNSTREAM;
+            conf.InterfaceState = IF_STATE_DOWNSTREAM;
             LOG(LOG_NOTICE, 0, "Config: Interfaces default to downstream.");
 
         } else if (strcmp(" defaultfilterany", token) == 0) {
-            if (conf.defaultFilters)
+            if (conf.filters)
                 LOG(LOG_ERR, 0, "Config: Default filters cannot be combined with defaultfilterany.");
             else {
                 LOG(LOG_NOTICE, 0, "Config: Interface default filter any.");
-                _calloc(conf.defaultFilters, 1, fil, FILSZ);  // Freed by freeConfig()
-                *conf.defaultFilters = FILTERANY;
+                _calloc(conf.filters, 1, fil, FILSZ);  // Freed by freeConfig()
+                *conf.filters = FILTERANY;
             }
 
         } else if (strcmp(" defaultratelimit", token) == 0 && INTTOKEN) {
             if (intToken < 0)
                 LOG(LOG_WARNING, 0, "Config: Ratelimit must be more than 0.");
             else {
-                conf.defaultRatelimit = intToken;
+                conf.rateLimit = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default ratelimit %d.", intToken);
             }
 
@@ -768,7 +775,7 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 255)
                 LOG(LOG_WARNING, 0, "Config: Threshold must be between 1 and 255.");
             else {
-                conf.defaultThreshold = intToken;
+                conf.threshold = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Default threshold %d.", intToken);
             }
 
@@ -785,14 +792,14 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" defaultssmrange", token) == 0 && nextToken(token)) {
-            if (!parseSubnetAddress(token + 1, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask)
-                || (conf.defaultSsmRange.ip != 0 && !IN_MULTICAST(ntohl(conf.defaultSsmRange.ip)))) {
+            if (!parseSubnetAddress(token + 1, &conf.ssmRange.ip, &conf.ssmRange.mask)
+                || (conf.ssmRange.ip != 0 && !IN_MULTICAST(ntohl(conf.ssmRange.ip)))) {
                 LOG(LOG_WARNING, 0, "%s is not a valid multicast address, using default %s.",
-                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask), DEFAULT_SSMRANGE);
-                parseSubnetAddress(DEFAULT_SSMRANGE, &conf.defaultSsmRange.ip, &conf.defaultSsmRange.mask);
+                    inetFmt(conf.ssmRange.ip, conf.ssmRange.mask), DEFAULT_SSMRANGE);
+                parseSubnetAddress(DEFAULT_SSMRANGE, &conf.ssmRange.ip, &conf.ssmRange.mask);
             } else
                 LOG(LOG_NOTICE, 0, "Config: Setting default SSM Range to %s.",
-                    inetFmt(conf.defaultSsmRange.ip, conf.defaultSsmRange.mask));
+                    inetFmt(conf.ssmRange.ip, conf.ssmRange.mask));
 
         } else if (strcmp(" defaultrobustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)

@@ -39,8 +39,8 @@
 
 #include "igmpv3proxy.h"
 
-static int      mrouterFD = -1, nlFD = -1;
-static uint32_t vifBits   =  0;
+static int      mrouterFD = -1, nlFD     = -1;
+static uint32_t uvifBits  =  0, dvifBits =  0;
 
 /**
 *   Returns the mrouter FD.
@@ -206,39 +206,47 @@ void k_set_if(struct IfDesc *IfDp) {
  */
 bool k_addVIF(struct IfDesc *IfDp) {
     struct vifctl  vifCtl = {0};
-    int8_t         Ix;
+    int8_t         uIx, dIx;
+
     // Find available vif index.
-    if (IfDp->index == -1) {
-        if (vifBits == (uint32_t)-1) {
-            LOG(LOG_WARNING, 0, "Out of VIF space");
-            IfDp->state &= ~0x03;
-            return false;
-        } else for (Ix = 0; Ix < MAXVIFS && (vifBits & (1 << Ix)); Ix++);
-    }
+    if (uvifBits == (uint32_t)-1) {
+        LOG(LOG_WARNING, 0, "Out of VIF space");
+        IfDp->state &= ~0x03;
+        return false;
+    } else for (uIx = 0; uIx < MAXVIFS && (uvifBits & (1 << uIx)); uIx++);
     // Set the vif parameters, reset bw counters.
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
-    vifCtl = (struct vifctl){ Ix, VIFF_USE_IFINDEX, IfDp->conf->threshold, 0, {IfDp->sysidx}, {INADDR_ANY} };
+    vifCtl = (struct vifctl){ uIx, VIFF_USE_IFINDEX, IfDp->conf->threshold, 0, {IfDp->sysidx}, {INADDR_ANY} };
 #else
-    vifCtl = (struct vifctl){ Ix, 0, IfDp->conf->threshold, 0, {0}, {0} };
+    vifCtl = (struct vifctl){ uIx, 0, IfDp->conf->threshold, 0, {0}, {0} };
     vifCtl.vifc_lcl_addr.s_addr = IfDp->ip.ip;
     vifCtl.vifc_rmt_addr.s_addr = INADDR_ANY;
 #endif
     vifCtl.vifc_rate_limit = IfDp->conf->ratelimit;
     // Add the vif.
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_ADD_VIF, (char *)&vifCtl, sizeof(vifCtl)) < 0) {
-        LOG(LOG_ERR, 1, "Error adding VIF %d:%s", Ix, IfDp->Name);
+        LOG(LOG_ERR, 1, "Error adding VIF %d:%s", uIx, IfDp->Name);
         IfDp->state &= ~0x03;
         IfDp->index = -1;
+        IfDp->dhtix = -1;
         return false;
     }
-    if (IfDp->index == -1) {
-        IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
-        IfDp->index = Ix;
-        IfDp->nextvif = VIFL;
-        VIFL = IfDp;
-        BIT_SET(vifBits, IfDp->index);
+    IfDp->index = uIx;
+    IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
+    IfDp->nextvif = VIFL;
+    VIFL = IfDp;
+    BIT_SET(uvifBits, IfDp->index);
+    if (IS_DOWNSTREAM(IfDp->conf->state)) {
+        if (dvifBits == (uint32_t)-1) {
+            LOG(LOG_WARNING, 0, "Out of VIF space");
+            IfDp->state &= ~0x03;
+            return false;
+        } else for (dIx = 0; dIx < MAXVIFS && (dvifBits & (1 << dIx)); dIx++);
+        IfDp->dhtix = dIx + 1;
+        BIT_SET(dvifBits, IfDp->dhtix);
     }
-    LOG(LOG_NOTICE, 0, "Adding VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
+
+    LOG(LOG_NOTICE, 0, "Added VIF: %s, Ix: %d, Fl: 0x%x, IP: %s, Threshold: %d, Ratelimit: %d", IfDp->Name, vifCtl.vifc_vifi,
         vifCtl.vifc_flags, inetFmt(IfDp->ip.ip, 0), vifCtl.vifc_threshold, IfDp->conf->ratelimit);
     return true;
 }
@@ -258,8 +266,10 @@ void k_delVIF(struct IfDesc *IfDp) {
     if (setsockopt(mrouterFD, IPPROTO_IP, MRT_DEL_VIF, (char *)&vif, sizeof(vif)) < 0)
         LOG(LOG_ERR, 1, "Error removing VIF #%d %s", IfDp->index, IfDp->Name);
     // Reset vif index.
-    BIT_CLR(vifBits, IfDp->index);
+    BIT_CLR(uvifBits, IfDp->index);
+    BIT_CLR(dvifBits, IfDp->dhtix);
     IfDp->index = -1;
+    IfDp->dhtix = -1;
     if (VIFL == IfDp)
         VIFL = IfDp->next;
     else FOR_IF((struct IfDesc *If = VIFL; If; If = If ? If->nextvif : NULL), If->nextvif && If->nextvif == IfDp)

@@ -63,7 +63,7 @@ struct src {
     struct mfc         *mfc;                      // Pointer to active MFC
     uint32_t            ip;                       // Source IP adress
     struct vifFlags     vifB;
-    uint64_t            dHostsHT[];               // Host tracking table
+    uint64_t            **dHostsHT;               // Per Vif Host tracking tables
 };
 
 struct mfc {
@@ -97,7 +97,7 @@ struct mcTable {
     uint8_t             v2Age[MAXVIFS];           // v2 compitibility timer
 
     // Keeps downstream hosts information
-    uint64_t            dHostsHT[];
+    uint64_t            **dHostsHT;               // Per Vif Host tracking tables
 };
 
 struct ifMct {
@@ -121,25 +121,28 @@ struct qlst {
     uint32_t           nsrcs[2];                  // Nr of sources in query, 0 = original, 1 = current
     struct src        *src[];                     // Array of pointers to sources
 };
-#define MCTSZ            (CONF->mcTables * sizeof(void *))
-#define MCESZ            (sizeof(struct mcTable) + CONF->dHostsHTSize)
-#define OMCESZ           (sizeof(struct mcTable) + OLDCONF->dHostsHTSize)
-#define SRCSZ            (sizeof(struct src) + CONF->dHostsHTSize)
-#define OSRCSZ           (sizeof(struct src) + OLDCONF->dHostsHTSize)
-#define IFMSZ            (sizeof(struct ifMct))
-#define MFCSZ            (sizeof(struct mfc))
-#define QLSZ             (sizeof(struct qlst))
-#define QRYSZ(n)         (QLSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
-#define INCL              0
-#define EXCL              1
-#define IS_EX(x, y)       BIT_TST(x->mode, y->index)
-#define IS_IN(x, y)      !BIT_TST(x->mode, y->index)
-#define IS_SET(x, y, z)   BIT_TST(x->vifB.y, z->index)
-#define NOT_SET(x, y, z) !BIT_TST(x->vifB.y, z->index)
-#define SET_HASH(x,y)     if (IfDp->conf->quickLeave) setHash(x,y)
-#define CLR_HASH(x,y)     if (IfDp->conf->quickLeave) clearHash(x,y)
-#define NO_HASH(x)        ({register uint64_t i = 0, n = CONF->dHostsHTSize >> 3; \
-                            while(i < n && x[i] == 0) i++; i >= n; })
+#define MCTSZ             (CONF->mcTables * sizeof(void *))
+#define MCESZ             (sizeof(struct mcTable))
+#define SRCSZ             (sizeof(struct src))
+#define IFMSZ             (sizeof(struct ifMct))
+#define MFCSZ             (sizeof(struct mfc))
+#define QLSZ              (sizeof(struct qlst))
+#define QRYSZ(n)          (QLSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
+#define INCL               0
+#define EXCL               1
+#define IS_EX(x, y)        BIT_TST(x->mode, y->index)
+#define IS_IN(x, y)       !BIT_TST(x->mode, y->index)
+#define IS_SET(x, y, z)    BIT_TST(x->vifB.y, z->index)
+#define NOT_SET(x, y, z)  !BIT_TST(x->vifB.y, z->index)
+#define SET_HASH(t, v, h) { if (v->conf->quickLeave && t->dHostsHT && t->dHostsHT[v->dhtix])                       \
+                                BIT_SET(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64); }
+#define CLR_HASH(t, v, h) { if (v->conf->quickLeave && t->dHostsHT && t->dHostsHT[v->dhtix])                       \
+                                BIT_CLR(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64); }
+#define TST_HASH(t, v, h) (t->dHostsHT && t->dHostsHT[v->dhtix] &&                                                 \
+                           BIT_TST(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64))
+#define NO_HASH(t, v)     ({register uint64_t i = 0, n = v->conf->quickLeave ? v->conf->dhtSz >> 3 : 1;            \
+                            if (v->conf->quickLeave && t && t[v->dhtix])                                           \
+                                while(i < n && t[v->dhtix][i] == 0) i++; i >= n; })
 #define GETMRT(x)         if (MCT)                                                   \
                               for (uint16_t iz = 0; iz < CONF->mcTables; iz++)       \
                                    for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)

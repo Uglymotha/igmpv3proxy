@@ -113,20 +113,20 @@ struct Config {
     // Set if upstream leave messages should be sent instantly..
     bool                quickLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
-    uint32_t            dHostsHTSize;
+    uint16_t            dHostsHTSize;
     uint32_t            hashSeed;
     uint16_t            mcTables;
     // Mroute tables only supported on linux
     int                 defaultTable;
     bool                disableIpMrules;
     // Max origins for route when bw control is disabled.
-    uint16_t            maxOrigins;
+    uint32_t            maxOrigins;
     // Set default interface status and parameters.
-    uint8_t             defaultInterfaceState;
-    uint8_t             defaultThreshold;
-    uint64_t            defaultRatelimit;
-    struct subnet       defaultSsmRange;                    // IGMPv3 SSM Range (232.0.0.0/8)
-    struct filters     *defaultFilters, *defaultRates;
+    uint8_t             InterfaceState;
+    uint8_t             threshold;
+    uint64_t            rateLimit;
+    struct subnet       ssmRange;                    // IGMPv3 SSM Range (232.0.0.0/8)
+    struct filters     *filters, *rates;
     // Logging Parameters.
     uint8_t             logLevel;
     char               *logFilePath;
@@ -147,7 +147,7 @@ struct Config {
 
 // Memory statistics.
 struct memstats {
-    int64_t mct, src, mfc, ifm;       // Multicast Forwarding Table
+    int64_t mct, src, mfc, ifm, dht;  // Multicast Forwarding Table
     int64_t ifd, fil, vif;            // Interfaces
     int64_t rcv, snd;                 // Buffers
     int64_t qry, tmr, var;            // Queries, Timers, various.
@@ -207,24 +207,25 @@ struct vifConfig {
     uint8_t             threshold;                      // Interface MC TTL
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
-    uint16_t            maxOrigins;                     // Maximun nr of sources for groups.
+    uint32_t            maxOrigins;                     // Maximun nr of sources for groups.
     uint32_t            bwControl;                      // BW Control interval
     bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
     bool                quickLeave;                     // Fast upstream leave
+    uint16_t            dhtSz;                          // dHosts hash table size
     bool                proxyLocalMc;                   // Forward local multicast
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
 #define VIFSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->defaultInterfaceState, CONF->defaultSsmRange,            \
-                                            CONF->defaultThreshold, CONF->defaultRatelimit, {CONF->querierIp, CONF->querierVer,    \
-                                            CONF->querierElection, CONF->robustnessValue, CONF->queryInterval,                     \
-                                            CONF->queryResponseInterval, CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount,\
-                                            0, 0}, CONF->maxOrigins, CONF->bwControl, CONF->disableIpMrules, false,                \
-                                            CONF->cksumVerify, CONF->quickLeave, CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
+#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->InterfaceState, CONF->ssmRange, CONF->threshold,      \
+                                            CONF->rateLimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,         \
+                                            CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,            \
+                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount,0, 0}, CONF->maxOrigins,  \
+                                            CONF->bwControl, CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave, \
+                                            CONF->dHostsHTSize, CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -266,6 +267,7 @@ struct IfDesc {
     struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
     int8_t                        index;                 // MCast vif index
+    int8_t                        dhtix;                 // dHosts Hash Table index
     intptr_t                      bwTimer;               // BW Control timerd id
     void                         *dMct;                  // Pointers to active downstream groups for vif
     void                         *uMct;                  // Pointers to active upstream groups for vif
@@ -275,7 +277,7 @@ struct IfDesc {
 };
 #define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
-                                        {0, 0, 0, 0}, 0, -1, 0, NULL, NULL, NULL, NULL, IfDescL }
+                                        {0, 0, 0, 0}, 0, -1, -1, (intptr_t)NULL, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -393,7 +395,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                     __FILE__, __LINE__); }                                                                        \
                               p;})
 #define _recalloc(p,m,sp,sm) ({if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
-                                || ((sp) > (sm) && ! memset((char *)p + (sm), 0, (sp) - (sm)))                                    \
+                                || (! memset((char *)p + (sm), 0, (sp) - (sm)) && (sp) > (sm))                                    \
                                 || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                    \
                                 getMemStats(0,-1);                                                                                \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid recalloc(%p) of size %d-%d in %s() (%s:%d)", p, sp, sm, __func__, \
@@ -578,9 +580,6 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 #define         LOG(x, ...) (   ((logerr |= ((x) <= LOG_ERR)) || true)                        \
                              && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
                              && !(errno = 0))
-#define         setHash(t, h)   if (h != (uint32_t)-1) BIT_SET(t[h / 64], h % 64)
-#define         clearHash(t, h) if (h != (uint32_t)-1) BIT_CLR(t[h / 64], h % 64)
-#define         testHash(t, h)  (BIT_TST(t[h / 64], h % 64))
 bool            noHash(register uint64_t *t);
 char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 const char     *inetFmt(uint32_t addr, uint32_t mask);

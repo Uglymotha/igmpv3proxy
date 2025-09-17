@@ -204,14 +204,14 @@ void configureVifs(void) {
             } else {
                 // Interface has no matching config, create default config.
                 LOG(LOG_NOTICE, 0, "Creating default config for %s interface %s.",
-                    IS_DISABLED(CONF->defaultInterfaceState)     ? "disabled"     :
-                    IS_UPDOWNSTREAM(CONF->defaultInterfaceState) ? "updownstream" :
-                    IS_UPSTREAM(CONF->defaultInterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
+                    IS_DISABLED(CONF->InterfaceState)     ? "disabled"     :
+                    IS_UPDOWNSTREAM(CONF->InterfaceState) ? "updownstream" :
+                    IS_UPSTREAM(CONF->InterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
                 _calloc(vifConf, 1, vif, VIFSZ);  // Freed by freeConfig()
                 *vifConf = DEFAULT_VIFCONF;
                 *VIFCONF = vifConf;
                 strcpy(vifConf->name, IfDp->Name);
-                vifConf->filters = CONF->defaultFilters;
+                vifConf->filters = CONF->filters;
             }
             IfDp->oconf = IfDp->conf;
             IfDp->conf = vifConf;
@@ -238,7 +238,8 @@ void configureVifs(void) {
         } else
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
-        quickLeave |= !IS_DISABLED(IfDp->state) && IfDp->conf->quickLeave;
+        if (!IfDp->conf->quickLeave)
+            IfDp->conf->dhtSz = 0;
 
         // Set configured querier ip to interface address if not configured
         // and set version to 3 for disabled/upstream only interface.
@@ -258,13 +259,18 @@ void configureVifs(void) {
                 IfDp->filCh = true;
             }
         }
+        // Check if quickleave was enabled or disabled due to config change.
+        if ((CONFRELOAD || SHUP) && IfDp->oconf->dhtSz != IfDp->conf->dhtSz) {
+            // Disable interface to free hash tables then rebuild interfaces to reanble interface.
+            LOG(LOG_WARNING, 0, "Downstream host hashtable size on %s changed from %d to %d.",
+                IfDp->Name, IfDp->oconf->dhtSz, IfDp->conf->dhtSz);
+            IfDp->state &= 03;
+            sighandled |= GOT_SIGUSR2;
+        }
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
-        // Reinitialize vif if ratelimit changed.
-        if ((CONFRELOAD || SHUP) && IfDp->oconf->ratelimit != IfDp->conf->ratelimit)
-            k_addVIF(IfDp);
         // Check if vifs need to be added or removed and (re)init the group table.
         if (!IS_DISABLED(newstate) && (IfDp->index >= 0 || k_addVIF(IfDp))) {
             vifcount++;
@@ -303,18 +309,6 @@ void configureVifs(void) {
     if (mrt_tbl < 0)
         return;
 
-    // Set hashtable size to 0 when quickleave is not enabled on any interface.
-    if (!quickLeave && !RESTART) {
-        LOG(LOG_NOTICE, 0, "Disabling quickleave, no interfaces have it enabled.");
-        CONF->quickLeave = false;
-        CONF->dHostsHTSize = 0;
-    }
-    // Check if quickleave was enabled or disabled due to config change.
-    if ((CONFRELOAD || SHUP) && OLDCONF->dHostsHTSize != CONF->dHostsHTSize) {
-        LOG(LOG_WARNING, 0, "Downstream host hashtable size changed from %d to %d, restarting.",
-            OLDCONF->dHostsHTSize, CONF->dHostsHTSize);
-        sighandled |= GOT_SIGURG | GOT_SIGTERM;
-    }
     // All vifs created / updated, check if there is an upstream and at least one downstream.
     if (!SHUTDOWN && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
         LOG(STARTUP || RESTART ? LOG_CRIT : LOG_ERR, -eNOINIT,
