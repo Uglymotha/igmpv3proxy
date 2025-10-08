@@ -397,7 +397,7 @@ static void igmpProxyMonitor(void) {
             acceptIgmp(pollFD[1].fd);
             LOG(LOG_WARNING, 0, "RTNETLINK: Interfaces changed.");
         }
-        FOR_IF((int j=0; j < chld.nr; j++), (j != 0 || !(i = 0)) && chld.c[j].tbl >=0 && chld.c[j].pid > 0) i++;
+        FOR_IF((int j = 0; j < chld.nr; j++), (j != 0 || !(i = 0)) && chld.c[j].tbl >=0 && chld.c[j].pid > 0) i++;
         LOG(i == 0 ? LOG_WARNING : LOG_INFO, 0, "Monitoring %s proxy process%s.%s",
             strFmt(i == 0, "no", "%d", i), i != 1 ? "es" : "", i == 0 ? " Terminating." : "");
         if (i == 0)

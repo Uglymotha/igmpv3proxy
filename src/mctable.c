@@ -116,15 +116,15 @@ static inline bool addGroup(struct mct* mct, struct IfDesc *IfDp, int dir, int m
         mct->nvif.i, mct->nvif.e, mct->nsrcs[0], mct->nsrcs[1]);
     if (dir) {
         SET_HASH(mct, IfDp, srcHash);
-        if (mode) {
-            // Exclude mode group, reset last member state and set age to GMI. We also age denied groups.
-            IF_FOR_IF(!mct->dvif[ix].vp->mode && (mct->dvif[ix].vp->mode = 1),
-                      (struct src *src = mct->sources; src; src = src->next), src->IfDp)
-                activateRoute(src->IfDp, src, src->ip, src->mct->group, true);
-            mct->dvif[ix].vp->lm    = 0;
-            mct->dvif[ix].vp->age   = IfDp->querier.qrv;  // Group timer = GMI
-            mct->mode               = true;
+        mct->dvif[ix].vp->lm = 0;
+        if (mode || mct->dvif[ix].vp->v1age > 0 || mct->dvif[ix].vp->v2age > 0) {
+            mct->dvif[ix].vp->age = IfDp->querier.qrv;  // Group timer = GMI
+            mct->mode             = true;
         }
+        // Exclude mode group, reset last member state and set age to GMI. We also age denied groups.
+        IF_FOR_IF(mct->mode && !mct->dvif[ix].vp->mode && (mct->dvif[ix].vp->mode = 1),
+                  (struct src *src = mct->sources; src; src = src->next), src->IfDp)
+            activateRoute(src->IfDp, src, src->ip, src->mct->group, true);
         GETUVIFL_IF(If, !mct->uvif[If->uvifix].j && !mct->uvif[If->uvifix].d)
             // Check if any upstream interfaces still need to join the group.
             addGroup(mct, If, 0, 1, NHASH);
@@ -602,11 +602,12 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         return;
     LOG(LOG_DEBUG, 0, "%s:%s:%s %s (#%d)", IfDp->Name, inetFmt(ip, 0), grecKind(type), inetFmt(group,  0), nsrcs);
     // Toggle compatibility modes if older version reports are received.
-    if (type == IGMP_V1_MEMBERSHIP_REPORT || type == IGMP_V2_MEMBERSHIP_REPORT || type == IGMP_V2_LEAVE_GROUP) {
-        LOG(LOG_NOTICE, 0, "Detected v%d host on %s. Setting compatibility mode for %s.",
-            type == IGMP_V1_MEMBERSHIP_REPORT ? 1 : 2, IfDp->Name, inetFmt(group, 0));
-        type == IGMP_V1_MEMBERSHIP_REPORT ? (mct->dvif[ix].vp->v1age = IfDp->querier.qrv)
-                                          : (mct->dvif[ix].vp->v2age = IfDp->querier.qrv);
+    if (IfDp->querier.ver < 3 || type == IGMP_V1_MEMBERSHIP_REPORT
+                              || type == IGMP_V2_MEMBERSHIP_REPORT || type == IGMP_V2_LEAVE_GROUP) {
+        LOG(LOG_NOTICE, 0, "Detected v%d host or querier on %s. Setting compatibility mode for %s.",
+            type == IGMP_V1_MEMBERSHIP_REPORT  || IfDp->querier.ver == 1 ? 1 : 2, IfDp->Name, inetFmt(group, 0));
+        type == IGMP_V1_MEMBERSHIP_REPORT || IfDp->querier.ver == 1 ? (mct->dvif[ix].vp->v1age = IfDp->querier.qrv)
+                                                                    : (mct->dvif[ix].vp->v2age = IfDp->querier.qrv);
     }
 
     switch (type) {

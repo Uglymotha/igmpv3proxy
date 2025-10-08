@@ -252,22 +252,24 @@ void groupSpecificQuery(struct qry *qry) {
         qry->tid = timerSet(timeout, strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qry->nsrcs[1]),
                              groupSpecificQuery, qry);
     } else {
-        qry->mct->dvif[ix].vp->qry = NULL;
+        if (BIT_TST(qry->type, 1)) {
+            qry->mct->dvif[qry->IfDp->dvifix].vp->lm = 0;
+            qry->mct->dvif[ix].vp->qry = NULL;
+        }
         if (qry->cnt >= qry->misc) {
-            if (BIT_TST(qry->type, 2) && !qry->mct->dvif[ix].vp->mode && ! qry->mct->firstsrc[ix]) {
+            if (BIT_TST(qry->type, 2) && !qry->mct->dvif[ix].vp->mode && !qry->mct->nsrcs[0]) {
                 // Group in include mode has no more sources, remove.
                 LOG(LOG_DEBUG, 0, "Removing group %s on %s.", inetFmt(group, 0), IfDp->Name);
                 delGroup(qry->mct, IfDp, 1);
-            } else if (BIT_TST(qry->type, 1) && qry->mct->dvif[ix].vp->age == 0
-                                             && (qry->mct->dvif[ix].vp->lm && qry->mct->dvif[ix].vp->v1age == -1)
-                                             && qry->mct->dvif[ix].vp->v1age == -1) {
+            } else if (BIT_TST(qry->type, 1) && qry->mct->dvif[ix].vp->age == 0 && qry->mct->dvif[ix].vp->lm
+                                             && qry->mct->dvif[ix].vp->v1age == -1 && qry->mct->dvif[ix].vp->v1age == -1) {
                 // Group in exclude mode has aged, switch to include.
                 LOG(LOG_DEBUG, 0, "Switching group %s to include on %s.", inetFmt(group, 0),
                     IfDp->Name);
                 toInclude(qry->mct, IfDp);
             }
-        } else
-            LOG(LOG_INFO, 0, "Done querying %s/%d on %s.", inetFmt(group, 0), nsrcs, IfDp->Name);
+        }
+        LOG(LOG_INFO, 0, "Done querying %s/%d on %s.", inetFmt(group, 0), nsrcs, IfDp->Name);
         qry->tid = (intptr_t)NULL;
         delQuery(qry, NULL, NULL);
     }
