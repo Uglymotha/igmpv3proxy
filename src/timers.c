@@ -66,9 +66,9 @@ struct timespec timerAgeQueue(void) {
         clock_gettime(CLOCK_REALTIME, &node->time);
         node->func(node->data);
         clock_gettime(CLOCK_REALTIME, &curtime);
-        LOG(LOG_DEBUG, 0, "%s took %dus", node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
         // The function may have removed the timeout itself, check before freeing.
         if (queue == node) {
+            LOG(LOG_DEBUG, 0, "%s took %dus", node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
             queue = node->next;
             if (queue)
                 queue->prev = NULL;

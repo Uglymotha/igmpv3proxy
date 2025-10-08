@@ -181,7 +181,7 @@ uint32_t murmurhash3(register uint32_t x) {
     x ^= CONF->hashSeed;
     x = (x ^ (x >> 16)) * 0x85ebca6b;
     x = (x ^ (x >> 13)) * 0xc2b2ae35;
-    return x ^ (x >> 16);
+    return (x ^ (x >> 16)) & ~(1 << 6);
 }
 
 /**
@@ -346,9 +346,9 @@ void getMemStats(int h, int cli_fd) {
                      "Config:  %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n"
                      "         %lld allocs total, %lld interfaces, %lld config, %lld filters.\n"
                      "         %lld  frees total, %lld interfaces, %lld config, %lld filters.\n"
-                     "Routes:  %lldb total, %lldb tables, %lldb srcs, %lldb ilists, %lldb mfc, %lldb qry, %lldb dht.\n"
-                     "         %lld allocs total, %lld tables, %lld srcs, %lld ilists, %lld mfc, %lld qry %lld dht.\n"
-                     "         %lld  frees total, %lld tables, %lld srcs, %lld ilists, %lld mfc, %lld qry %lld dht.\n";
+                     "Routes:  %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb mfc, %lldb qry, %lldb dht.\n"
+                     "         %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry %lld dht.\n"
+                     "         %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry %lld dht.\n";
     struct rusage usage;
 
     if (cli_fd >= 0) {
@@ -378,13 +378,13 @@ void getMemStats(int h, int cli_fd) {
         memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
     LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
         memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
-    LOG(LOG_DEBUG, 0, "Routes  Stats: %lldb total, %lldb tables, %lldb srcs, %lldb ilists, %lldb mfc, %lldb qry, %lldb dht.",
+    LOG(LOG_DEBUG, 0, "Routes  Stats: %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb mfc, %lldb qry, %lldb dht.",
         memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry + memuse.dht,
         memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry, memuse.dht);
-    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld srcs, %lld ilists, %lld mfc, %lld qry, %lld dht.",
+    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry, %lld dht.",
         memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry + memalloc.dht,
         memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry, memalloc.dht);
-    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld srcs, %lld ilists, %lld mfc, %lld qry, %lld dht.",
+    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry, %lld dht.",
         memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry + memfree.dht,
         memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry, memfree.dht);
 

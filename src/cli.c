@@ -143,9 +143,9 @@ bool acceptCli(void)
         i = h ? 2 : 3;
         if (len > i && (! (IfDp = getIf(0, &buf[i], FINDNAME | (mrt_tbl < 0 ? 0 : SRCHVIFL)))
                     && (buf[0] != 'r' || !parseSubnetAddress(&buf[i], &addr, &mask) || !IN_MULTICAST(ntohl(addr))))) {
-            LOG(LOG_WARNING, 0, strFmt(buf[0] == 'r', "CLI (%d) %s invalid interface or subnet/mask. %s",
+            LOG(LOG_WARNING, 0, strFmt(buf[0] == 'r', "CLI (%d) %s invalid interface or subnet/mask.",
                                        "CLI (%d) interface %s not found.", chld.onr, &buf[i]));
-            buf = strFmt(buf[0] == 'r', "%s is not a valid interface, subnet/mask or multicast address.\n",
+            buf = strFmt(buf[0] == 'r', "'%s' is not a valid interface, subnet/mask or multicast address.\n",
                          "Interface '%s' Not Found.\n", &buf[i]);
         } else {
             if (buf[0] == 'r')

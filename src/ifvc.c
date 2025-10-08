@@ -40,8 +40,7 @@
 #include "igmpv3proxy.h"
 
 // Linked list of igmpv3proxy system interfaces and ulticast vifs.
-static struct   IfDesc   *IfDescL = NULL, *vifL = NULL;
-int             vifcount, upvifcount, downvifcount;
+static struct   IfDesc   *IfDescL = NULL, *vifL = NULL, *dvifL = NULL, *uvifL = NULL;
 extern volatile uint64_t  sighandled;  // From igmpv3proxy.c signal handler.
 
 static void configureVifs(void);
@@ -71,8 +70,8 @@ void freeIfDescL(void) {
 /**
 *   Returns pointer to the list of system interfaces.
 */
-inline struct IfDesc **getIfL(bool vifl) {
-    return vifl ? &vifL : &IfDescL;
+inline struct IfDesc **getIfL(bool vifl, int dir) {
+    return !vifl ? (!dir ? &IfDescL : &vifL) : dir ? &dvifL : &uvifL;
 }
 
 /**
@@ -81,9 +80,12 @@ inline struct IfDesc **getIfL(bool vifl) {
 *   if bit 3 of mode is set search the active vifs, all system interfaces otherwise.
 */
 inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
-    struct IfDesc *IfDp = mode & SRCHVIFL ? vifL : IfDescL;
-    while (IfDp && !((mode & 3) == 2 ? strcmp(name, IfDp->Name) == 0 : ((mode & 3) == 1 ? IfDp->sysidx : IfDp->index) == ix))
-         IfDp = mode & SRCHVIFL ? IfDp->nextvif : IfDp->next;
+    struct IfDesc *IfDp = !(mode & (SRCHVIFL | SRCHDVIFL | SRCHUVIFL))  ? IfDescL :
+                           (mode & SRCHVIFL) ? vifL : (mode &SRCHDVIFL) ? dvifL   : uvifL;
+    while (IfDp && !((mode & FINDNAME) ? strcmp(name, IfDp->Name) == 0
+                                       : ((mode & FINDSYSIX) ? IfDp->sysidx : IfDp->index) == ix))
+         IfDp = !(mode & (SRCHVIFL | SRCHDVIFL | SRCHUVIFL)) ? IfDp->next : (mode & SRCHVIFL)  ? IfDp->nextvif
+                                                                          : (mode & SRCHDVIFL) ? IfDp->nextUvif : IfDp->nextUvif;
     return IfDp;
 }
 
@@ -194,7 +196,6 @@ void configureVifs(void) {
     bool               quickLeave = false;
     LOG(LOG_INFO, 0, "Configuring MC vifs.");
 
-    uVifs = vifcount = upvifcount = downvifcount = 0;
     GETIFL(IfDp) {
         // When config is reloaded, find and link matching config to interfaces.
         if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
@@ -207,7 +208,7 @@ void configureVifs(void) {
                     IS_DISABLED(CONF->InterfaceState)     ? "disabled"     :
                     IS_UPDOWNSTREAM(CONF->InterfaceState) ? "updownstream" :
                     IS_UPSTREAM(CONF->InterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
-                _calloc(vifConf, 1, vif, VIFSZ);  // Freed by freeConfig()
+                _calloc(vifConf, 1, vif, VIFCSZ);  // Freed by freeConfig()
                 *vifConf = DEFAULT_VIFCONF;
                 *VIFCONF = vifConf;
                 strcpy(vifConf->name, IfDp->Name);
@@ -272,37 +273,22 @@ void configureVifs(void) {
                                       && IfDp->querier.ip != IfDp->conf->qry.ip)
             ctrlQuerier(2, IfDp);
         // Check if vifs need to be added or removed and (re)init the group table.
-        if (!IS_DISABLED(newstate) && (IfDp->index >= 0 || k_addVIF(IfDp))) {
-            vifcount++;
-            if (IS_DOWNSTREAM(newstate))
-                downvifcount++;
-            if (IS_UPSTREAM(newstate)) {
-                upvifcount++;
-                BIT_SET(uVifs, IfDp->index);
-                IF_GETVIFL_IF(!STARTUP && !IS_UPSTREAM(oldstate), If, If != IfDp && IS_DOWNSTREAM(If->state)) {
-                    LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
-                    sendIgmp(If, NULL);
-                }
-            } else
-                BIT_CLR(uVifs, IfDp->index);
-            if (IS_DISABLED(oldstate) || (!STARTUP && oldstate != newstate))
-                ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
+        if (!IS_DISABLED(newstate) && (IfDp->index != (vif_t)-1 || k_addVIF(IfDp))) {
+            IF_GETDVIFL(!STARTUP && !RESTART && IS_UPSTREAM(newstate) && !IS_UPSTREAM(oldstate), If) {
+                LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
+                sendIgmp(If, NULL);
+            }
         }
+        if (oldstate != newstate && IS_DOWNSTREAM(newstate))
+            ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
         if ((newstate != oldstate || IfDp->filCh) && IfDp->conf->tbl == mrt_tbl)
             clearGroups(IfDp);
         IfDp->filCh = false;
-        if (IS_DISABLED(newstate) && IfDp->index >= 0) {
+        if (IS_DISABLED(newstate) && IfDp->index != (vif_t)-1) {
             IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
             if (!IS_DISABLED(oldstate))
                 ctrlQuerier(0, IfDp);
-            BIT_CLR(uVifs, IfDp->index);
             k_delVIF(IfDp);
-            if (vifcount)
-                vifcount--;
-            if (IS_DOWNSTREAM(oldstate) && downvifcount)
-                downvifcount--;
-            if (IS_UPSTREAM(oldstate)   && upvifcount)
-                upvifcount--;
         }
         IfDp->oconf = NULL;
     }

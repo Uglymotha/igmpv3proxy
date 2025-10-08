@@ -114,7 +114,7 @@ void freeConfig(bool old) {
             _free((*cConf)->rates, fil, FILSZ);
             (*cConf)->rates = tRate;
         }
-        _free(*cConf, vif, VIFSZ);
+        _free(*cConf, vif, VIFCSZ);
     }
     *cConf = NULL;
     if (old || SHUTDOWN) {
@@ -230,7 +230,7 @@ static inline void initCommonConfig(void) {
     conf.maxOrigins = DEFAULT_MAX_ORIGINS;
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
-    conf.dHostsHTSize    = DEFAULT_HASHTABLE_SIZE;
+    conf.dHostsHTSize    = DEFAULT_HASHTABLE_SIZE / 8;
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
     // Default interface state and parameters.
@@ -356,7 +356,7 @@ static inline bool parsePhyintToken(char *token) {
     // Find existing or create new vifConf.
     for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
     if (! tmpPtr) {
-        _calloc(tmpPtr, 1, vif, VIFSZ);  // Freed by freeConfig
+        _calloc(tmpPtr, 1, vif, VIFCSZ);  // Freed by freeConfig
         // Insert vifconf in list and set default config and filters pointers.
         *tmpPtr = DEFAULT_VIFCONF;
         vifConf = tmpPtr;
@@ -444,11 +444,11 @@ static inline bool parsePhyintToken(char *token) {
             tmpPtr->quickLeave = false;
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
-            if (intToken < 8 || intToken > 65536)
-                LOG(LOG_WARNING, 0, "Config (%s): Hash Table size must be 8 to 65536 bytes (multiples of 8).");
+            if (intToken < 8 || intToken > 33554432)
+                LOG(LOG_WARNING, 0, "Config (%s): Hash Table size must be 8 to 33554432 bytes (multiples of 8).");
             else {
-                tmpPtr->dhtSz = intToken % 8 == 0 ? intToken : intToken + (8 - (intToken % 8));
-                LOG(LOG_NOTICE, 0, "Config (%s): Hash table size for quickleave is %d.", tmpPtr->dhtSz);
+                tmpPtr->dhtSz = (intToken + (8 - (intToken % 8))) / 8;
+                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", tmpPtr->dhtSz * 8);
             }
 
         } else if (strcmp(" proxylocalmc", token) == 0) {
@@ -703,8 +703,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_NOTICE, 0, "Config: Group for cli access: '%s'.", conf.group->gr_name);
 
         } else if (strcmp(" mctables", token) == 0 && INTTOKEN && (STARTUP || (token[1] = '\0'))) {
-            conf.mcTables = intToken < 1 || intToken > 65536 ? DEFAULT_ROUTE_TABLES : intToken;
-            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", conf.mcTables);
+            conf.mcTables = intToken < 1 || intToken > 16 ? DEFAULT_ROUTE_TABLES : intToken;
+            LOG(LOG_NOTICE, 0, "Config: %d multicast table hash entries.", 1 << conf.mcTables);
 
         } else if (strcmp(" kbufsize", token) == 0 && INTTOKEN) {
             conf.kBufsz = intToken > 0 && intToken < 65536 ? intToken : K_BUF_SIZE;
@@ -735,11 +735,11 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" defaulthashtablesize", token) == 0 && INTTOKEN) {
-            if (intToken < 8 || intToken > 65536)
-                LOG(LOG_WARNING, 0, "Config: Default Hash Table size must be 8 to 65536 bytes (multiples of 8).");
+            if (intToken < 8 || intToken > 33554432)
+                LOG(LOG_WARNING, 0, "Config: Default Hash Table size must be 8 to 33554432 bytes (multiples of 8).");
             else {
-                conf.dHostsHTSize = intToken % 8 == 0 ? intToken : intToken + (8 - (intToken % 8));
-                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", conf.dHostsHTSize);
+                conf.dHostsHTSize = (intToken + (8 - (intToken % 8))) / 8;
+                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", conf.dHostsHTSize * 8);
             }
 
         } else if (strcmp(" defaultupdown", token) == 0) {

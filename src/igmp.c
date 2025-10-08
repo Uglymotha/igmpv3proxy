@@ -172,13 +172,6 @@ void acceptIgmp(int fd) {
             if (checkIgmp(IfDp, src, dst, IF_STATE_UPDOWNSTREAM))
                 activateRoute(IfDp, NULL, src, dst, true);
             return;
-#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-        case IGMPMSG_BW_UPCALL:
-            if (IfDp->conf->bwControl > 0)
-                processBwUpcall((struct bw_upcall *)(rcv_buf + sizeof(struct igmpmsg)),
-                               ((recvlen - sizeof(struct igmpmsg)) / sizeof(struct bw_upcall)));
-            return;
-#endif
 #ifdef IGMPMSG_WRONGVIF
         case IGMPMSG_WRONGVIF:
             LOG(LOG_WARNING, 0, "WRONGVIF Upcall for Src %s Dst %s on %s.",

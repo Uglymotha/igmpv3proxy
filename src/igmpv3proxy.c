@@ -55,6 +55,7 @@ struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
 const struct timespec nto = { 0, 0 };
 int                   mrt_tbl = -1;
 struct chld           chld = { 0 };
+uint32_t              vifcount = 0, upvifcount = 0, downvifcount = 0;
 
 /**
 *   Program main method. Is invoked when the program is started
@@ -114,7 +115,7 @@ int main(int ArgCn, char *ArgVc[]) {
                         h = 'h';
                     }
                     if (strlen(optarg) > 0)
-                        strncat(strcat(cmd, " "), optarg, IF_NAMESIZE);
+                        strcat(strcat(cmd, " "), optarg);
                 }
                 cliCmd(cmd, tbl);
                 c = (h == 'h' || c == 'r' || c == 'i' || c == 'f') ?
@@ -267,6 +268,8 @@ static void igmpProxyInit(void) {
     LOG(LOG_NOTICE, 0, "Loaded configuration from '%s'.", CONF->configFilePath);
 
     if (STARTUP) {
+        if (! CONF->user && !(CONF->user = getpwuid(0)))
+            LOG(LOG_ERR, 1, "Failed to get group for %d.", CONF->user ? CONF->user->pw_gid : 0);
         if (! CONF->group && !(CONF->group = getgrgid(CONF->user ? CONF->user->pw_gid : 0)))
             LOG(LOG_ERR, 1, "Failed to get group for %d.", CONF->user ? CONF->user->pw_gid : 0);
         unsigned int uid = CONF->user ? CONF->user->pw_uid : 0, gid = CONF->group->gr_gid;
@@ -314,11 +317,11 @@ static void igmpProxyInit(void) {
         // Finally check log file permissions in case we need to run as user.
         if (CONF->logFilePath) {
             LOG(LOG_ERR, 0, "Changing ownership of %s to %s:%s.", CONF->logFilePath, CONF->user->pw_name, CONF->group->gr_name);
-            if (chown(CONF->logFilePath, uid, gid) || chmod(CONF->logFilePath, 0640))
+            if (chown(CONF->logFilePath, uid, gid) || chmod(CONF->logFilePath, 0640)) {
                 LOG(LOG_ERR, 1, "Failed to chown log file %s to %d:%d.", CONF->logFilePath, uid, gid);
+            }
         }
     }
-
     initIgmp(1);
     initCli(1);
     rebuildIfVc(NULL);

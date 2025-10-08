@@ -52,7 +52,6 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
     if (start == 0 || start == 2) {
         // Remove all queries, timers and reset all IGMP status for interface.
         LOG(LOG_NOTICE, 0, "Stopping querier process on %s", IfDp->Name);
-        delQuery(IfDp, NULL, NULL, NULL);
         if ( (SHUTDOWN && IS_DOWNSTREAM(IfDp->state)) ||
              (IS_DOWNSTREAM(IF_OLDSTATE(IfDp)) && !IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))) {
             LOG(LOG_INFO, 0, "Leaving all routers and all igmp groups on %s", IfDp->Name);
@@ -84,107 +83,96 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
 }
 
 /**
-*   Adds a source to list of sources to query. Toggles appropriate flags and adds to qlst array.
+*   Adds a source to list of sources to query. Toggles appropriate flags and adds to qry.
 */
-inline struct qlst *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash) {
-    uint32_t       nsrcs = ! qlst ? 0 : qlst->nsrcs[1] ? qlst->nsrcs[1] : qlst->nsrcs[0];
-    struct IfDesc *If;
-    LOG(LOG_DEBUG, 0, "%s:%s on %s (%x:0x%04x)", inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), IfDp->Name, qlst, srcHash);
+inline struct qry *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qry *qry) {
+    uint32_t       nsrcs = ! qry ? 0 : qry->nsrcs[1] ? qry->nsrcs[1] : qry->nsrcs[0], ix = IfDp->dvifix;
+    LOG(LOG_DEBUG, 0, "%s:%s on %s (0x%08x)", inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), IfDp->Name, qry);
 
     // Add source to query list, prevent duplicates.
-    if (IS_SET(src, qry, IfDp)) {
+    if (src->dvif[ix].vp->qry) {
         LOG(LOG_INFO, 0, "Already querying %s:%s on %s.", inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), IfDp->Name);
-    } else if (NOT_SET(src, lm, IfDp) && (nsrcs == 0 || qlst->src[qlst->nsrcs[0] - 1]->ip != src->ip)) {
-        if (IQUERY || (qlst && (qlst->type & (1 << 3)))) {
+    } else if (!src->dvif[ix].vp->lm && (nsrcs == 0 || qry->src[qry->nsrcs[0] - 1]->ip != src->ip)) {
+        if (IQUERY || (qry && (qry->type & (1 << 3)))) {
             // In case source is in running query return.
             // Add to source to the query list. Allocate memory per 32 sources.
             LOG(LOG_INFO, 0, "Adding source %s to query list for %s (%d).",
                 inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), nsrcs + 1);
-            if (!(qlst && qlst->nsrcs[1]) && (nsrcs % 32) == 0)
-                _recalloc(qlst, qry, QRYSZ(nsrcs), nsrcs ? QRYSZ(nsrcs - 1) : 0);  // Freed by delQuery().
+            if (!(qry && qry->nsrcs[1]) && (nsrcs % 32) == 0)
+                _recalloc(qry, qry, QRYSZ(nsrcs), nsrcs ? QRYSZ(nsrcs - 1) : 0);  // Freed by delQuery().
             if (nsrcs == 0)
-                *qlst = (struct qlst)
-                        {NULL, NULL, src->mct, NULL, 0, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0, {0}};
-            BIT_SET(src->vifB.d, IfDp->index);
-            BIT_SET(src->vifB.qry, IfDp->index);
-            BIT_SET(src->vifB.lm, IfDp->index);
-            src->vifB.age[IfDp->index] = qlst->misc;
-            qlst->src[qlst->nsrcs[0]++] = src;
+                *qry = (struct qry){IfDp, src->mct, (intptr_t)NULL, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount,
+                                    0, src->mct->group, {0}};
+            src->dvif[ix].vp->qry = qry;
+            src->dvif[ix].vp->lm = 1;
+            src->dvif[ix].vp->age = qry->misc;
+            qry->src[qry->nsrcs[0]++] = src;
         }
     }
-    return qlst;
+    return qry;
 }
 
 /**
 *   Process a group specific query received from other querier.
 */
 inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint32_t nsrcs, uint8_t ver) {
-    struct mcTable  *mct = findGroup(query->igmp_group.s_addr, false);
+    struct mct *mct = findGroup(IfDp, query->igmp_group.s_addr, 1, false);
 
     // If no group found for query, not active or denied on interface return.
-    if (! mct || NOT_SET(mct, d, IfDp)) {
+    if (! mct || ! mct->dvif[IfDp->dvifix].vp) {
         LOG(LOG_DEBUG, 0, "Query on %s for %s, but %s.", IfDp->Name, inetFmt(query->igmp_group.s_addr, 0),
             ! mct ? "not found" : "not active");
-    } else if (nsrcs == 0 && NOT_SET(mct, lm, IfDp)) {
+    } else if (nsrcs == 0 && !mct->dvif[IfDp->dvifix].vp->lm) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "Group specific query for %s on %s.", inetFmt(mct->group, 0), IfDp->Name);
-        startQuery(IfDp, &(struct qlst){ NULL, NULL, mct, NULL, 0, (1 << 1), query->igmp_code,
-                                         ver == 3 ? (query->igmp_misc & ~0x8) : IfDp->conf->qry.lmCount, 0, 0, {0} });
+        startQuery(IfDp, &(struct qry){ IfDp, mct, (intptr_t)NULL, 0, (1 << 1), query->igmp_code,
+                                         ver == 3 ? (query->igmp_misc & ~0x8) : 0, mct->group, {0} });
     } else if (nsrcs > 0) {
         // Sort array of sources in query.
-        struct qlst *qlst = NULL;
-        struct src  *src  = mct->sources;
+        struct qry *qry = NULL;
+        struct src *src  = mct->sources;
         nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
-        _calloc(qlst, 1, qry, QRYSZ(nsrcs));   // Freed by delQuery().
-        *qlst = (struct qlst)
-                {NULL, NULL, src->mct, NULL, 0, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount, 0, 0, {0, nsrcs}};
+        _calloc(qry, 1, qry, QRYSZ(nsrcs));   // Freed by delQuery().
+        *qry = (struct qry){IfDp, mct, (intptr_t)NULL, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount,
+                            0, mct->group, {0, nsrcs}};
         FOR_IF((uint32_t i = 0; src && i < nsrcs; src = src->next), src->ip >= query->igmp_src[i].s_addr) {
             if (src->ip == query->igmp_src[i].s_addr)
-                qlst = addSrcToQlst(src, IfDp, qlst, (uint32_t)-1);
+                qry = addSrcToQlst(src, IfDp, qry);
             i++;
         }
         LOG(LOG_INFO, 0, "Group group and source specific query for %s with %d sources on %s.",
             inetFmt(mct->group, 0), nsrcs, IfDp->Name);
-        qlst->type |= (1 << 3);  // Other querier.
-        startQuery(IfDp, qlst);
+        qry->type |= (1 << 3);  // Other querier.
+        startQuery(IfDp, qry);
     }
 }
 
 /**
 *   Start a query for last member aging on interface.
 */
-inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
-    struct qlst * iqlst = IfDp->qLst;
-    // We may be called without qlst, in case of gssq which had no valid sources to query.
-    if (! qlst || (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, qry, IfDp))) {
-        if (qlst)
-            LOG(LOG_NOTICE, 0, "Already querying group %s on %s", inetFmt(qlst->mct->group, 0), IfDp->Name);
+inline void startQuery(struct IfDesc *IfDp, struct qry *qry) {
+    // We may be called without qry, in case of gssq which had no valid sources to query.
+    if (! qry || (BIT_TST(qry->type, 1) && qry->mct->dvif[IfDp->dvifix].vp->qry)) {
+        if (qry)
+            LOG(LOG_NOTICE, 0, "Already querying group %s on %s", inetFmt(qry->mct->group, 0), IfDp->Name);
         return;
     }
-
-    qlst->group = qlst->mct->group;
-    for (struct ifMct *imc = IfDp->dMct; imc; qlst->imc = imc, imc = imc->IfDp != IfDp ? imc->next : NULL);
-    if (qlst->nsrcs[0] == 0) {
-        struct qlst *qlst1;
-        _malloc(qlst1, qry, QLSZ);  // Freed by delQuery().
-        memcpy(qlst1, qlst, sizeof(struct qlst));
-        qlst = qlst1;
-        LOG(LOG_INFO, 0, "#%d: Querying group %s on %s", qC + 1, inetFmt(qlst->mct->group, 0), IfDp->Name);
-        BIT_SET(qlst->mct->vifB.qry, IfDp->index);
-        BIT_SET(qlst->mct->vifB.lm, IfDp->index);
-        qlst->mct->vifB.age[IfDp->index] = qlst->misc;
+    if (qry->nsrcs[0] == 0) {
+        struct qry *qry1;
+        _calloc(qry1, 1, qry, QSZ);  // Freed by delQuery().
+        memcpy(qry1, qry, sizeof(struct qry));
+        qry = qry1;
+        LOG(LOG_INFO, 0, "#%d: Querying group %s on %s", qC + 1, inetFmt(qry->mct->group, 0), IfDp->Name);
+        qry->mct->dvif[IfDp->dvifix].vp->qry = qry;
+        qry->mct->dvif[IfDp->dvifix].vp->lm = 1;
+        qry->mct->dvif[IfDp->dvifix].vp->age = qry->misc;
     } else
         LOG(LOG_INFO, 0, "#%d: Querying %d sources for %s on %s.",
-            qC + 1, qlst->nsrcs[0], inetFmt(qlst->mct->group, 0), IfDp->Name);
+            qC + 1, qry->nsrcs[0], inetFmt(qry->mct->group, 0), IfDp->Name);
     // Allocate and assign new querier.
-    if (IfDp->qLst) {
-        qlst->next = IfDp->qLst;
-        iqlst->prev = qlst;
-    }
-    IfDp->qLst = qlst;
     qC++;
-    qlst->nsrcs[1] = qlst->nsrcs[0];
-    groupSpecificQuery(qlst);
+    qry->nsrcs[1] = qry->nsrcs[0];
+    groupSpecificQuery(qry);
 }
 
 /**
@@ -194,103 +182,98 @@ inline void startQuery(struct IfDesc *IfDp, struct qlst *qlst) {
 *   bit 2 - Group and Source Specific query
 *   bit 3 - Other Querier
 */
-void groupSpecificQuery(struct qlst *qlst) {
+void groupSpecificQuery(struct qry *qry) {
     struct igmpv3_query *query = NULL, *query1 = NULL, *query2 = NULL;
-    struct IfDesc       *IfDp = qlst->imc->IfDp;
-    uint32_t             i = 0, nsrcs = qlst->nsrcs[1], group = qlst->group,
+    struct IfDesc       *IfDp = qry->IfDp;
+    uint32_t             i = 0, nsrcs = qry->nsrcs[1], group = qry->group, ix = IfDp->dvifix,
                          size = sizeof(struct igmpv3_query) + nsrcs * sizeof(struct in_addr);
-    LOG(LOG_DEBUG, 0, "%s:%s #%d (%d:%d:%d)", IfDp->Name, inetFmt(group, 0), nsrcs, qlst->type, qlst->misc, qlst->cnt);
+    LOG(LOG_DEBUG, 0, "%s:%s #%d (%d:%d:%d)", IfDp->Name, inetFmt(group, 0), nsrcs, qry->type, qry->misc, qry->cnt);
 
     // Do aging upon reentry.
-    if (++qlst->cnt > 1) {
-        if (BIT_TST(qlst->type, 1)) {
+    if (++qry->cnt > 1) {
+        if (BIT_TST(qry->type, 1)) {
             // Age group in case of GSQ.
-            if (NOT_SET(qlst->mct, lm, IfDp)) {
+            if (!qry->mct->dvif[qry->IfDp->dvifix].vp->lm) {
                 LOG(LOG_INFO, 0, "%s no longer in last member state on %s.", inetFmt(group, 0), IfDp->Name);
-                BIT_SET(qlst->type, 0);  // Suppress router processing flag for next query.
-                if (BIT_TST(qlst->type, 3))
+                BIT_SET(qry->type, 0);  // Suppress router processing flag for next query.
+                if (BIT_TST(qry->type, 3))
                     // If aging for other querier, we're done.
-                    qlst->cnt = qlst->misc + 1;
-            } else if (--qlst->mct->vifB.age[IfDp->index] == 0)
-                qlst->cnt = qlst->misc + 1;  // Make sure we're done.
-        } else if (BIT_TST(qlst->type, 2)) {
+                    qry->cnt = qry->misc + 1;
+            } else if (--qry->mct->dvif[ix].vp->age == 0)
+                qry->cnt = qry->misc + 1;  // Make sure we're done.
+        } else if (BIT_TST(qry->type, 2)) {
             // Age sources in case of GSSQ. Create two queries (1 - sources still last member 2 - active source).
             _malloc(query1, var, size);  // Freed by self.
             _malloc(query2, var, size);  // Freed by self.
-            *query1 = (struct igmpv3_query){ qlst->type      , qlst->code, 0, {group}, qlst->misc, 0, 0 };
-            *query2 = (struct igmpv3_query){ qlst->type | 0x1, qlst->code, 0, {group}, qlst->misc, 0, 0 };
-            while (i < qlst->nsrcs[1]) {
-                if (NOT_SET(qlst->src[i], lm, IfDp) && IS_SET(qlst->src[i], d, IfDp)) {
+            *query1 = (struct igmpv3_query){ qry->type      , qry->code, 0, {group}, qry->misc, 0, 0 };
+            *query2 = (struct igmpv3_query){ qry->type | 0x1, qry->code, 0, {group}, qry->misc, 0, 0 };
+            while (i < qry->nsrcs[1]) {
+                if (!qry->src[i]->dvif[ix].vp->lm && qry->src[i]->dvif[ix].vp) {
                     // Source no longer in last member state.
                     LOG(LOG_INFO, 0, "Source %s for group %s no longer in last member state on %s.",
-                        inetFmt(qlst->src[i]->ip, 0), inetFmt(group, 0), IfDp->Name);
-                    query2->igmp_src[query2->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
-                } else if (qlst->src[i]->vifB.age[IfDp->index] > 0 && --qlst->src[i]->vifB.age[IfDp->index] == 0) {
+                        inetFmt(qry->src[i]->ip, 0), inetFmt(group, 0), IfDp->Name);
+                    query2->igmp_src[query2->igmp_nsrcs++].s_addr = qry->src[i++]->ip;
+                } else if (qry->src[i]->dvif[ix].vp->age > 0 && --qry->src[i]->dvif[ix].vp->age == 0) {
                     // Aged source in include mode should be removed.
                     // In exclude mode sources should be kept and MFC updated, as traffic should no longer be forwarded.
-                    BIT_CLR(qlst->src[i]->vifB.qry, IfDp->index);
-                    BIT_CLR(qlst->src[i]->vifB.lm, IfDp->index);
-                    LOG(LOG_INFO, 0, strFmt(IS_IN(qlst->mct, IfDp), "Removing inactive source %s from group %s on %s.",
-                                            "Source %s from group %s on %s expired.", inetFmt(qlst->src[i]->ip, 0),
+                    qry->src[i]->dvif[ix].vp->qry = NULL;
+                    qry->src[i]->dvif[ix].vp->lm = 0;
+                    LOG(LOG_INFO, 0, strFmt(IS_IN(qry->mct, IfDp), "Removing inactive source %s from group %s on %s.",
+                                            "Source %s from group %s on %s expired.", inetFmt(qry->src[i]->ip, 0),
                                             inetFmt(group, 0), IfDp->Name));
-                    delSrc(qlst->src[i], IfDp, 1, IS_EX(qlst->mct, IfDp) ? 2 : 0, IS_IN(qlst->mct, IfDp), (uint32_t)-1);
-                    qlst->src[i] = qlst->src[--qlst->nsrcs[1]];
-                } else if (IS_SET(qlst->src[i], d, IfDp))
+                    delSrc(qry->src[i], IfDp, 1, IS_EX(qry->mct, IfDp) ? 2 : 0, IS_IN(qry->mct, IfDp), NHASH);
+                    qry->src[i] = qry->src[--qry->nsrcs[1]];
+                } else if (qry->src[i]->dvif[ix].vp)
                     // Source still in last member state, add to  query.
-                    query1->igmp_src[query1->igmp_nsrcs++].s_addr = qlst->src[i++]->ip;
+                    query1->igmp_src[query1->igmp_nsrcs++].s_addr = qry->src[i++]->ip;
             }
-            if (BIT_TST(qlst->type, 3) && qlst->nsrcs[1] == 0)
+            if (BIT_TST(qry->type, 3) && qry->nsrcs[1] == 0)
                 // If aging for other querier and no sources left to age, we're done.
-                qlst->cnt = qlst->misc + 1;
+                qry->cnt = qry->misc + 1;
         }
     }
 
-    // Send queries if not aging for other querier. Use qlst in case of group query, or first group and source query.
-    if (!BIT_TST(qlst->type, 3) && (   (qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 1))
-                                    || (qlst->cnt == 1          && BIT_TST(qlst->type, 2)))) {
-        _malloc(query, var, sizeof(struct igmpv3_query) + qlst->nsrcs[1] * sizeof(struct in_addr));  // Freed by Self
-        *query = (struct igmpv3_query){ qlst->type, qlst->code, 0, {group}, qlst->misc, 0, qlst->nsrcs[1] };
-        if (BIT_TST(qlst->type, 2))
-            for (uint32_t i = 0; i < qlst->nsrcs[1]; query->igmp_src[i].s_addr = qlst->src[i]->ip, i++);
+    // Send queries if not aging for other querier. Use qry in case of group query, or first group and source query.
+    if (!BIT_TST(qry->type, 3) && (   (qry->cnt <= qry->misc && BIT_TST(qry->type, 1))
+                                    || (qry->cnt == 1        && BIT_TST(qry->type, 2)))) {
+        _malloc(query, var, sizeof(struct igmpv3_query) + qry->nsrcs[1] * sizeof(struct in_addr));  // Freed by Self
+        *query = (struct igmpv3_query){ qry->type, qry->code, 0, {group}, qry->misc, 0, qry->nsrcs[1] };
+        IF_FOR(BIT_TST(qry->type, 2), (uint32_t i = 0; i < qry->nsrcs[1]; query->igmp_src[i].s_addr = qry->src[i]->ip, i++));
         sendIgmp(IfDp, query);
-        _free(query, var, sizeof(struct igmpv3_query) + qlst->nsrcs[1] * sizeof(struct in_addr));  // Alloced by Self
-    } else if (!BIT_TST(qlst->type, 3) && qlst->cnt <= qlst->misc && BIT_TST(qlst->type, 2)) {
+        _free(query, var, sizeof(struct igmpv3_query) + qry->nsrcs[1] * sizeof(struct in_addr));  // Alloced by Self
+    } else if (!BIT_TST(qry->type, 3) && qry->cnt <= qry->misc && BIT_TST(qry->type, 2)) {
         if (query1 && query1->igmp_nsrcs)
             sendIgmp(IfDp, query1);
         if (query2 && query2->igmp_nsrcs)
             sendIgmp(IfDp, query2);
     }
-    if (qlst->cnt <= qlst->misc && (   (BIT_TST(qlst->type, 1) && IS_SET(qlst->mct, lm, IfDp))
-                                    || (BIT_TST(qlst->type, 2) && qlst->nsrcs[1] > 0))) {
+    if (qry->cnt <= qry->misc && (   (BIT_TST(qry->type, 1) && qry->mct->dvif[ix].vp->lm)
+                                    || (BIT_TST(qry->type, 2) && qry->nsrcs[1] > 0))) {
         // Set timer for next round if there is still aging to do.
-        uint32_t timeout = (BIT_TST(qlst->type, 3)      ? qlst->code
+        uint32_t timeout = (BIT_TST(qry->type, 3)      ? qry->code
                          :  IfDp->querier.ver == 3      ? getIgmpExp(IfDp->conf->qry.lmInterval, 0)
                          :  IfDp->conf->qry.lmInterval) + 1;
-        qlst->tid = timerSet(timeout, strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qlst->nsrcs[1]),
-                             groupSpecificQuery, qlst);
+        qry->tid = timerSet(timeout, strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qry->nsrcs[1]),
+                             groupSpecificQuery, qry);
     } else {
-        BIT_CLR(qlst->mct->vifB.qry, IfDp->index);
-        if (qlst->cnt >= qlst->misc) {
-            if (BIT_TST(qlst->type, 2) && !qlst->mct->mode && qlst->mct->nsrcs[1] == 0) {
-                for (qlst->src[0] = qlst->mct->sources;
-                     qlst->src[0] && (NOT_SET(qlst->src[0], d, IfDp) || qlst->src[0]->vifB.age[IfDp->index] == 0);
-                     qlst->src[0] = qlst->src[0]->next);
-                if (! qlst->src[0]) {
-                    // Group in include mode has no more sources, remove.
-                    LOG(LOG_DEBUG, 0, "Removing group %s from %s.", inetFmt(group, 0), IfDp->Name);
-                    delGroup(qlst->mct, IfDp, qlst->imc, 1);
-                }
-            } else if (BIT_TST(qlst->type, 1) && qlst->mct->vifB.age[IfDp->index] == 0
-                                              && IS_SET(qlst->mct, lm, IfDp) && !BIT_TST(qlst->mct->v2Bits, IfDp->index)
-                                              && !BIT_TST(qlst->mct->v1Bits, IfDp->index)) {
+        qry->mct->dvif[ix].vp->qry = NULL;
+        if (qry->cnt >= qry->misc) {
+            if (BIT_TST(qry->type, 2) && !qry->mct->dvif[ix].vp->mode && ! qry->mct->firstsrc[ix]) {
+                // Group in include mode has no more sources, remove.
+                LOG(LOG_DEBUG, 0, "Removing group %s on %s.", inetFmt(group, 0), IfDp->Name);
+                delGroup(qry->mct, IfDp, 1);
+            } else if (BIT_TST(qry->type, 1) && qry->mct->dvif[ix].vp->age == 0
+                                             && (qry->mct->dvif[ix].vp->lm && qry->mct->dvif[ix].vp->v1age == -1)
+                                             && qry->mct->dvif[ix].vp->v1age == -1) {
                 // Group in exclude mode has aged, switch to include.
                 LOG(LOG_DEBUG, 0, "Switching group %s to include on %s.", inetFmt(group, 0),
                     IfDp->Name);
-                toInclude(qlst->imc);
+                toInclude(qry->mct, IfDp);
             }
         } else
             LOG(LOG_INFO, 0, "Done querying %s/%d on %s.", inetFmt(group, 0), nsrcs, IfDp->Name);
-        delQuery(IfDp, qlst, NULL, NULL);
+        qry->tid = (intptr_t)NULL;
+        delQuery(qry, NULL, NULL);
     }
 
     if (query1)
@@ -305,43 +288,29 @@ void groupSpecificQuery(struct qlst *qlst) {
 *     IfDp / ! mct    - Removes all queries on specified interface.
 *     qry             - Removes specific query.
 *     mct / mct & src - Removes all queries for (source within) group from interface.
-*   Do NOT use ql->mct here, it may have already been deleted by delGroup().
+*   Do NOT use qry->mct here, it may have already been deleted by delGroup().
 */
-void delQuery(struct IfDesc *IfDp, struct qlst *qry, struct mcTable *mct, struct src *src) {
-    struct qlst    *nql;
-    if (qry)
-        mct = qry->mct;
-
-    for (struct qlst *ql = qry ? qry : IfDp->qLst; ql; ql = qry ? NULL : nql) {
-        if (qry || ! mct || ql->mct == mct) {
-            if (src) {
-                uint32_t i;
-                for (i = 0; ql && i < ql->nsrcs[1] && ql->src[i] != src; i++);
-                if (ql && i < ql->nsrcs[1]) {
-                    LOG(LOG_INFO, 0, "Removing source %s from query for group %s on %s.",
-                        inetFmt(ql->src[i]->ip, 0), inetFmt(ql->mct->group, 0), ql->imc->IfDp->Name);
-                    ql->src[i] = ql->src[--ql->nsrcs[1]];
-                }
-            } else if (BIT_TST(ql->type, 1)) {
-                BIT_CLR(ql->mct->vifB.lm, IfDp->index);
-                BIT_CLR(ql->mct->vifB.qry, IfDp->index);
-            } else for (uint32_t i = 0; i < ql->nsrcs[1]; BIT_CLR(ql->src[i]->vifB.lm, IfDp->index),
-                                                          BIT_CLR(ql->src[i]->vifB.qry, IfDp->index), i++);
-            nql = ql->next;
-            if (! src || (!ql->nsrcs[1] && BIT_TST(ql->type, 2))) {
-                LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(ql->group, 0), IfDp->Name);
-                if (! qry)
-                    timerClear(ql->tid, false);
-                if (ql->next)
-                    ql->next->prev = ql->prev;
-                if (ql->prev)
-                    ql->prev->next = ql->next;
-                if (IfDp->qLst == ql)
-                    IfDp->qLst = ql->next;
-                qC--;
-                // Alloced by addSrcToQlst(), processGroupQuery() or startQuery()
-                _free(ql, qry, ql->nsrcs[0] ? QRYSZ(ql->nsrcs[0]) : QLSZ);
-            }
+void delQuery(struct qry *qry, struct mct *mct, struct src *src) {
+    if (src) {
+        uint32_t i;
+        for (i = 0; i < qry->nsrcs[1] && qry->src[i] != src; i++);
+        if (i < qry->nsrcs[1]) {
+            LOG(LOG_INFO, 0, "Removing source %s from query for group %s on %s.",
+                inetFmt(qry->src[i]->ip, 0), inetFmt(qry->group, 0), qry->IfDp->Name);
+            qry->src[i] = qry->src[--qry->nsrcs[1]];
         }
+        src->dvif[qry->IfDp->dvifix].vp->lm = 0;
+        src->dvif[qry->IfDp->dvifix].vp->qry = NULL;
+    } else if (mct) {
+        qry->mct->dvif[qry->IfDp->dvifix].vp->lm = 0;
+        qry->mct->dvif[qry->IfDp->dvifix].vp->qry = NULL;
+    }
+    if (! src || !qry->nsrcs[1]) {
+        LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(qry->group, 0), qry->IfDp->Name);
+        if (qry->tid)
+            timerClear(qry->tid, false);
+        qC--;
+        // Alloced by addSrcToQlst(), processGroupQuery() or startQuery()
+        _free(qry, qry, qry->nsrcs[0] ? QRYSZ(qry->nsrcs[0]) : QSZ);
     }
 }

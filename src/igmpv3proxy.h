@@ -219,7 +219,7 @@ struct vifConfig {
     struct filters     *rates;                          // Ratelimiters for interface
     struct vifConfig   *next;
 };
-#define VIFSZ (sizeof(struct vifConfig))
+#define VIFCSZ (sizeof(struct vifConfig))
 #define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->InterfaceState, CONF->ssmRange, CONF->threshold,      \
                                             CONF->rateLimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,         \
                                             CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,            \
@@ -248,12 +248,14 @@ struct querier {                                        // igmp querier status f
                                         IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 // Interfaces configuration.
+typedef unsigned short vif_t;
 struct ifStats {
     uint64_t                      iBytes, oBytes;        // Total bytes sent/received on interface
     uint64_t                      iRate,  oRate;         // Rate in bytes / s
     uint64_t                      rqCnt;                 // IGMP Received Query Count
     uint64_t                      sqCnt;                 // IGMP Sent Query Count
 };
+
 struct IfDesc {
     char                          Name[IF_NAMESIZE];
     struct subnet                 ip;                    // Primary IP
@@ -266,18 +268,22 @@ struct IfDesc {
     struct querier                querier;               // igmp querier for interface
     struct ifStats                stats;                 // Interface statisticas and counters
     unsigned int                  sysidx;                // Interface system index
-    int8_t                        index;                 // MCast vif index
-    int8_t                        dhtix;                 // dHosts Hash Table index
+    vif_t                         index;                 // MCast kernel vif index
+    vif_t                         dvifix;                // Downstream vif index
+    vif_t                         uvifix;                // Upstream vif index
     intptr_t                      bwTimer;               // BW Control timerd id
-    void                         *dMct;                  // Pointers to active downstream groups for vif
-    void                         *uMct;                  // Pointers to active upstream groups for vif
-    void                         *qLst;                  // List of active queries on interface
-    struct IfDesc                *nextvif;               // List of active multicast routing vifs.
-    struct IfDesc                *next;
+    void                         *dmct;                  // Pointer to fisrt active downstream group for vif
+    void                         *umct;                  // Pointer to fisrt active downstream group for vif
+    void                         *mfc;                   // Pointer to first active upstream source for vif
+    struct IfDesc                *nextvif;               // List of all active vifs
+    struct IfDesc                *nextDvif;              // List of active downstream vifs
+    struct IfDesc                *nextUvif;              // List of active upstream vifs
+    struct IfDesc                *next;                  // List of interfaces in system
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0}, \
-                                        {0, 0, 0, 0}, 0, -1, -1, (intptr_t)NULL, NULL, NULL, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0},   \
+                                        {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1, (vif_t)-1, (vif_t)-1, (intptr_t)NULL, NULL, \
+                                        NULL, NULL, NULL, NULL, NULL, IfDescL }
 
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
@@ -317,9 +323,9 @@ struct IfDesc {
 #define IP_HEADER_RAOPT_LEN 24
 
 // Route parameters.
-#define DEFAULT_MAX_ORIGINS    64                       // Maximun nr of group sources.
+#define DEFAULT_MAX_ORIGINS    65536                    // Maximun nr of group sources.
 #define DEFAULT_HASHTABLE_SIZE 32                       // Default host tracking hashtable size.
-#define DEFAULT_ROUTE_TABLES   32                       // Default hash table size for route table.
+#define DEFAULT_ROUTE_TABLES   6                        // Default hash table size (2^n) for route table.
 
 // Signal Handling.
 #define STARTING     ((uint64_t)1 << 63)
@@ -382,17 +388,20 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 getMemStats(0, -1);                                                                               \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid malloc(%p) of size %d in %s() (%s:%d)", p, s, __func__, __FILE__, \
                                     __LINE__); }                                                                                  \
+                              LOG(LOG_DEBUG, 0, "malloc(%s:%x, %s:%d, %s:%d)", #p, p, #m, memuse.m, #s, s);                       \
                               p;})
 #define _calloc(p,n,m,s)    ({if ((errno = 0) || ! (p = calloc(n, s)) || (memuse.m += (n * (s))) <= 0 || (++memalloc.m) <= 0) {   \
                                 getMemStats(0, -1);                                                                               \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid calloc(%p) of size %d in %s() (%s:%d)", p, s, __func__, __FILE__, \
                                     __LINE__); }                                                                                  \
+                              LOG(LOG_DEBUG, 0, "calloc(%s:%x, %d, %s:%d, %s:%d)", #p, p, n, #m, memuse.m, #s, s);                \
                               p;})
 #define _realloc(p,m,sp,sm) ({if ((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
                                 || (memuse.m += (-(sm) + (sp))) <= 0 || (++memalloc.m) <= 0) {                                    \
                                 getMemStats(0, -1);                                                                               \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid realloc(%p) of size %d-%d in %s() (%s:%d)", p, sp, sm, __func__,  \
                                     __FILE__, __LINE__); }                                                                        \
+                              LOG(LOG_DEBUG, 0, "realloc(%s:%x, %s:%d, -%d+%d:-%s+%s)", #p, p, #m, memuse.m, sm, sp, #sm, #sp);   \
                               p;})
 #define _recalloc(p,m,sp,sm) ({if((errno = 0) || (p && (++memfree.m) <= 0) || ! (p = realloc(p, sp))                              \
                                 || (! memset((char *)p + (sm), 0, (sp) - (sm)) && (sp) > (sm))                                    \
@@ -400,12 +409,15 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 getMemStats(0,-1);                                                                                \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid recalloc(%p) of size %d-%d in %s() (%s:%d)", p, sp, sm, __func__, \
                                     __FILE__, __LINE__); }                                                                        \
+                               LOG(LOG_DEBUG, 0, "recalloc(%s:%x, %s:%d, -%d+%d:-%s+%s)", #p, p, #m, memuse.m, sm, sp, #sm, #sp); \
                                p;})
 #define _free(p, m, s)     {if ((p) && ((errno = 0) || (s) <= 0 || (memuse.m -= (s)) < 0 || (++memfree.m) <= 0)) {                \
                                 getMemStats(0, -1);                                                                               \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid free(%p) size %d in %s() (%s:%d)", p, s, __func__, __FILE__,      \
                                     __LINE__); }                                                                                  \
-                            if (p) { free(p); p = NULL; }                                                                         \
+                            if (p) {                                                                                              \
+                                LOG(LOG_DEBUG, 0, "free(%s:%x, %s:%d, %s:%d)", #p, p, #m, memuse.m, #s, s);                       \
+                                free(p); p = NULL;}                                                                               \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 
 // Bit manipulation macros.
@@ -479,6 +491,9 @@ struct igmpv3_report {
 #define IGMPV3_MINLEN            12
 #define IGMP_LOCAL(x)            ((ntohl(x) & 0xFFFFFF00) == 0xE0000000)
 #define DEFAULT_SSMRANGE         "232.0.0.0/8"
+#ifndef MAXVIFS
+#define MAXVIFS ((usigned short)-1 - 2)
+#endif
 
 //##################################################################################
 //  Global Variables.
@@ -501,7 +516,7 @@ extern struct chld      chld;
 extern int              mrt_tbl;
 
 // Upstream vif mask.
-extern uint32_t         uVifs;
+extern uint32_t         vifcount, upvifcount, downvifcount;
 
 // Global IGMP groups.
 extern uint32_t         allhosts_group;                // All hosts addr in net order
@@ -545,25 +560,35 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define        IFL                    *getIfL(false)
-#define        GETIFL(x)              for (x = IFL; x; x = x->next)
-#define        GETIFL_IF(x, y)        GETIFL(x) if (y)
-#define        VIFL                   *getIfL(true)
-#define        GETVIFL(x)             for (x = VIFL; x; x = x->nextvif)
-#define        IF_GETVIFL(y, x)       if (y) GETVIFL(x)
-#define        GETVIFL_IF(x, y)       GETVIFL(x) if (y)
-#define        IF_GETVIFL_IF(x, y, z) if (x) GETVIFL_IF(y, z)
-#define        FINDIX                 0
-#define        FINDSYSIX              1
-#define        FINDNAME               2
-#define        SRCHVIFL               4
-void           freeIfDescL(void);
-void           rebuildIfVc(intptr_t *tid);
-void           buildIfVc(void);
-struct IfDesc **getIfL(bool vifl);
-struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
-void           getIfStats(struct IfDesc *IfDp, int h, int fd);
-void           getIfFilters(struct IfDesc *IfDp, int h, int fd);
+#define         IFL                    *getIfL(false, 0)
+#define         GETIFL(x)               for (x = IFL; x; x = x->next)
+#define         GETIFL_IF(x, y)         GETIFL(x) if (y)
+#define         VIFL                   *getIfL(false, 1)
+#define         DVIFL                  *getIfL(true, 1)
+#define         UVIFL                  *getIfL(true, 0)
+#define         GETVIFL(x)              for (x = VIFL;  x; x = x->nextDvif)
+#define         GETDVIFL(x)             for (x = DVIFL; x; x = x->nextDvif)
+#define         GETUVIFL(x)             for (x = UVIFL; x; x = x->nextUvif)
+#define         IF_GETDVIFL(y, x)       if (y) GETDVIFL(x)
+#define         IF_GETUVIFL(y, x)       if (y) GETUVIFL(x)
+#define         GETVIFL_IF(x, y)        GETVIFL(x) if (y)
+#define         GETDVIFL_IF(x, y)       GETDVIFL(x) if (y)
+#define         GETUVIFL_IF(x, y)       GETUVIFL(x) if (y)
+#define         IF_GETDVIFL_IF(x, y, z) if (x) GETDVIFL_IF(y, z)
+#define         IF_GETUVIFL_IF(x, y, z) if (x) GETUVIFL_IF(y, z)
+#define         FINDIX                  0x1
+#define         FINDSYSIX               0x2
+#define         FINDNAME                0x4
+#define         SRCHVIFL                0x8
+#define         SRCHDVIFL               0x10
+#define         SRCHUVIFL               0x20
+void            freeIfDescL(void);
+void            rebuildIfVc(intptr_t *tid);
+void            buildIfVc(void);
+struct IfDesc **getIfL(bool vifl, int dir);
+struct IfDesc  *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
+void            getIfStats(struct IfDesc *IfDp, int h, int fd);
+void            getIfFilters(struct IfDesc *IfDp, int h, int fd);
 
 /**
 *   igmp.c
@@ -619,8 +644,8 @@ void    k_enableMRouter(void);
 void    k_disableMRouter(void);
 bool    k_addVIF(struct IfDesc *IfDp);
 void    k_delVIF(struct IfDesc *IfDp);
-bool    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttlVc[MAXVIFS]);
-bool    k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp);
+void    k_addMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp, uint8_t ttl[]);
+void    k_delMRoute(uint32_t src, uint32_t group, struct IfDesc *IfDp);
 void    k_deleteUpcall(uint32_t src, uint32_t group);
 
 /**
@@ -632,9 +657,6 @@ void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_g
 void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask, struct IfDesc *IfDp);
-#ifdef HAVE_STRUCT_BW_UPCALL_BU_SRC
-void     processBwUpcall(struct bw_upcall *bwUpc, int nr);
-#endif
 
 /**
 *   querier.c

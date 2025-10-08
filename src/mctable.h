@@ -41,124 +41,142 @@
 #ifndef MCTABLE_H
 #define MCTABLE_H
 
-struct vifFlags {
-    // Generic per vif flags, applies to both groups and sources
-    uint32_t            sd;                       // Filters set flag for downstream
-    uint32_t            d;                        // Active downstream vifs
-    uint32_t            dd;                       // Denied dowstream vifs
-    uint32_t            su;                       // Filters set flag for upstream
-    uint32_t            u;                        // Active upstream vifs for mct, or downstream vifs for src/mfc
-    uint32_t            ud;                       // Denied upstream vifs
-    uint32_t            uj;                       // Upstream membership state (joined in exclude mode)
-    uint32_t            lm;                       // Last member vifs
-    uint32_t            qry;                      // Active query vifs
-    uint8_t             age[MAXVIFS];             // Age value
+struct vif {
+    void               *prev;                     // Previous mct/src for vif
+    void               *next;                     // Next mct/src for vif
+    struct dvif        *vp;                       // Downstream vif parameters
+    uint8_t             s;                        // Filters set flag for vif
+    uint8_t             d;                        // Denied vif
+    uint8_t             j;                        // Upstream joined
+    struct src         *prevmfc;                  // Previous mfc on upstream interface
+    struct src         *nextmfc;                  // Next mfc on upstream interface
+};
+
+struct nvif {
+    vif_t               i;                        // Nr include mode vifs
+    vif_t               e;                        // Nr exclude mode vifs
+    vif_t               d;                        // Nr downstream vifs
+    vif_t               u;                        // Nr upstream vifs
+};
+
+struct mct {
+    // Keeps multicast group and source membership information.
+    struct mct         *prev;                     // Previous group in table.
+    struct mct         *next;                     // Next group in table.
+    struct timespec     stamp;                    // Time group was installed
+    uint32_t            group;                    // The group to route
+    bool                mode;                     // Group upstream filter mode
+    uint32_t            nsrcs[2];                 // Nr of sources, 0 = include mode sources, 1 = origins
+    struct src         *sources;                  // Downstream source list for group
+    struct src        **firstsrc;                 // Per interface first source
+    struct nvif         nvif;                     // Nr of vifs
+    struct vif         *dvif;                     // Downstream vifs for group
+    struct vif         *uvif;                     // Active upstream vifs for group
 };
 
 struct src {
     // Keeps information on sources
-    struct src         *prev;
-    struct src         *next;
-    struct mcTable     *mct;                      // Pointer to group
-    struct mfc         *mfc;                      // Pointer to active MFC
+    struct src         *prev;                     // Previous source in group.
+    struct src         *next;                     // Next source in group
+    struct src         *prevmfc;                  // Previous source with route in kernel
+    struct src         *nextmfc;                  // Next source with route in kernel
+    uint8_t            *ttl;                      // Outgoing vifs ttl
+    struct timespec     stamp;                    // Time src was installed
     uint32_t            ip;                       // Source IP adress
-    struct vifFlags     vifB;
-    uint64_t            **dHostsHT;               // Per Vif Host tracking tables
-};
-
-struct mfc {
-    // Keeps information on upstream sources, the actual routes in the kernel.
-    struct mfc         *prev;
-    struct mfc         *next;
-    struct timespec     stamp;                    // Time Route was installed or last traffic seen
-    struct src         *src;                      // Pointer to source struct
+    struct mct         *mct;                      // Pointer to group
     struct IfDesc      *IfDp;                     // Incoming interface
-    uint8_t             ttlVc[MAXVIFS];           // Outgoing interface tlls
-    uint64_t            bytes;
+    uint64_t            bytes;                    // Incoming data counter
     uint64_t            rate;                     // Bwcontrol counters
+    struct nvif         nvif;                     // Nr of vifs
+    struct vif         *dvif;                     // Active downstream vifs for source
+    struct vif         *uvif;                     // Active upstream vifs for source
 };
 
-struct mcTable {
-    // Keeps multicast group and source membership information.
-    struct mcTable     *prev;                     // Pointer to the previous group in table.
-    struct mcTable     *next;                     // Pointer to the next group in table.
-    uint32_t            group;                    // The group to route
-    uint32_t            nsrcs[2];                 // Nr of sources, 0 = include mode sources, 1 = origins.
-    struct src         *sources;                  // Downstream source list for group
-    struct mfc         *mfc;                      // Active upstream sources for group
-
-    // Keeps the group states. Per vif flags.
-    struct timespec     stamp;                    // Time group was installed
-    uint32_t            mode;                     // Mode (include/exclude) for group
-    struct vifFlags     vifB;
-    uint32_t            v1Bits;                   // v1 compatibility flags
-    uint8_t             v1Age[MAXVIFS];           // v1 compatibility timer
-    uint32_t            v2Bits;                   // v2 compatibility flags
-    uint8_t             v2Age[MAXVIFS];           // v2 compitibility timer
-
-    // Keeps downstream hosts information
-    uint64_t            **dHostsHT;               // Per Vif Host tracking tables
+struct dvif {
+    uint8_t             mode;                     // Filter mode for group / src
+    uint8_t             lm;                       // Last member vif
+    uint8_t             age;                      // Downstream vif age
+    int8_t              v1age;                    // V1 mode flag for downstream vif
+    int8_t              v2age;                    // V2 mode flag for downstream vif
+    struct qry         *qry;                      // Active query timer id
+    uint64_t           *dht;                      // Downstream hosts hash table
 };
 
-struct ifMct {
-    struct ifMct       *prev;
-    struct IfDesc      *IfDp;                     // Pointer back to interface.
-    struct mcTable     *mct;                      // Pointer to group in multicast table
-    struct ifMct       *next;
-};
-
-struct qlst {
-    struct qlst       *prev;
-    struct qlst       *next;
-    struct mcTable    *mct;                       // Pointer to group being queried
-    struct ifMct      *imc;                       // Interface for query
+struct qry {
+    struct IfDesc     *IfDp;                      // Interfce for Query
+    struct mct        *mct;                       // Pointer to group being queried
     intptr_t           tid;                       // Timer ID
     uint8_t            type;                      // Query type (GSQ/GSSQ)
-    uint8_t            code;                      // Query max response code
+    uint8_t            code;                      // Query max response code (LMI)
     uint8_t            misc;                      // Query misc (RA/QRV)
     uint8_t            cnt;                       // Nr of queries sent
     uint32_t           group;                     // Group for query
     uint32_t           nsrcs[2];                  // Nr of sources in query, 0 = original, 1 = current
     struct src        *src[];                     // Array of pointers to sources
 };
-#define MCTSZ             (CONF->mcTables * sizeof(void *))
-#define MCESZ             (sizeof(struct mcTable))
-#define SRCSZ             (sizeof(struct src))
-#define IFMSZ             (sizeof(struct ifMct))
-#define MFCSZ             (sizeof(struct mfc))
-#define QLSZ              (sizeof(struct qlst))
-#define QRYSZ(n)          (QLSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
-#define INCL               0
-#define EXCL               1
-#define IS_EX(x, y)        BIT_TST(x->mode, y->index)
-#define IS_IN(x, y)       !BIT_TST(x->mode, y->index)
-#define IS_SET(x, y, z)    BIT_TST(x->vifB.y, z->index)
-#define NOT_SET(x, y, z)  !BIT_TST(x->vifB.y, z->index)
-#define SET_HASH(t, v, h) { if (v->conf->quickLeave && t->dHostsHT && t->dHostsHT[v->dhtix])                       \
-                                BIT_SET(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64); }
-#define CLR_HASH(t, v, h) { if (v->conf->quickLeave && t->dHostsHT && t->dHostsHT[v->dhtix])                       \
-                                BIT_CLR(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64); }
-#define TST_HASH(t, v, h) (t->dHostsHT && t->dHostsHT[v->dhtix] &&                                                 \
-                           BIT_TST(t->dHostsHT[v->dhtix][(h % v->conf->dhtSz) / sizeof(uint64_t)], h % 64))
-#define NO_HASH(t, v)     ({register uint64_t i = 0, n = v->conf->quickLeave ? v->conf->dhtSz >> 3 : 1;            \
-                            if (v->conf->quickLeave && t && t[v->dhtix])                                           \
-                                while(i < n && t[v->dhtix][i] == 0) i++; i >= n; })
-#define GETMRT(x)         if (MCT)                                                   \
-                              for (uint16_t iz = 0; iz < CONF->mcTables; iz++)       \
-                                   for (x = MCT[iz]; x; x = ! x ? MCT[iz] : x->next)
-// Vif counter from ifvc.c.
-extern int      vifcount, upvifcount, downvifcount;
+
+#define VSZ                (sizeof(void *))
+#define MCTSZ              ((1 << CONF->mcTables) * sizeof(void *))
+#define MCESZ              (sizeof(struct mct))
+#define SRCSZ              (sizeof(struct src))
+#define MFCSZ              (sizeof(struct mfc))
+#define DVIFSZ             (sizeof (struct dvif))
+#define DHTSZ               IfDp->conf->dhtSz * sizeof(uint64_t)
+#define TTLSZ              (src->nvif.d * sizeof(uint8_t))
+#define VIFSZ(x, y)        ((x ? downvifcount : upvifcount)  * sizeof(y))
+#define PVIFSZ(x, y, z)    (! x->nvif.y ? 0 : x->nvif.y * sizeof(z))
+#define QSZ                (sizeof(struct qry))
+#define QRYSZ(n)           (QSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
+#define IS_EX(x, y)        (x->dvif[y->dvifix].vp->mode)
+#define IS_IN(x, y)        (!x->dvif[y->dvifix].vp->mode)
+#define NHASH               (64)
+#define HASH(if, ip)       (if->conf->dhtSz ? murmurhash3(ip) : NHASH)
+#define SET_HASH(t, v, h)  {if (v->conf->dhtSz && h != 64)                                                           \
+                            BIT_SET(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
+#define CLR_HASH(t, v, h)  {if (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)    \
+                            BIT_CLR(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
+#define TST_HASH(t, v, h)  (h != 64 && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht &&                        \
+                            BIT_TST(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64))
+#define NO_HASH(t, v)      ({register uint64_t i = 0, n = v->conf->dhtSz;                                                   \
+                              if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)                      \
+                                  while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                                   \
+                              else n = 1; i >= n; })
+#define LST_IN(t,e,l,p,v,m,s) {LOG(LOG_DEBUG, 0, "LIST_IN:(%d, %s:%x, %s:%x, %s:%x, %s, %s, %s:%d)",t,#e,e,#l,l,#p,p,#v,#m,#s,s);  \
+                               void **ent = t > 2 ? (void **)&e->v : (void **)&e, **list = (void **)&l, **pent = (void **)p,       \
+                                    **ma  = t < 2 ? ent : t == 2 ? *ent + 4 * VSZ : ent + 2; if (t < 4) _calloc(*ma, 1, m, s);     \
+                               void **pa = t == 2 ? &((struct e *)e)->v.prevmfc : t > 2 ? ent     : *ent,                          \
+                                    **na = t == 2 ? &((struct e *)e)->v.nextmfc : t > 2 ? ent + 1 : *ent + VSZ,                    \
+                                    **pna = t < 3 ? ( pent ? pent + 1 : *list ? *list: NULL)                                       \
+                                                  : ( pent ? (void **)&((struct e *)pent)->v.next :                                \
+                                                     *list ? &((struct e *)*list)->v.next : NULL);                                 \
+                               void **pnpa = t <  2 ? (*list && *list == pna ? *list : pna ? *pna : NULL) :                        \
+                                             t == 2 ? (*list ? (void **)&((struct e *)*list)->v.prevmfc : NULL)                    \
+                                                    : (! pent && *list ? &((struct e *)*list)->v.prev                              \
+                                                       :  pna && *pna  ? (void **)&((struct e *)*pna)->v.prev : NULL);             \
+                               *pa = pent ? pent : NULL; *na = pent ? *pna : *list;                                                \
+                               if (pnpa) *pnpa = t > 1 ? e : *ent; pent ? (*pna = t > 1 ? e : *ent) : (*list = t > 1 ? e :*ent);}
+#define LST_RM(t,e,l,v,m,s) {LOG(LOG_DEBUG, 0, "LIST_RM:(%d, %s:%x, %s:%x, %s, %s:%d)", t, #e, e, #l, l, #v, #s, s);               \
+                             void **ent = t > 2 ? (void **)&e->v : (void **)&e, **list = (void **)&l,                              \
+                                  **fp  = t < 2 ? ent : t == 2 ? (*ent + 4 * VSZ) : (ent + 2),                                     \
+                                  **pv  = t == 2 ? ((struct e *)*ent)->v.prevmfc : t < 2 ? *(void **)*ent : *(void **)ent,         \
+                                  **nv  = t == 2 ? ((struct e *)*ent)->v.nextmfc : t < 2 ? *(void **)(*ent + VSZ)                  \
+                                                                                         : *(void **)(ent + 1),                    \
+                                  **npa = nv ? (t == 2 ? (void **)&((struct e *)nv)->v.prevmfc :                                   \
+                                                t  < 2 ? (void **)nv : &((struct e *)nv)->v.prev) : NULL,                          \
+                                  **pna = pv ? (t == 2 ? (void **)&((struct e *)pv)->v.nextmfc :                                   \
+                                                t  < 2 ? (void **)pv + 1 : &((struct e *)pv)->v.next) : list;                      \
+                                  *pna = nv; if (npa) *npa = pv; if (t < 4) _free(*fp, m, s);}
 
 // Prototypes
-struct mcTable *findGroup(register uint32_t group, bool create);
-struct ifMct   *delGroup(struct mcTable *mct, struct IfDesc *IfDp, struct ifMct *imc, int dir);
-struct src     *delSrc(struct src *src, struct IfDesc *IfDp, int dir, int mode, bool leave, uint32_t srcHash);
-void            joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join, int mode);
-bool            checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mcTable *mct);
-struct qlst    *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qlst *qlst, uint32_t srcHash);
-void            toInclude(struct ifMct *imc);
-void            startQuery(struct IfDesc *IfDp, struct qlst *qlst);
-void            groupSpecificQuery(struct qlst *qlst);
-void            delQuery(struct IfDesc *IfDP, struct qlst *qry, struct mcTable *mct, struct src *src);
+struct mct  *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, bool create);
+struct mct  *delGroup(struct mct *mct, struct IfDesc *IfDp, int dir);
+struct src  *delSrc(struct src *src, struct IfDesc *IfDp, int dir, int mode, bool leave, uint32_t srcHash);
+void         joinBlockSrc(struct src *src, struct IfDesc *IfDp, bool join, int mode);
+bool         checkFilters(struct IfDesc *IfDp, int dir, struct src *src, struct mct *mct);
+struct qry  *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qry *qry);
+void         toInclude(struct mct *mfc, struct IfDesc *IfDp);
+void         startQuery(struct IfDesc *IfDp, struct qry *qry);
+void         groupSpecificQuery(struct qry *qry);
+void         delQuery(struct qry *qry, struct mct *mct, struct src *src);
 
 #endif // MCTABLE_H_INCLUDED

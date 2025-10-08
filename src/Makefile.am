@@ -12,5 +12,5 @@ igmpv3proxy_SOURCES = \
 	os-freebsd.h \
 	os-linux.h \
 	mctable.c \
-    querier.c \
+	querier.c \
 	timers.c
