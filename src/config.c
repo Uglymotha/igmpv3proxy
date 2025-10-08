@@ -70,7 +70,6 @@ static struct Config      conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
 static struct vifConfig *vifConf = NULL, *ovifConf = NULL;
-uint32_t                  uVifs;
 
 // Keeps timer ids for configurable timed functions.
 static struct timers      timers = { (intptr_t)NULL, (intptr_t)NULL };

@@ -40,8 +40,6 @@
 #include "igmpv3proxy.h"
 #include "mctable.h"
 
-static uint32_t     qC = 0;       // Querier count.
-
 /**
 *   Function to control the IGMP querier process on interfaces.
 */
@@ -162,15 +160,13 @@ inline void startQuery(struct IfDesc *IfDp, struct qry *qry) {
         _calloc(qry1, 1, qry, QSZ);  // Freed by delQuery().
         memcpy(qry1, qry, sizeof(struct qry));
         qry = qry1;
-        LOG(LOG_INFO, 0, "#%d: Querying group %s on %s", qC + 1, inetFmt(qry->mct->group, 0), IfDp->Name);
+        LOG(LOG_INFO, 0, "Querying group %s on %s", inetFmt(qry->mct->group, 0), IfDp->Name);
         qry->mct->dvif[IfDp->dvifix].vp->qry = qry;
         qry->mct->dvif[IfDp->dvifix].vp->lm = 1;
         qry->mct->dvif[IfDp->dvifix].vp->age = qry->misc;
     } else
-        LOG(LOG_INFO, 0, "#%d: Querying %d sources for %s on %s.",
-            qC + 1, qry->nsrcs[0], inetFmt(qry->mct->group, 0), IfDp->Name);
+        LOG(LOG_INFO, 0, "Querying %d sources for %s on %s.", qry->nsrcs[0], inetFmt(qry->mct->group, 0), IfDp->Name);
     // Allocate and assign new querier.
-    qC++;
     qry->nsrcs[1] = qry->nsrcs[0];
     groupSpecificQuery(qry);
 }
@@ -309,7 +305,6 @@ void delQuery(struct qry *qry, struct mct *mct, struct src *src) {
         LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(qry->group, 0), qry->IfDp->Name);
         if (qry->tid)
             timerClear(qry->tid, false);
-        qC--;
         // Alloced by addSrcToQlst(), processGroupQuery() or startQuery()
         _free(qry, qry, qry->nsrcs[0] ? QRYSZ(qry->nsrcs[0]) : QSZ);
     }

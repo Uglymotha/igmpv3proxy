@@ -292,11 +292,9 @@ void configureVifs(void) {
         }
         IfDp->oconf = NULL;
     }
-    if (mrt_tbl < 0)
-        return;
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
-    if (!SHUTDOWN && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
+    if (mrt_tbl >= 0 && !SHUTDOWN && (vifcount < 2 || upvifcount == 0 || downvifcount == 0))
         LOG(STARTUP || RESTART ? LOG_CRIT : LOG_ERR, -eNOINIT,
             "There must be at least 2 interfaces, 1 upstream and 1 dowstream.");
 }

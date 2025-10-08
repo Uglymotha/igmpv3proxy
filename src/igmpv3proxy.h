@@ -285,6 +285,37 @@ struct IfDesc {
                                         {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1, (vif_t)-1, (vif_t)-1, (intptr_t)NULL, NULL, \
                                         NULL, NULL, NULL, NULL, NULL, IfDescL }
 
+// IGMP Query Definition.
+struct igmpv3_query {
+    uint8_t        igmp_type;                         // version & type of IGMP message
+    uint8_t        igmp_code;                         // subtype for routing msgs
+    uint16_t       igmp_cksum;                        // IP-style checksum
+    struct in_addr igmp_group;                        // group address being reported
+    uint8_t        igmp_misc;                         // reserved/suppress/robustness
+    uint8_t        igmp_qqi;                          // querier's query interval
+    uint16_t       igmp_nsrcs;                        // number of sources
+    struct in_addr igmp_src[];                        // source addresses
+};
+
+// IGMP v3 Group Record Definition.
+struct igmpv3_grec {
+    uint8_t        grec_type;                         // Group record type
+    uint8_t        grec_auxwords;                     // Nr of auxwords data after sources
+    uint16_t       grec_nsrcs;                        // Nr of sources in group report
+    struct in_addr grec_mca;                          // Group multicast address
+    struct in_addr grec_src[];                        // Array of source addresses
+};
+
+// IGMP Report Definition.
+struct igmpv3_report {
+    uint8_t            igmp_type;                     // IGMP Report type
+    uint8_t            igmp_resv1;
+    uint16_t           igmp_cksum;                    // IGMP checksum
+    uint16_t           igmp_resv2;
+    uint16_t           igmp_ngrec;                    // Nr. of group records in report
+    struct igmpv3_grec igmp_grec[];                   // Array of group records
+};
+
 /// Interface states.
 #define IF_STATE_DISABLED      0                         // Interface should be ignored.
 #define IS_DISABLED(x)         ((x & 0x3) == 0)
@@ -450,37 +481,6 @@ struct cmsghdr cmsgHdr;
 #endif
 };
 
-// IGMP Query Definition.
-struct igmpv3_query {
-    uint8_t        igmp_type;                         // version & type of IGMP message
-    uint8_t        igmp_code;                         // subtype for routing msgs
-    uint16_t       igmp_cksum;                        // IP-style checksum
-    struct in_addr igmp_group;                        // group address being reported
-    uint8_t        igmp_misc;                         // reserved/suppress/robustness
-    uint8_t        igmp_qqi;                          // querier's query interval
-    uint16_t       igmp_nsrcs;                        // number of sources
-    struct in_addr igmp_src[];                        // source addresses
-};
-
-// IGMP v3 Group Record Definition.
-struct igmpv3_grec {
-    uint8_t        grec_type;                         // Group record type
-    uint8_t        grec_auxwords;                     // Nr of auxwords data after sources
-    uint16_t       grec_nsrcs;                        // Nr of sources in group report
-    struct in_addr grec_mca;                          // Group multicast address
-    struct in_addr grec_src[];                        // Array of source addresses
-};
-
-// IGMP Report Definition.
-struct igmpv3_report {
-    uint8_t            igmp_type;                     // IGMP Report type
-    uint8_t            igmp_resv1;
-    uint16_t           igmp_cksum;                    // IGMP checksum
-    uint16_t           igmp_resv2;
-    uint16_t           igmp_ngrec;                    // Nr. of group records in report
-    struct igmpv3_grec igmp_grec[];                   // Array of group records
-};
-
 // IGMP Defines.
 #define IGMPV3_MODE_IS_INCLUDE    1
 #define IGMPV3_MODE_IS_EXCLUDE    2
@@ -605,7 +605,6 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 #define         LOG(x, ...) (   ((logerr |= ((x) <= LOG_ERR)) || true)                        \
                              && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
                              && !(errno = 0))
-bool            noHash(register uint64_t *t);
 char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 const char     *inetFmt(uint32_t addr, uint32_t mask);
 uint16_t        inetChksum(uint16_t *addr, int len);

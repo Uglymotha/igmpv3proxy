@@ -899,19 +899,20 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip,
 *   Ages active groups in tables.
 */
 void ageGroups(struct IfDesc *IfDp) {
-    struct mct *mct = mct = IfDp->dmct;
+    struct mct *mct, *nmct = IfDp->dmct;
     uint32_t    ix = IfDp->dvifix;
 
     LOG(LOG_DEBUG, 0, "%s", IfDp->Name);
     IfDp->querier.ageTimer = (intptr_t)NULL;
-    while (mct) {
+    while ((mct = nmct)) {
+        nmct = mct->dvif[ix].next;
         if (mct->dvif[ix].vp->lm)
             continue;
         // Age v1 and v2 compatibility mode.
-        if (mct->dvif[ix].vp->v1age > 0)
-            mct->dvif[ix].vp->v1age--;
-        if (mct->dvif[ix].vp->v2age > 0)
-            mct->dvif[ix].vp->v1age--;
+        if (mct->dvif[ix].vp->v1age > 0 && --mct->dvif[ix].vp->v1age == 0)
+            mct->dvif[ix].vp->v1age = -1;
+        if (mct->dvif[ix].vp->v2age > 0 && --mct->dvif[ix].vp->v1age == 0)
+            mct->dvif[ix].vp->v2age = -1;
         // Age sources in include mode group.
         uint32_t    nsrcs = 0;
         struct src *src   = mct->firstsrc[ix];
@@ -925,22 +926,14 @@ void ageGroups(struct IfDesc *IfDp) {
                 src = src->dvif[ix].next;
         }
         // Next age group. Switch to include mode if exclude mode group has aged. Remove group if it's left with no sources.
-        if (!nsrcs && mct->dvif[ix].vp->age == 0) {
-            LOG(LOG_INFO, 0, "Removed group %s from %s after aging.", inetFmt(mct->group, 0), IfDp->Name);
-            mct = delGroup(mct, IfDp, 1);
-        } else {
-            if (IS_EX(mct, IfDp) && nsrcs && (mct->dvif[ix].vp->age == 0 || --mct->dvif[ix].vp->age == 0)
+        if (IS_EX(mct, IfDp) && nsrcs && (mct->dvif[ix].vp->age == 0 || --mct->dvif[ix].vp->age == 0)
                                           && mct->dvif[ix].vp->v1age == -1 && mct->dvif[ix].vp->v2age == -1) {
-                LOG(LOG_INFO, 0, "Switching group %s to include on %s with #%d sources.", inetFmt(mct->group, 0),
-                    IfDp->Name, nsrcs);
-                // Reset v1 and v2 compatibility mode.
-                if (mct->dvif[ix].vp->v1age == 0)
-                    mct->dvif[ix].vp->v1age = -1;
-                if (mct->dvif[ix].vp->v2age == 0)
-                    mct->dvif[ix].vp->v2age = -1;
-                toInclude(mct, IfDp);
-            }
-            mct = mct->dvif[ix].next;
+            LOG(LOG_INFO, 0, "Switching group %s to include on %s with #%d sources.", inetFmt(mct->group, 0),
+                IfDp->Name, nsrcs);
+            toInclude(mct, IfDp);
+        } else if (!nsrcs && (!mct->dvif[ix].vp->mode || mct->dvif[ix].vp->age == 0)) {
+            LOG(LOG_INFO, 0, "Removed group %s from %s after aging.", inetFmt(mct->group, 0), IfDp->Name);
+            nmct = delGroup(mct, IfDp, 1);
         }
     }
     logRouteTable("Age Groups", 1, -1, (uint32_t)-1, (uint32_t)-1, IfDp);
