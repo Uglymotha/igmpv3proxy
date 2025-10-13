@@ -129,11 +129,11 @@ void freeConfig(bool old) {
             *dRate = tRate;
         }
     }
-    if (SHUTDOWN) {
+    if (SHUTDOWN && timers.rescanConf)
         // On Shutdown stop any running timers.
-        timers.rescanConf = timerClear(timers.rescanConf, false);
-        timers.rescanVif = timerClear(timers.rescanVif, false);
-    }
+        timers.rescanConf = timerClear(timers.rescanConf);
+    if (SHUTDOWN && timers.rescanVif)
+        timers.rescanVif = timerClear(timers.rescanVif);
     LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
@@ -873,7 +873,7 @@ bool loadConfig(char *cfgFile) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config: Logleven must be between 1 and 7.");
             else {
-                conf.logLevel = !conf.log2Stderr ? intToken : conf.logLevel;
+                loglevel = conf.logLevel = !conf.log2Stderr ? intToken : conf.logLevel;
                 LOG(LOG_NOTICE, 0, "Config: Log Level %d", conf.logLevel);
             }
 
@@ -934,14 +934,14 @@ bool loadConfig(char *cfgFile) {
     // Check if buffer sizes or timers have changed, reinit accordingly.
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
-    if (conf.rescanVif > 1 && timers.rescanVif == (intptr_t)NULL)
+    if (conf.rescanVif > 1 && ! timers.rescanVif)
         timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
-    else if (!conf.rescanVif && timers.rescanVif != (intptr_t)NULL)
-        timers.rescanVif = timerClear(timers.rescanVif, false);
-    if (conf.rescanConf && timers.rescanConf == (intptr_t)NULL)
+    else if (!conf.rescanVif && timers.rescanVif)
+        timers.rescanVif = timerClear(timers.rescanVif);
+    if (conf.rescanConf && ! timers.rescanConf)
         timers.rescanConf = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
-    else if (!conf.rescanConf && timers.rescanConf != (intptr_t)NULL)
-        timers.rescanConf = timerClear(timers.rescanConf, false);
+    else if (!conf.rescanConf && timers.rescanConf)
+        timers.rescanConf = timerClear(timers.rescanConf);
 
     return !logerr;
 }
@@ -965,6 +965,7 @@ void reloadConfig(intptr_t *tid) {
             freeConfig(0);
         vifConf = ovifConf;
         memcpy(&conf, &oldconf, sizeof(struct Config));
+        loglevel = conf.logLevel;
     } else {
         rebuildIfVc(NULL);
         freeConfig(1);

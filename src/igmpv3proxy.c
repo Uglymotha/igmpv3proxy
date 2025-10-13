@@ -48,7 +48,7 @@ static void igmpProxyRun(void);
 
 // Global Variables Memory / Signal Handling / Timekeeping / Buffers etc.
 volatile uint64_t     sighandled;  // Should be as private as possible.
-uint64_t              sigstatus, logerr;
+uint64_t              sigstatus, logerr, loglevel = LOG_WARNING;
 struct timespec       curtime, utcoff, starttime = { 0 };
 char                 *rcv_buf = NULL, *fileName, tS[32], tE[32];
 struct memstats       memuse = { 0 }, memalloc = { 0 }, memfree = { 0 };
@@ -74,7 +74,6 @@ int main(int ArgCn, char *ArgVc[]) {
     openlog(fileName, LOG_PID, LOG_DAEMON);
     srand(time(NULL) * getpid());
     CONF->hashSeed = ((uint32_t)rand() << 16) | (uint32_t)rand();
-    CONF->logLevel = LOG_WARNING;
 
     // Parse the commandline options and setup basic settings..
     for (c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0); c != -1; c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0)) {

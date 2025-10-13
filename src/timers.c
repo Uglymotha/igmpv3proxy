@@ -114,23 +114,20 @@ intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
 /**
 *   Removes a timer from the queue.
 */
-intptr_t timerClear(intptr_t tid, bool retdata) {
+intptr_t timerClear(intptr_t tid) {
     struct timeOutQueue *node = (void *)tid, *n;
-    void                *data = node ? node->data : NULL;
 
-    if (node) {
-        if (node->prev)
-            node->prev->next = node->next;
-        if (node->next)
-            node->next->prev = node->prev;
-        if (! node->prev)
-            queue = node->next;
-        DEBUGQUEUE("Clear Timer", 1, -1);
-        IF_FOR(CONF->logLevel >= LOG_INFO, (n = node, tid = 1; n->prev; n = n->prev, tid++));
-        LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
-        _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
-    }
-    return retdata ? (intptr_t)data : (intptr_t)NULL;
+    if (node->prev)
+        node->prev->next = node->next;
+    else
+        queue = node->next;
+    if (node->next)
+        node->next->prev = node->prev;
+    DEBUGQUEUE("Clear Timer", 1, -1);
+    IF_FOR(CONF->logLevel >= LOG_INFO, (n = node, tid = 1; n->prev; n = n->prev, tid++));
+    LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
+    _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
+    return (intptr_t)NULL;
 }
 
 /**

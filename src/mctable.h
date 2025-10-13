@@ -44,12 +44,12 @@
 struct vif {
     void               *prev;                     // Previous mct/src for vif
     void               *next;                     // Next mct/src for vif
+    struct src         *prevmfc;                  // Previous mfc on upstream interface
+    struct src         *nextmfc;                  // Next mfc on upstream interface
     struct dvif        *vp;                       // Downstream vif parameters
     uint8_t             s;                        // Filters set flag for vif
     uint8_t             d;                        // Denied vif
     uint8_t             j;                        // Upstream joined
-    struct src         *prevmfc;                  // Previous mfc on upstream interface
-    struct src         *nextmfc;                  // Next mfc on upstream interface
 };
 
 struct nvif {
@@ -63,6 +63,8 @@ struct mct {
     // Keeps multicast group and source membership information.
     struct mct         *prev;                     // Previous group in table.
     struct mct         *next;                     // Next group in table.
+    struct vif         *uvif;                     // Active upstream vifs for group
+    struct vif         *dvif;                     // Downstream vifs for group
     struct timespec     stamp;                    // Time group was installed
     uint32_t            group;                    // The group to route
     bool                mode;                     // Group upstream filter mode
@@ -70,16 +72,14 @@ struct mct {
     struct src         *sources;                  // Downstream source list for group
     struct src        **firstsrc;                 // Per interface first source
     struct nvif         nvif;                     // Nr of vifs
-    struct vif         *dvif;                     // Downstream vifs for group
-    struct vif         *uvif;                     // Active upstream vifs for group
 };
 
 struct src {
     // Keeps information on sources
     struct src         *prev;                     // Previous source in group.
     struct src         *next;                     // Next source in group
-    struct src         *prevmfc;                  // Previous source with route in kernel
-    struct src         *nextmfc;                  // Next source with route in kernel
+    struct vif         *uvif;                     // Active upstream vifs for source
+    struct vif         *dvif;                     // Active downstream vifs for source
     uint8_t            *ttl;                      // Outgoing vifs ttl
     struct timespec     stamp;                    // Time src was installed
     uint32_t            ip;                       // Source IP adress
@@ -88,8 +88,6 @@ struct src {
     uint64_t            bytes;                    // Incoming data counter
     uint64_t            rate;                     // Bwcontrol counters
     struct nvif         nvif;                     // Nr of vifs
-    struct vif         *dvif;                     // Active downstream vifs for source
-    struct vif         *uvif;                     // Active upstream vifs for source
 };
 
 struct dvif {
@@ -120,11 +118,12 @@ struct qry {
 #define MCESZ              (sizeof(struct mct))
 #define SRCSZ              (sizeof(struct src))
 #define MFCSZ              (sizeof(struct mfc))
+#define VIFSZ              (sizeof(struct vif))
 #define DVIFSZ             (sizeof (struct dvif))
 #define DHTSZ               IfDp->conf->dhtSz * sizeof(uint64_t)
 #define TTLSZ              (src->nvif.d * sizeof(uint8_t))
-#define VIFSZ(x, y)        ((x ? downvifcount : upvifcount)  * sizeof(y))
-#define PVIFSZ(x, y, z)    (! x->nvif.y ? 0 : x->nvif.y * sizeof(z))
+#define VPSZ(x, y)         ((x ? downvifcount : upvifcount)  * sizeof(y))
+#define PVPSZ(x, y, z)     (! x->nvif.y ? 0 : x->nvif.y * sizeof(z))
 #define QSZ                (sizeof(struct qry))
 #define QRYSZ(n)           (QSZ + ((((n) / 32) + 1) * 32 * sizeof(void *)))
 #define IS_EX(x, y)        (x->dvif[y->dvifix].vp->mode)
@@ -135,37 +134,33 @@ struct qry {
                             BIT_SET(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
 #define CLR_HASH(t, v, h)  {if (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)    \
                             BIT_CLR(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
-#define TST_HASH(t, v, h)  (h != 64 && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht &&                        \
+#define TST_HASH(t, v, h)  (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht &&      \
                             BIT_TST(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64))
-#define NO_HASH(t, v)      ({register uint64_t i = 0, n = v->conf->dhtSz;                                                   \
-                              if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)                      \
-                                  while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                                   \
+#define NO_HASH(t, v)      ({register uint64_t i = 0, n = v->conf->dhtSz;                                            \
+                              if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)               \
+                                  while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                            \
                               else n = 1; i >= n; })
-#define LST_IN(t,e,l,p,v,m,s) {LOG(LOG_DEBUG, 0, "LIST_IN:(%d, %s:%x, %s:%x, %s:%x, %s, %s, %s:%d)",t,#e,e,#l,l,#p,p,#v,#m,#s,s);  \
-                               void **ent = t > 2 ? (void **)&e->v : (void **)&e, **list = (void **)&l, **pent = (void **)p,       \
-                                    **ma  = t < 2 ? ent : t == 2 ? *ent + 4 * VSZ : ent + 2; if (t < 4) _calloc(*ma, 1, m, s);     \
-                               void **pa = t == 2 ? &((struct e *)e)->v.prevmfc : t > 2 ? ent     : *ent,                          \
-                                    **na = t == 2 ? &((struct e *)e)->v.nextmfc : t > 2 ? ent + 1 : *ent + VSZ,                    \
-                                    **pna = t < 3 ? ( pent ? pent + 1 : *list ? *list: NULL)                                       \
-                                                  : ( pent ? (void **)&((struct e *)pent)->v.next :                                \
-                                                     *list ? &((struct e *)*list)->v.next : NULL);                                 \
-                               void **pnpa = t <  2 ? (*list && *list == pna ? *list : pna ? *pna : NULL) :                        \
-                                             t == 2 ? (*list ? (void **)&((struct e *)*list)->v.prevmfc : NULL)                    \
-                                                    : (! pent && *list ? &((struct e *)*list)->v.prev                              \
-                                                       :  pna && *pna  ? (void **)&((struct e *)*pna)->v.prev : NULL);             \
-                               *pa = pent ? pent : NULL; *na = pent ? *pna : *list;                                                \
-                               if (pnpa) *pnpa = t > 1 ? e : *ent; pent ? (*pna = t > 1 ? e : *ent) : (*list = t > 1 ? e :*ent);}
-#define LST_RM(t,e,l,v,m,s) {LOG(LOG_DEBUG, 0, "LIST_RM:(%d, %s:%x, %s:%x, %s, %s:%d)", t, #e, e, #l, l, #v, #s, s);               \
-                             void **ent = t > 2 ? (void **)&e->v : (void **)&e, **list = (void **)&l,                              \
-                                  **fp  = t < 2 ? ent : t == 2 ? (*ent + 4 * VSZ) : (ent + 2),                                     \
-                                  **pv  = t == 2 ? ((struct e *)*ent)->v.prevmfc : t < 2 ? *(void **)*ent : *(void **)ent,         \
-                                  **nv  = t == 2 ? ((struct e *)*ent)->v.nextmfc : t < 2 ? *(void **)(*ent + VSZ)                  \
-                                                                                         : *(void **)(ent + 1),                    \
-                                  **npa = nv ? (t == 2 ? (void **)&((struct e *)nv)->v.prevmfc :                                   \
-                                                t  < 2 ? (void **)nv : &((struct e *)nv)->v.prev) : NULL,                          \
-                                  **pna = pv ? (t == 2 ? (void **)&((struct e *)pv)->v.nextmfc :                                   \
-                                                t  < 2 ? (void **)pv + 1 : &((struct e *)pv)->v.next) : list;                      \
-                                  *pna = nv; if (npa) *npa = pv; if (t < 4) _free(*fp, m, s);}
+#define MCTLST                   0, 0,   0, 0,  mct, MCESZ
+#define SRCLST                   0, 0,   0, 0,  src, SRCSZ
+#define DVIFLST                  2, 1,   0, ix, ifm, DVIFSZ
+#define UVIFLST                  2, 0,   0, ix, ifm, 0
+#define MFCLST                   2, dir, 2, ix, ifm, TTLSZ
+#define MA(e,t,o,i)              !t ? (void **)&e : !o ? *((void **)e+3) + ((i)*VIFSZ) + (4*VSZ) : (void **)e+4
+#define LST_IN(a,b,c,d)          L_IN(a, b, c, d)
+#define LST_RM(a,b,c)            L_RM(a, b, c)
+#define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG, 0, "L_IN:(%s:%x, %s:%x, %s:%x, %d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,i,#m,#s,s); \
+                                 void **pe = p ? (void **)p : NULL, **lst = (void **)&l, **ma = MA(e, t, o, i);                    \
+                                 if (t+d+o != 2) _calloc(*ma, 1, m, s); void **en = !t ? (void **)&e : (void **)e+(t)+(d);         \
+                                 void **pna  = pe  ? (!t ? pe + 1 : (*(pe+(t)+(d)) + ((i)*VIFSZ) + (((o)+1)*VSZ))) : NULL,         \
+                                      **pn   = pna ? *pna : (void**)l, **pa = *en + ((i)*VIFSZ) + ((o)*VSZ), **na = pa+1,          \
+                                      **pnpa = pn  ? (!t ? pn : *((void **)pn+(t)+(d)) + ((i)*VIFSZ) + ((o)*VSZ)) : NULL;          \
+                                 if (p) {*pa = p; if (pn) *na = *pna; *pna = e;} else {*na = l; *lst = e;} if (pnpa) *pnpa = e;}
+#define L_RM(e,l,t,d,o,i,m,s)   {LOG(LOG_DEBUG, 0, "L_RM:(%s:%x, %s:%x, %d:%d:%d, %s,%s:%d)",#e,e,#l,l,t,d,i,#m,#s,s);             \
+                                 void **pa = !t  ? (void **)e    : *((void **)  e+(t)+(d)) + (i)*VIFSZ + (o)*VSZ, **na = pa + 1,   \
+                                      **pn = *pa ? (!t ? *pa+VSZ : *((void **)*pa+(t)+(d)) + (i)*VIFSZ + (o+1)*VSZ) : (void**)&l,  \
+                                      **np = *na ? (!t ? *na     : *((void **)*na+(t)+(d)) + (i)*VIFSZ + (o)*VSZ)   : NULL;        \
+                                 *pn = *na; if (np) *np = *pa; *na = *pa = NULL;                                                   \
+                                 if (t+d+o != 2) {void **fp = MA(e,t,o,i); _free(*fp, m, s);}}
 
 // Prototypes
 struct mct  *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, bool create);

@@ -329,8 +329,10 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
     if (ver < IfDp->querier.ver || (ver == IfDp->querier.ver && (htonl(src) <= htonl(IfDp->querier.ip)))) {
         if (dst == allhosts_group || src != IfDp->querier.ip) {
             // Clear running query and age timers.
-            IfDp->querier.Timer = timerClear(IfDp->querier.Timer, false);
-            IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer, false);
+            if (IfDp->querier.Timer)
+                IfDp->querier.Timer = timerClear(IfDp->querier.Timer);
+            if (IfDp->querier.ageTimer)
+                IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer);
             // Set querier parameters for interface, use configured values in case querier detected because of gsq.
             IfDp->querier = OTHER_QUERIER;
             if (dst != allhosts_group) {
@@ -406,11 +408,9 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
 */
 static void expireQuerierTimer(struct IfDesc *IfDp) {
     LOG(LOG_NOTICE, 0, "Other querier %s on %s expired.", inetFmt(IfDp->querier.ip, 0), IfDp->Name);
-    if (IS_DOWNSTREAM(IfDp->state)) {
-        IfDp->querier.Timer = timerClear(IfDp->querier.ageTimer, false);
+    IfDp->querier.Timer = (intptr_t)NULL;
+    if (IS_DOWNSTREAM(IfDp->state))
         sendGeneralMemberQuery(IfDp);
-    } else {
+    else
         IfDp->querier.ip = (uint32_t)-1;
-        IfDp->querier.Timer = (intptr_t)NULL;
-    }
 }

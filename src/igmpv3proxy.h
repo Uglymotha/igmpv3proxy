@@ -509,7 +509,7 @@ extern char            *fileName, Usage[], tS[32];
 extern struct timespec  starttime, curtime, utcoff;
 
 // Process Signaling.
-extern uint64_t         sigstatus, logerr;
+extern uint64_t         sigstatus, logerr, loglevel;
 
 // MRT route table id. Linux only, not supported on FreeBSD.
 extern struct chld      chld;
@@ -603,7 +603,7 @@ void   sendGeneralMemberQuery(struct IfDesc *IfDp);
 */
 #define         STRBUF 256
 #define         LOG(x, ...) (   ((logerr |= ((x) <= LOG_ERR)) || true)                        \
-                             && !((x) <= CONF->logLevel) ?: myLog((x), __func__, __VA_ARGS__) \
+                             && !((x) <= loglevel) ?: myLog((x), __func__, __VA_ARGS__) \
                              && !(errno = 0))
 char           *strFmt(bool cond, const char *s1, const char *s2, ...);
 const char     *inetFmt(uint32_t addr, uint32_t mask);
@@ -653,7 +653,7 @@ void    k_deleteUpcall(uint32_t src, uint32_t group);
 void     bwControl(struct IfDesc *IfDp);
 void     clearGroups(struct IfDesc *IfDp);
 void     updateGroup(struct IfDesc *IfDp, register uint32_t src, struct igmpv3_grec *grec);
-void     activateRoute(struct IfDesc *IfDp, void *_src, register uint32_t ip, register uint32_t group, bool activate);
+void     activateRoute(struct IfDesc *IfDp, void *_src, uint32_t ip, uint32_t group, bool activate);
 void     ageGroups(struct IfDesc *IfDp);
 void     logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t mask, struct IfDesc *IfDp);
 
@@ -670,7 +670,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 #define DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
 intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
-intptr_t        timerClear(intptr_t timer_id, bool retdata);
+intptr_t        timerClear(intptr_t tid);
 void            timerDebugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

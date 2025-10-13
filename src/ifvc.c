@@ -193,7 +193,6 @@ void configureVifs(void) {
     struct IfDesc     *IfDp = NULL, *If;
     struct vifConfig  *vifConf = NULL;
     struct filters    *fil, *ofil;
-    bool               quickLeave = false;
     LOG(LOG_INFO, 0, "Configuring MC vifs.");
 
     GETIFL(IfDp) {
@@ -285,7 +284,8 @@ void configureVifs(void) {
             clearGroups(IfDp);
         IfDp->filCh = false;
         if (IS_DISABLED(newstate) && IfDp->index != (vif_t)-1) {
-            IfDp->bwTimer = timerClear(IfDp->bwTimer, false);
+            if (IfDp->bwTimer)
+                IfDp->bwTimer = timerClear(IfDp->bwTimer);
             if (!IS_DISABLED(oldstate))
                 ctrlQuerier(0, IfDp);
             k_delVIF(IfDp);
