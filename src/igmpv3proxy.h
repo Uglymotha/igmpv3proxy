@@ -464,21 +464,22 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 #define VSZ                      sizeof(void *)
 #define VS                       void **
-#define MA(e,t,d,o,i)            !t ? (VS)&e : t == 1 ? (VS)e : !o ? *((VS)e+(t)+(d)) + (i) + (4*VSZ) : (VS)e+4
+#define MA(e,t,d,o,i)            !t ? (VS)&(e) : t == 1 ? (VS)(e) : !(o) ? *((VS)e+(t)+(d)) + (i) + (4*VSZ) : (VS)(e)+4
 #define LST_IN(a,b,c,d)          do L_IN(a, b, c, d) while (0)
 #define LST_RM(a,b,c)            do L_RM(a, b, c) while (0)
 #define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG,0,"L_IN:(%s:%x,%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,o,i,#m,#s,s);\
                                  void **pe = (VS)p, **lst = t != 1 ? (VS)&l : (VS)l, **ma = MA(e, t, d, o, i);                     \
-                                 if (s) _calloc(*ma, 1, m, s); void **en = !t ? (VS)&e : (VS)e+(t)+(d);                            \
+                                 if (s) _calloc(*ma, 1, m, s); void **en = !t ? (VS)&(e) : (VS)(e)+(t)+(d);                        \
                                  void **pna  = pe  ? (t < 2 ? pe + (o) + 1 : (*(pe+(t)+(d)) + (i) + (((o)+1)*VSZ))) : NULL,        \
                                       **pn   = pna ? *pna : t != 1 ? (VS)l : (VS)*lst, **pa = *en + (i) + ((o)*VSZ), **na = pa+1,  \
-                                      **pnpa = pn  ? (t < 2 ? pn + o       : *((void **)pn+(t)+(d)) + (i) + ((o)*VSZ)) : NULL;     \
-                                 if (pe) {*pa = pe; *na = pn;  *pna = t != 1 ? e : *en;}                                           \
-                                 else {*na = t!= 1 ? l : *lst; *lst = t != 1 ? e : *en;} if (pnpa) *pnpa = e;}
+                                      **pnpa = pn  ? (t < 2 ? pn + (o) : *((void **)pn+(t)+(d)) + (i) + ((o)*VSZ)) : NULL;         \
+                                 if (pe) {*pa = pe; *na = pn;  *pna = t != 1 ? e : *en;}                                          \
+                                 else {*na = t!= 1 ? l : *lst; *lst = t != 1 ? e : *en;} if (pnpa) *pnpa = t != 1 ? e : *en;}
 #define L_RM(e,l,t,d,o,i,m,s)   {LOG(LOG_DEBUG, 0, "L_RM:(%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,t,d,o,i,#m,#s,s);         \
-                                 void **pa =           !t ? (VS)((VS)e+(o))   : *((VS)  e+(t)+(d)) + (i) + (o)*VSZ, **na = pa + 1, \
-                                      **pn = *pa ? (t < 2 ? *pa+(((o)+1)*VSZ) : *((VS)*pa+(t)+(d)) + (i) + ((o)+1)*VSZ) : (VS)&l , \
-                                      **np = *na ? (t < 2 ? *na+((o)*VSZ)     : *((VS)*na+(t)+(d)) + (i) + (o)*VSZ)     : NULL;    \
+                                 void **pa =    !t ? (VS)((VS)e+(o))             : *((VS)  e+(t)+(d)) + (i) + (o)*VSZ, **na = pa+1,\
+                                      **pn = ! *pa ? (t != 1 ? (VS)(&l)          :   (VS)(l))                                      \
+                                                   : (t  < 2 ? *pa+(((o)+1)*VSZ) : *((VS)*pa+(t)+(d)) + (i) + ((o)+1)*VSZ),        \
+                                      **np = *na ? (t < 2 ? *na+((o)*VSZ)        : *((VS)*na+(t)+(d)) + (i) + (o)*VSZ)     : NULL; \
                                  *pn = *na; if (np) *np = *pa; *na = *pa = NULL;                                                   \
                                  if (s) {void **fp = MA(e,t,d,o,i); _free(*fp, m, s);}}
 #define CONFLST                  0,  0, 0, 0, vif, VIFCSZ
@@ -576,11 +577,9 @@ void igmpProxyCleanUp(int code);
 /**
 *   config.c
 */
-#define            VIFCONF getVifConf()
 #define            CONF getConfig(false)
 #define            OLDCONF getConfig(true)
 struct Config     *getConfig(bool old);
-struct vifConfig **getVifConf(void);
 void               freeConfig(bool old);
 void               reloadConfig(intptr_t *tid);
 bool               loadConfig(char *cfgFile);
@@ -618,7 +617,6 @@ void cliCmd(char *cmd, int tbl);
 #define         SRCHUVIFL               0x20
 void            freeIfDescL(void);
 void            rebuildIfVc(intptr_t *tid);
-void            buildIfVc(void);
 struct IfDesc  *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void            getIfStats(struct IfDesc *IfDp, int h, int fd);
 void            getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -703,7 +701,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 #define DEBUGQUEUE(x, y, z) if (loglevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
 intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
-intptr_t        timerClear(intptr_t tid);
+intptr_t        timerClear(intptr_t node);
 void            timerDebugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

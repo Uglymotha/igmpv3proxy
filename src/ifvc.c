@@ -61,45 +61,23 @@ struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
 }
 
 /**
-*   Rebuilds the list of interfaces.
-*/
-void rebuildIfVc(intptr_t *tid) {
-    // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
-    if (tid)
-        sigstatus |= GOT_SIGUSR2;
-    if (! IfDescL || IFREBUILD || SHUP)
-        buildIfVc();
-    configureVifs();
-
-    // Restart timer when doing timed reload.
-    if (!SHUTDOWN && CONF->rescanVif > 1 && tid)
-        *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
-    if ((IFREBUILD || STARTUP || RESTART) && loglevel == LOG_DEBUG) {
-        sigstatus &= ~GOT_SIGUSR2;
-        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
-            memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
-        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
-            memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
-        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
-            memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
-    }
-}
-
-/**
 *   Builds up a list with all usable interfaces of the machine.
 *   Sets bit 8 of IfDp->state when new interface is detected (DEFAULT_IFDESC).
 *   Sets bit 7 when existing interface is seen.
 *   These bits are used by configureVifs() below.
 */
-void buildIfVc(void) {
+void rebuildIfVc(intptr_t *tid) {
     struct ifreq    ifr;
     struct ifaddrs *ifAddrs, *fifAddrs;
     struct IfDesc  *IfDp;
 
+    // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
+    sigstatus |= (tid ? GOT_SIGUSR2 : 0);
     // Get the system interface list.
-    if ((getifaddrs(&fifAddrs)) == -1)
+    if ((getifaddrs(&fifAddrs)) == -1) {
         LOG(STARTUP ? LOG_CRIT : LOG_ERR, eNOINIT, "Cannot enumerate interfaces.");
-    else for (ifAddrs = fifAddrs; ifAddrs; ifAddrs = ifAddrs->ifa_next) {
+        return;
+    } else IF_FOR(! IfDescL || IFREBUILD || SHUP, (ifAddrs = fifAddrs; ifAddrs; ifAddrs = ifAddrs->ifa_next)) {
         if (   ifAddrs->ifa_flags & IFF_LOOPBACK   || ifAddrs->ifa_addr->sa_family != AF_INET
             || (!((ifAddrs->ifa_flags & IFF_UP)    && (ifAddrs->ifa_flags & IFF_RUNNING)))
 #ifdef IFF_CANTCONFIG
@@ -146,6 +124,20 @@ void buildIfVc(void) {
             inetFmt(IfDp->ip.ip, IfDp->ip.mask), IfDp->Flags, IfDp->mtu);
     }
     freeifaddrs(fifAddrs);   // Alloced by getiffaddrs()
+    configureVifs();
+
+    // Restart timer when doing timed reload.
+    if (!SHUTDOWN && CONF->rescanVif > 1 && tid)
+        *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
+    if ((IFREBUILD || STARTUP || RESTART) && loglevel == LOG_DEBUG) {
+        sigstatus &= ~GOT_SIGUSR2;
+        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
+            memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
+        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld interfaces, %lld config, %lld filters.",
+            memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
+        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
+            memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
+    }
 }
 
 /**
@@ -168,7 +160,7 @@ void configureVifs(void) {
         nIfDp = IfDp->next;
         // When config is reloaded, find and link matching config to interfaces.
         if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
-            for (tmpConf = *VIFCONF; tmpConf && strcmp(IfDp->Name, tmpConf->name); tmpConf = tmpConf->next);
+            for (tmpConf = vifConf; tmpConf && strcmp(IfDp->Name, tmpConf->name); tmpConf = tmpConf->next);
             if (tmpConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
             } else {

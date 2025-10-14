@@ -41,15 +41,15 @@
 
 // Queue definition.
 static struct timeOutQueue {
+    struct timeOutQueue  *prev;            // Previous event in queue
+    struct timeOutQueue  *next;            // Next event in queue
     void                (*func)(void *);   // function to call
     void                 *data;            // Argument for function.
     struct timespec       time;            // Time for event
-    struct timeOutQueue  *prev;            // Previous event in queue
-    struct timeOutQueue  *next;            // Next event in queue
     char                 *name;            // name of the timer
 }     *queue = NULL;
-#define TMSZ(n) (sizeof(struct timeOutQueue) + strlen(n) + 1)
-static uint64_t id = 1;
+#define TMSZ(n)  (sizeof(struct timeOutQueue)+strlen(n)+1)
+#define TMLST(n) 0, 0, 0, 0, tmr, TMSZ(n)
 
 /**
 *   Execute at most CONF->tmQsz expired timers, return time difference to next scheduled timer.
@@ -66,14 +66,8 @@ struct timespec timerAgeQueue(void) {
         clock_gettime(CLOCK_REALTIME, &node->time);
         node->func(node->data);
         clock_gettime(CLOCK_REALTIME, &curtime);
-        // The function may have removed the timeout itself, check before freeing.
-        if (queue == node) {
-            LOG(LOG_DEBUG, 0, "%s took %dus", node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
-            queue = node->next;
-            if (queue)
-                queue->prev = NULL;
-            _free(node, tmr, TMSZ(node->name));
-        }
+        LOG(LOG_DEBUG, 0, "%s took %dus", node->name, timeDiff(node->time, curtime).tv_nsec / 1000);
+        LST_RM(node, queue, TMLST(node->name));   // Alloced by timer_setTimer()
     }
     if (i > 1)
         DEBUGQUEUE("-Age Queue-", 1, -1);
@@ -85,27 +79,16 @@ struct timespec timerAgeQueue(void) {
 *   FIFO if timers are scheduled at exactly the same time. Delay in multiples of .1s
 */
 intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
-    struct timeOutQueue  *ptr = NULL, *node = NULL;
-    uint64_t                i = 1;
+    struct timeOutQueue  *pnode = NULL, *node;
+    uint64_t              i = 1;
+    struct timespec       tdiff = timeDelay(delay);
 
-    // Create and set a new timer.
-    _malloc(node, tmr, TMSZ(name));  // Freed by timer_ageQueue() or timer_clearTimer()
-    *node = (struct timeOutQueue){ func, data, timeDelay(delay), NULL, NULL, memcpy(&node->name + 1, name, strlen(name) + 1) };
-    if (!queue || timeDiff(queue->time, node->time).tv_nsec == -1) {
-        // Start of queue, insert.
-        if (queue)
-            queue->prev = node;
-        node->next = queue;
-        queue = node;
-    } else {
-        // chase the queue looking for the right place.
-        for (ptr = queue, i++; ptr->next && timeDiff(ptr->next->time, node->time).tv_nsec != -1; ptr = ptr->next, i++);
-        node->next = ptr->next;
-        node->prev = ptr;
-        if (ptr->next)
-            ptr->next->prev = node;
-        ptr->next = node;
-    }
+    // Create and set a new timer, walk the queu to find the right place..
+    IF_FOR(queue && timeDiff(queue->time, tdiff).tv_nsec != -1,
+           (pnode = queue, i++; pnode->next && timeDiff(pnode->next->time, tdiff).tv_nsec != -1; pnode = pnode->next, i++));
+    LST_IN(node, queue, pnode, TMLST(name));  // Freed by timer_ageQueue() or timer_clearTimer()
+    *node = (struct timeOutQueue){ node->prev, node->next, func, data, tdiff, memcpy(&node->name + 1, name, strlen(name) + 1) };
+
     LOG(LOG_INFO, 0, "Created timeout (#%d): %s - delay %d.%1d secs", i, node->name, delay / 10, delay % 10);
     DEBUGQUEUE("-Set Timer-", 1, -1);
     return (intptr_t)node;
@@ -114,19 +97,13 @@ intptr_t timerSet(int delay, const char *name, void (*func)(), void *data) {
 /**
 *   Removes a timer from the queue.
 */
-intptr_t timerClear(intptr_t tid) {
-    struct timeOutQueue *node = (void *)tid, *n;
+intptr_t timerClear(intptr_t node) {
+    uint64_t i = 1;
 
-    if (node->prev)
-        node->prev->next = node->next;
-    else
-        queue = node->next;
-    if (node->next)
-        node->next->prev = node->prev;
+    IF_FOR(loglevel >= LOG_INFO, (struct timeOutQueue *n = (struct timeOutQueue *)node; n->prev; n = n->prev, i++));
+    LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", i, ((struct timeOutQueue *)node)->name);
+    LST_RM(node, queue, TMLST(((struct timeOutQueue *)node)->name));  // Alloced by timer_setTimer()
     DEBUGQUEUE("Clear Timer", 1, -1);
-    IF_FOR(loglevel >= LOG_INFO, (n = node, tid = 1; n->prev; n = n->prev, tid++));
-    LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
-    _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
     return (intptr_t)NULL;
 }
 

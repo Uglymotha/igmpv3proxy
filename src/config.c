@@ -85,41 +85,29 @@ inline struct Config *getConfig(bool old) {
 }
 
 /**
-*   Returns pointer to the multicast vif configuration.
-*/
-inline struct vifConfig **getVifConf(void) {
-    return &vifConf;
-}
-
-/**
 *   Frees the old vifconf list and associated filters.
 */
 void freeConfig(bool old) {
     struct vifConfig *cnf;
-    struct filters   *fil, **f;
+    struct filters   *fil, **f, **ff;
 
     // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
     while ((cnf = old ? ovifConf : vifConf)) {
         LOG(LOG_DEBUG, 0, "Removing config for %s.", cnf->name);
-        while ((fil = cnf->filters) && fil != (old ? oldconf.filters : conf.filters) && (f = &fil))
-            LST_RM(f, cnf->filters, FILLST);
-        while ((fil = cnf->rates) && fil != (old ? oldconf.rates : conf.rates) && (f = &fil))
-            LST_RM(f, cnf->rates, FILLST);
+        while ((fil = cnf->filters) && (ff = &cnf->filters) && fil != (old ? oldconf.filters : conf.filters) && (f = &fil))
+            LST_RM(f, ff, FILLST);
+        while ((fil = cnf->rates) && (ff = &cnf->rates) && fil != (old ? oldconf.rates : conf.rates) && (f = &fil))
+            LST_RM(f, ff, FILLST);
         if (old)
             LST_RM(cnf, ovifConf, CONFLST);
         else
             LST_RM(cnf, vifConf, CONFLST);
     }
     while ((fil = old ? oldconf.filters : conf.filters) && (f = &fil))
-        if (old)
-            LST_RM(f, oldconf.filters, FILLST);
-        else
-            LST_RM(f, conf.filters, FILLST);
+        LST_RM(f, old ? &oldconf.filters : &conf.filters, FILLST);
     while ((fil = old ? oldconf.rates : conf.rates) && (f = &fil))
-        if (old)
-            LST_RM(f, oldconf.rates, FILLST);
-        else
-            LST_RM(f, conf.rates, FILLST);
+        LST_RM(f, old ? &oldconf.rates : &conf.rates, FILLST);
+
     if (SHUTDOWN && timers.rescanConf)
         // On Shutdown stop any running timers.
         timers.rescanConf = timerClear(timers.rescanConf);
