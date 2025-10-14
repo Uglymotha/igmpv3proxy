@@ -147,10 +147,10 @@ struct Config {
 
 // Memory statistics.
 struct memstats {
-    int64_t mct, src, mfc, ifm, dht;  // Multicast Forwarding Table
-    int64_t ifd, fil, vif;            // Interfaces
-    int64_t rcv, snd;                 // Buffers
-    int64_t qry, tmr, var;            // Queries, Timers, various.
+    int64_t mct, src, ifm, dht;  // Multicast Forwarding Table
+    int64_t ifd, fil, vif;       // Interfaces
+    int64_t rcv, snd;            // Buffers
+    int64_t qry, tmr, var;       // Queries, Timers, various.
 };
 
 // Forked child processes.

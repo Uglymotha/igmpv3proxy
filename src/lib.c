@@ -346,9 +346,9 @@ void getMemStats(int h, int cli_fd) {
                      "Config:  %lldb total, %lldb interfaces, %lldb config, %lldb filters.\n"
                      "         %lld allocs total, %lld interfaces, %lld config, %lld filters.\n"
                      "         %lld  frees total, %lld interfaces, %lld config, %lld filters.\n"
-                     "Routes:  %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb mfc, %lldb qry, %lldb dht.\n"
-                     "         %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry %lld dht.\n"
-                     "         %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry %lld dht.\n";
+                     "Routes:  %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb qry, %lldb dht.\n"
+                     "         %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld qry %lld dht.\n"
+                     "         %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld qry %lld dht.\n";
     struct rusage usage;
 
     if (cli_fd >= 0) {
@@ -358,12 +358,12 @@ void getMemStats(int h, int cli_fd) {
                           memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil,
                           memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil,
                           memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil,
-                          memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry + memuse.dht,
-                          memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry, memuse.dht,
-                          memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry + memalloc.dht,
-                          memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry, memalloc.dht,
-                          memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry + memfree.dht,
-                          memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry, memfree.dht);
+                          memuse.mct + memuse.src + memuse.ifm + memuse.qry + memuse.dht,
+                          memuse.mct, memuse.src, memuse.ifm, memuse.qry, memuse.dht,
+                          memalloc.mct + memalloc.src + memalloc.ifm + memalloc.qry + memalloc.dht,
+                          memalloc.mct, memalloc.src, memalloc.ifm, memalloc.qry, memalloc.dht,
+                          memfree.mct + memfree.src + memfree.ifm + memfree.qry + memfree.dht,
+                          memfree.mct, memfree.src, memfree.ifm, memfree.qry, memfree.dht);
         send(cli_fd, h ? buf : msg, strlen(buf), MSG_DONTWAIT);
     }
 
@@ -378,15 +378,15 @@ void getMemStats(int h, int cli_fd) {
         memalloc.ifd + memalloc.vif + memalloc.fil, memalloc.ifd, memalloc.vif, memalloc.fil);
     LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld interfaces, %lld config, %lld filters.",
         memfree.ifd + memfree.vif + memfree.fil, memfree.ifd, memfree.vif, memfree.fil);
-    LOG(LOG_DEBUG, 0, "Routes  Stats: %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb mfc, %lldb qry, %lldb dht.",
-        memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry + memuse.dht,
-        memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry, memuse.dht);
-    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry, %lld dht.",
-        memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry + memalloc.dht,
-        memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry, memalloc.dht);
-    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld mfc, %lld qry, %lld dht.",
-        memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry + memfree.dht,
-        memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry, memfree.dht);
+    LOG(LOG_DEBUG, 0, "Routes  Stats: %lldb total, %lldb tables, %lldb srcs, %lldb vifs, %lldb qry, %lldb dht.",
+        memuse.mct + memuse.src + memuse.ifm + memuse.qry + memuse.dht,
+        memuse.mct, memuse.src, memuse.ifm, memuse.qry, memuse.dht);
+    LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld srcs, %lld vifs, %lld qry, %lld dht.",
+        memalloc.mct + memalloc.src + memalloc.ifm + memalloc.qry + memalloc.dht,
+        memalloc.mct, memalloc.src, memalloc.ifm, memalloc.qry, memalloc.dht);
+    LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld srcs, %lld vifs, %lld qry, %lld dht.",
+        memfree.mct + memfree.src + memfree.ifm + memfree.qry + memfree.dht,
+        memfree.mct, memfree.src, memfree.ifm, memfree.qry, memfree.dht);
 
     if (getrusage(RUSAGE_SELF, &usage) < 0) {
         if (cli_fd)

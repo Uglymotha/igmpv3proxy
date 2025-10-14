@@ -1003,15 +1003,15 @@ void logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t ma
     if (fd < 0) {
         LOG(LOG_DEBUG, 0, "Total|---------------|---------------|----------------|-----|-----|-------------|"
                           " %14lld B | %10lld B/s", totalb, totalr);
-        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb routes, %lldb queries.",
-            memuse.mct + memuse.src + memuse.ifm + memuse.mfc + memuse.qry,
-            memuse.mct, memuse.src, memuse.ifm, memuse.mfc, memuse.qry);
-        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
-            memalloc.mct + memalloc.src + memalloc.ifm + memalloc.mfc + memalloc.qry,
-            memalloc.mct, memalloc.src, memalloc.ifm, memalloc.mfc, memalloc.qry);
-        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld routes, %lld queries.",
-            memfree.mct + memfree.src + memfree.ifm + memfree.mfc + memfree.qry,
-            memfree.mct, memfree.src, memfree.ifm, memfree.mfc, memfree.qry);
+        LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb table, %lldb sources, %lldb interfaces, %lldb queries.",
+            memuse.mct + memuse.src + memuse.ifm + memuse.qry,
+            memuse.mct, memuse.src, memuse.ifm, memuse.qry);
+        LOG(LOG_DEBUG, 0, "              %lld allocs total, %lld tables, %lld sources, %lld interfaces, %lld queries.",
+            memalloc.mct + memalloc.src + memalloc.ifm + memalloc.qry,
+            memalloc.mct, memalloc.src, memalloc.ifm, memalloc.qry);
+        LOG(LOG_DEBUG, 0, "              %lld  frees total, %lld tables, %lld sources, %lld interfaces, %lld queries.",
+            memfree.mct + memfree.src + memfree.ifm + memfree.qry,
+            memfree.mct, memfree.src, memfree.ifm, memfree.qry);
     } else if (h) {
         buf = strFmt(1, "Total|---------------|---------------|----------------|-----|-----|-------------|"
                         " %14lld B | %10lld B/s\n", "", totalb, totalr);
