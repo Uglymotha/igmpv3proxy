@@ -113,7 +113,6 @@ struct qry {
     struct src        *src[];                     // Array of pointers to sources
 };
 
-#define VSZ                (sizeof(void *))
 #define MCTSZ              ((1 << CONF->mcTables) * sizeof(void *))
 #define MCESZ              (sizeof(struct mct))
 #define SRCSZ              (sizeof(struct src))
@@ -130,6 +129,11 @@ struct qry {
 #define IS_IN(x, y)        (!x->dvif[y->dvifix].vp->mode)
 #define NHASH               (64)
 #define HASH(if, ip)       (if->conf->dhtSz ? murmurhash3(ip) : NHASH)
+#define MCTLST              0, 0,   0, 0,  mct, MCESZ
+#define SRCLST              0, 0,   0, 0,  src, SRCSZ
+#define DVIFLST             2, 1,   0, ix * VIFSZ, ifm, DVIFSZ
+#define UVIFLST             2, 0,   0, ix * VIFSZ, ifm, 0
+#define MFCLST              2, dir, 2, ix * VIFSZ, ifm, TTLSZ
 #define SET_HASH(t, v, h)  {if (v->conf->dhtSz && h != 64)                                                           \
                             BIT_SET(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
 #define CLR_HASH(t, v, h)  {if (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)    \
@@ -140,27 +144,6 @@ struct qry {
                               if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)               \
                                   while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                            \
                               else n = 1; i >= n; })
-#define MCTLST                   0, 0,   0, 0,  mct, MCESZ
-#define SRCLST                   0, 0,   0, 0,  src, SRCSZ
-#define DVIFLST                  2, 1,   0, ix, ifm, DVIFSZ
-#define UVIFLST                  2, 0,   0, ix, ifm, 0
-#define MFCLST                   2, dir, 2, ix, ifm, TTLSZ
-#define MA(e,t,o,i)              !t ? (void **)&e : !o ? *((void **)e+3) + ((i)*VIFSZ) + (4*VSZ) : (void **)e+4
-#define LST_IN(a,b,c,d)          L_IN(a, b, c, d)
-#define LST_RM(a,b,c)            L_RM(a, b, c)
-#define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG, 0, "L_IN:(%s:%x, %s:%x, %s:%x, %d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,i,#m,#s,s); \
-                                 void **pe = p ? (void **)p : NULL, **lst = (void **)&l, **ma = MA(e, t, o, i);                    \
-                                 if (t+d+o != 2) _calloc(*ma, 1, m, s); void **en = !t ? (void **)&e : (void **)e+(t)+(d);         \
-                                 void **pna  = pe  ? (!t ? pe + 1 : (*(pe+(t)+(d)) + ((i)*VIFSZ) + (((o)+1)*VSZ))) : NULL,         \
-                                      **pn   = pna ? *pna : (void**)l, **pa = *en + ((i)*VIFSZ) + ((o)*VSZ), **na = pa+1,          \
-                                      **pnpa = pn  ? (!t ? pn : *((void **)pn+(t)+(d)) + ((i)*VIFSZ) + ((o)*VSZ)) : NULL;          \
-                                 if (p) {*pa = p; if (pn) *na = *pna; *pna = e;} else {*na = l; *lst = e;} if (pnpa) *pnpa = e;}
-#define L_RM(e,l,t,d,o,i,m,s)   {LOG(LOG_DEBUG, 0, "L_RM:(%s:%x, %s:%x, %d:%d:%d, %s,%s:%d)",#e,e,#l,l,t,d,i,#m,#s,s);             \
-                                 void **pa = !t  ? (void **)e    : *((void **)  e+(t)+(d)) + (i)*VIFSZ + (o)*VSZ, **na = pa + 1,   \
-                                      **pn = *pa ? (!t ? *pa+VSZ : *((void **)*pa+(t)+(d)) + (i)*VIFSZ + (o+1)*VSZ) : (void**)&l,  \
-                                      **np = *na ? (!t ? *na     : *((void **)*na+(t)+(d)) + (i)*VIFSZ + (o)*VSZ)   : NULL;        \
-                                 *pn = *na; if (np) *np = *pa; *na = *pa = NULL;                                                   \
-                                 if (t+d+o != 2) {void **fp = MA(e,t,o,i); _free(*fp, m, s);}}
 
 // Prototypes
 struct mct  *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, bool create);

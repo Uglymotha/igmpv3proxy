@@ -56,6 +56,7 @@ const struct timespec nto = { 0, 0 };
 int                   mrt_tbl = -1;
 struct chld           chld = { 0 };
 uint32_t              vifcount = 0, upvifcount = 0, downvifcount = 0;
+struct IfDesc        *IfDescL = NULL, *vifL = NULL, *dvifL = NULL, *uvifL = NULL;
 
 /**
 *   Program main method. Is invoked when the program is started
@@ -79,12 +80,12 @@ int main(int ArgCn, char *ArgVc[]) {
     for (c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0); c != -1; c = getopt_long(ArgCn, ArgVc, "cvVdnht::", NULL, 0)) {
         switch (c) {
         case 'v':
-            if (CONF->logLevel == LOG_WARNING)
-                CONF->logLevel = LOG_NOTICE;
+            if (loglevel == LOG_WARNING)
+                loglevel = CONF->logLevel = LOG_NOTICE;
             else
-                CONF->logLevel = LOG_INFO; // FALLTHRU
+                loglevel = CONF->logLevel = LOG_INFO; // FALLTHRU
         case 'd':
-            CONF->logLevel = CONF->logLevel == LOG_WARNING ? LOG_DEBUG : CONF->logLevel;  // FALLTHRU
+            loglevel = CONF->logLevel = loglevel == LOG_WARNING ? LOG_DEBUG : loglevel;  // FALLTHRU
         case 'n':
             CONF->log2Stderr = true;
             CONF->notAsDaemon = true;
@@ -512,7 +513,7 @@ void igmpProxyCleanUp(int code) {
         LOG(LOG_WARNING, 0, "All processes finished.");
     }
     // Remove all interfaces, CLI socket, PID file and Config.
-    if (IFL)
+    if (IfDescL)
         rebuildIfVc(NULL);
     initCli(0);
     initIgmp(0);
@@ -526,7 +527,7 @@ void igmpProxyCleanUp(int code) {
             LOG(LOG_ERR, 1, "Cannot remove run dir %s.", CONF->runPath);
     }
     freeConfig(false);
-    if (CONF->logLevel >= LOG_INFO)
+    if (loglevel >= LOG_INFO)
         getMemStats(0, -1);
     // Log shutdown.
     TIME_STR(tE, curtime);

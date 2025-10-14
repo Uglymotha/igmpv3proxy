@@ -45,7 +45,7 @@
 static inline FILE *configFile(void *file, int open);
 static inline bool  nextToken(char *token);
 static inline void  initCommonConfig();
-static inline bool  parseFilters(char *in, char *token, struct filters ***filP, struct filters ***rateP);
+static inline bool  parseFilters(char *in, char *token, void **flst, void **rlst, void **pfil, void **prate);
 static inline bool  parsePhyintToken(char *token);
 
 // All valid configuration options. Prepend whitespace to allow for strstr() exact token matching.
@@ -69,7 +69,7 @@ extern volatile uint64_t  sighandled;
 static struct Config      conf, oldconf;
 
 // Structures to keep vif configuration and black/whitelists.
-static struct vifConfig *vifConf = NULL, *ovifConf = NULL;
+struct vifConfig         *vifConf = NULL, *ovifConf = NULL;
 
 // Keeps timer ids for configurable timed functions.
 static struct timers      timers = { (intptr_t)NULL, (intptr_t)NULL };
@@ -95,40 +95,31 @@ inline struct vifConfig **getVifConf(void) {
 *   Frees the old vifconf list and associated filters.
 */
 void freeConfig(bool old) {
-    struct vifConfig *tConf, **cConf;
-    struct filters   *tFil,  **dFil  = old ? &oldconf.filters : &conf.filters,
-                     *tRate, **dRate = old ? &oldconf.rates   : &conf.rates;
+    struct vifConfig *cnf;
+    struct filters   *fil, **f;
 
     // Free vifconf and filters, Alloced by parsePhyintToken(), configureVifs() and parseFilters()
-    for (cConf = old ? &ovifConf : &vifConf; *cConf; *cConf = tConf) {
-        tConf = (*cConf)->next;
-        // Remove and free filters and ratelimits, be careful not to free default filters here.
-        while ((*cConf)->filters && (*cConf)->filters != *dFil) {
-            tFil = (*cConf)->filters->next;
-            _free((*cConf)->filters, fil, FILSZ);
-            (*cConf)->filters = tFil;
-        }
-        while ((*cConf)->rates && (*cConf)->rates != *dRate) {
-            tRate = (*cConf)->rates->next;
-            _free((*cConf)->rates, fil, FILSZ);
-            (*cConf)->rates = tRate;
-        }
-        _free(*cConf, vif, VIFCSZ);
+    while ((cnf = old ? ovifConf : vifConf)) {
+        LOG(LOG_DEBUG, 0, "Removing config for %s.", cnf->name);
+        while ((fil = cnf->filters) && fil != (old ? oldconf.filters : conf.filters) && (f = &fil))
+            LST_RM(f, cnf->filters, FILLST);
+        while ((fil = cnf->rates) && fil != (old ? oldconf.rates : conf.rates) && (f = &fil))
+            LST_RM(f, cnf->rates, FILLST);
+        if (old)
+            LST_RM(cnf, ovifConf, CONFLST);
+        else
+            LST_RM(cnf, vifConf, CONFLST);
     }
-    *cConf = NULL;
-    if (old || SHUTDOWN) {
-        // Free default filters when clearing old config, or on shutdown / restart.
-        while (*dFil) {
-            tFil = (*dFil)->next;
-            _free(*dFil, fil, FILSZ);
-            *dFil = tFil;
-        }
-        while (*dRate) {
-            tRate = (*dRate)->next;
-            _free(*dRate, fil, FILSZ);
-            *dRate = tRate;
-        }
-    }
+    while ((fil = old ? oldconf.filters : conf.filters) && (f = &fil))
+        if (old)
+            LST_RM(f, oldconf.filters, FILLST);
+        else
+            LST_RM(f, conf.filters, FILLST);
+    while ((fil = old ? oldconf.rates : conf.rates) && (f = &fil))
+        if (old)
+            LST_RM(f, oldconf.rates, FILLST);
+        else
+            LST_RM(f, conf.rates, FILLST);
     if (SHUTDOWN && timers.rescanConf)
         // On Shutdown stop any running timers.
         timers.rescanConf = timerClear(timers.rescanConf);
@@ -259,13 +250,13 @@ static inline void initCommonConfig(void) {
 *   in the order they are configured, while using only one assignment. Seems complex, but really isn't.
 *   Configured filters will be split up into two lists, ACL and ratelimits.
 */
-static inline bool parseFilters(char *in, char *token, struct filters ***filP, struct filters ***rateP) {
+static inline bool parseFilters(char *in, char *token, void **flst, void **rlst, void **pfil, void **prate) {
     int64_t  intToken;
     uint32_t addr, mask;
 
     char     list[MAX_TOKEN_LENGTH], *filteropt = " allow a block b ratelimit r rl up down updown both 0 1 2 ";
-    struct filters filNew = { {0xFFFFFFFF, 0xFFFFFFFF}, {0xFFFFFFFF, 0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
-                   filErr = { {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1, NULL },
+    struct filters filNew = {NULL, NULL, {0xFFFFFFFF,0xFFFFFFFF}, {0xFFFFFFFF,0xFFFFFFFF}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1},
+                   filErr = {NULL, NULL, {0xFFFFFFFF, 0}, {0xFFFFFFFF, 0}, (uint8_t)-1, (uint8_t)-1, (uint64_t)-1},
                    fil    = filNew;
 
     strcpy(list, token);
@@ -303,7 +294,7 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
             // altnet is not usefull or compatible with igmpv3, ignore.
             fil = filErr;
         } else if (strcmp(" whitelist", list) == 0) {
-            fil = (struct filters){ {INADDR_ANY, 0}, {addr, mask}, 3, 3, ALLOW, NULL };
+            fil = (struct filters){ NULL, NULL, {INADDR_ANY, 0}, {addr, mask}, 3, 3, ALLOW };
         } else if (fil.src.ip == 0xFFFFFFFF) {
             if (! IN_MULTICAST(ntohl(addr))) {
                 fil.src.ip   = addr;
@@ -329,10 +320,11 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
                 fil.dir == 1 ? "up" : fil.dir == 2 ? "down" : "updown",
                 fil.action == BLOCK ? "BLOCK" : fil.action == ALLOW ? "ALLOW" : "RATELIMIT");
             // Allocate memory for filter and copy from argument.
-            struct filters ****n = fil.action <= ALLOW ? &filP : &rateP;
-            _calloc(***n, 1, fil, FILSZ);  // Freed by freeConfig()
-            ****n = fil;
-            **n = &(****n).next;
+            if (fil.action <= ALLOW)
+                LST_IN(pfil, flst, *pfil, FILLST);     // Freed by freeConfig()
+            else
+                LST_IN(prate, rlst, *prate, FILLST);   // Freed by freeConfig()
+            memcpy((fil.action <= ALLOW ? *pfil : *prate) + 2*VSZ, ((VS)&fil) + 2, sizeof(struct filters) - 2*VSZ);
             fil = filNew;
         }
     }
@@ -343,8 +335,8 @@ static inline bool parseFilters(char *in, char *token, struct filters ***filP, s
 *   Parsing interface configuration. Takes pointer to token buffer and location in buffer, latter is only updated.
 */
 static inline bool parsePhyintToken(char *token) {
-    struct vifConfig  *tmpPtr;
-    struct filters   **filP, **rateP;
+    struct vifConfig  *tmpConf;
+    struct filters    *pfil = NULL, *prate = NULL, *f;
     int64_t            intToken;
 
     if (!nextToken(token)) {
@@ -353,233 +345,231 @@ static inline bool parsePhyintToken(char *token) {
         return false;
     }
     // Find existing or create new vifConf.
-    for (tmpPtr = vifConf; tmpPtr && strncmp(tmpPtr->name, token + 1, IF_NAMESIZE); tmpPtr = tmpPtr->next);
-    if (! tmpPtr) {
-        _calloc(tmpPtr, 1, vif, VIFCSZ);  // Freed by freeConfig
+    for (tmpConf = vifConf; tmpConf && strncmp(tmpConf->name, token + 1, IF_NAMESIZE); tmpConf = tmpConf->next);
+    if (! tmpConf) {
+        LST_IN(tmpConf, vifConf, NULL, CONFLST);  // Freed by freeConfig
         // Insert vifconf in list and set default config and filters pointers.
-        *tmpPtr = DEFAULT_VIFCONF;
-        vifConf = tmpPtr;
+        DEFAULT_VIFCONF(tmpConf);
         // Make a copy of the token to store the IF name. Make sure it is NULL terminated.
-        memcpy(tmpPtr->name, token + 1, IF_NAMESIZE);
-        tmpPtr->name[IF_NAMESIZE - 1] = '\0';
+        memcpy(tmpConf->name, token + 1, IF_NAMESIZE);
+        tmpConf->name[IF_NAMESIZE - 1] = '\0';
         if (strlen(token + 1) >= IF_NAMESIZE)
-            LOG(LOG_WARNING, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpPtr->name, token + 1, IF_NAMESIZE);
-        filP = &tmpPtr->filters, rateP = &tmpPtr->rates;
+            LOG(LOG_WARNING, 0, "Config (%s): '%s' larger than system IF_NAMESIZE (%d).", tmpConf->name, token + 1, IF_NAMESIZE);;
     } else {
         // If any (default) filters have already been set, find the end of the list.
-        for (filP = &tmpPtr->filters; *filP && *filP != conf.filters; filP = &(*filP)->next);
-        for (rateP = &tmpPtr->rates; *rateP && *rateP != conf.rates; rateP = &(*rateP)->next);
+        for (f = tmpConf->filters; f && f != conf.filters; pfil = f, f = f->next);
+        for (f = tmpConf->rates; f && f != conf.rates; prate = f, f = f->next);
     }
 
     // Parse the rest of the config.
-    LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpPtr->name);
+    LOG(LOG_NOTICE, 0, "Config (%s): Configuring Interface.", tmpConf->name);
     while (!logerr && nextToken(token)) {
         while (token[1] && (strcmp(" filter", token) == 0 || strcmp(" altnet", token) == 0 || strcmp(" whitelist", token) == 0)) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpPtr->name, token + 1);
-            if (!parseFilters(tmpPtr->name, token, &filP, &rateP))
+            LOG(LOG_NOTICE, 0, "Config (%s): Parsing ACL '%s'.", tmpConf->name, token + 1);
+            if (!parseFilters(tmpConf->name, token, (VS)&tmpConf->filters, (VS)&tmpConf->rates, (VS)&pfil, (VS)&prate))
                 return false;
         }
         if (strcmp(" nodefaultfilter", token) == 0) {
-            tmpPtr->noDefaultFilter = true;
-            LOG(LOG_NOTICE, 0, "Config (%s): Not setting default filters.", tmpPtr->name);
+            tmpConf->noDefaultFilter = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Not setting default filters.", tmpConf->name);
 
         } else if (strcmp(" table", token) == 0 && INTTOKEN) {
 #ifdef __Linux__
             if (intToken < 0 || intToken > 999999999)
-                LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Table id should be between 0 and 999999999.", tmpConf->name);
             else {
-                tmpPtr->tbl = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Assigned to table %d.", tmpPtr->name, intToken);
-                sighandled = STARTUP && tmpPtr->tbl > 0 ? GOT_SIGPROXY : 0;
+                tmpConf->tbl = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Assigned to table %d.", tmpConf->name, intToken);
+                sighandled = STARTUP && tmpConf->tbl > 0 ? GOT_SIGPROXY : 0;
             }
 #else
-            LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpPtr->name);
+            LOG(LOG_WARNING, 0, "Config (%s): Table id is only valid on linux.", tmpConf->name);
 #endif
         } else if (strcmp(" disableipmrules", token) == 0) {
 #ifdef __Linux__
-            LOG(LOG_NOTICE, 0, "Config (%s): Will disable ip mrules.", tmpPtr->name);
-            tmpPtr->disableIpMrules = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will disable ip mrules.", tmpConf->name);
+            tmpConf->disableIpMrules = true;
 #else
             LOG(LOG_WARNING, 0, "Config (%s): disableipmrules is ony valid for linux.");
 #endif
         } else if (strcmp(" updownstream", token) == 0) {
-            tmpPtr->state = IF_STATE_UPDOWNSTREAM;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Updownstream.", tmpPtr->name);
+            tmpConf->state = IF_STATE_UPDOWNSTREAM;
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Updownstream.", tmpConf->name);
 
         } else if (strcmp(" upstream", token) == 0) {
-            tmpPtr->state = IF_STATE_UPSTREAM;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Upstream.", tmpPtr->name);
+            tmpConf->state = IF_STATE_UPSTREAM;
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Upstream.", tmpConf->name);
 
         } else if (strcmp(" downstream", token) == 0) {
-            tmpPtr->state = IF_STATE_DOWNSTREAM;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Downstream.", tmpPtr->name);
+            tmpConf->state = IF_STATE_DOWNSTREAM;
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Downstream.", tmpConf->name);
 
         } else if (strcmp(" disabled", token) == 0) {
-            tmpPtr->state = IF_STATE_DISABLED;
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Disabled.", tmpPtr->name);
+            tmpConf->state = IF_STATE_DISABLED;
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting to Disabled.", tmpConf->name);
 
         } else if (strcmp(" ratelimit", token) == 0 && INTTOKEN) {
             if (intToken < 0)
-                LOG(LOG_WARNING, 0, "Config (%s): Ratelimit must 0 or more.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Ratelimit must 0 or more.", tmpConf->name);
             else {
-                tmpPtr->ratelimit = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting ratelimit to %lld.", tmpPtr->name, intToken);
+                tmpConf->ratelimit = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting ratelimit to %lld.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" threshold", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Threshold must be between 1 and 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Threshold must be between 1 and 255.", tmpConf->name);
             else {
-                tmpPtr->threshold = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpPtr->name, intToken);
+                tmpConf->threshold = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting threshold to %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" quickleave", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode enabled.", tmpPtr->name);
-            tmpPtr->quickLeave = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode enabled.", tmpConf->name);
+            tmpConf->quickLeave = true;
 
         } else if (strcmp(" noquickleave", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpPtr->name);
-            tmpPtr->quickLeave = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpConf->name);
+            tmpConf->quickLeave = false;
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
             if (intToken < 8 || intToken > 33554432)
                 LOG(LOG_WARNING, 0, "Config (%s): Hash Table size must be 8 to 33554432 bytes (multiples of 8).");
             else {
-                tmpPtr->dhtSz = (intToken + (8 - (intToken % 8))) / 8;
-                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", tmpPtr->dhtSz * 8);
+                tmpConf->dhtSz = (intToken + (8 - (intToken % 8))) / 8;
+                LOG(LOG_NOTICE, 0, "Config: Default Hash table size for quickleave is %d.", tmpConf->dhtSz * 8);
             }
 
         } else if (strcmp(" proxylocalmc", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicast.", tmpPtr->name);
-            tmpPtr->proxyLocalMc = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will forward local multicast.", tmpConf->name);
+            tmpConf->proxyLocalMc = true;
 
         } else if (strcmp(" noproxylocalmc", token) == 0) {
-            LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicast.", tmpPtr->name);
-            tmpPtr->proxyLocalMc = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not forward local multicast.", tmpConf->name);
+            tmpConf->proxyLocalMc = false;
 
         } else if (strcmp(" maxorigins", token) == 0 && INTTOKEN) {
             if ((intToken < DEFAULT_MAX_ORIGINS && intToken != 0) || intToken > 65535)
                 LOG(LOG_WARNING, 0, "Config: Default Max origins must be between %d and 65535", DEFAULT_MAX_ORIGINS);
             else {
-                tmpPtr->maxOrigins = intToken;
+                tmpConf->maxOrigins = intToken;
                 LOG(LOG_NOTICE, 0, "Config: Setting max multicast group sources to %d.", conf.maxOrigins);
             }
 
         } else if (strcmp(" querierip", token) == 0 && nextToken(token)) {
-            tmpPtr->qry.ip = inet_addr(token + 1);
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpPtr->name, inetFmt(tmpPtr->qry.ip, 0));
+            tmpConf->qry.ip = inet_addr(token + 1);
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting querier ip address to %s.", tmpConf->name, inetFmt(tmpConf->qry.ip, 0));
 
         } else if (strcmp(" querierver", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 3)
-                LOG(LOG_WARNING, 0, "Config (%s): IGMP version %d not valid.", tmpPtr->name, intToken);
+                LOG(LOG_WARNING, 0, "Config (%s): IGMP version %d not valid.", tmpConf->name, intToken);
             else {
-                tmpPtr->qry.ver = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting querier version %d.", tmpPtr->name, intToken);
+                tmpConf->qry.ver = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting querier version %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" ssmrange", token) == 0 && nextToken(token)) {
-            if (!parseSubnetAddress(token + 1, &tmpPtr->ssmRange.ip, &tmpPtr->ssmRange.mask)
-                || (tmpPtr->ssmRange.ip != 0 && !IN_MULTICAST(ntohl(tmpPtr->ssmRange.ip)))) {
+            if (!parseSubnetAddress(token + 1, &tmpConf->ssmRange.ip, &tmpConf->ssmRange.mask)
+                || (tmpConf->ssmRange.ip != 0 && !IN_MULTICAST(ntohl(tmpConf->ssmRange.ip)))) {
                 LOG(LOG_NOTICE, 0, "%s is not a valid multicast address, using default %s.",
-                    inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask),
+                    inetFmt(tmpConf->ssmRange.ip, tmpConf->ssmRange.mask),
                     inetFmt(conf.ssmRange.ip, conf.ssmRange.mask));
-                tmpPtr->ssmRange = conf.ssmRange;
+                tmpConf->ssmRange = conf.ssmRange;
             } else
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting SSM Range to %s.", tmpPtr->name,
-                    inetFmt(tmpPtr->ssmRange.ip, tmpPtr->ssmRange.mask));
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting SSM Range to %s.", tmpConf->name,
+                    inetFmt(tmpConf->ssmRange.ip, tmpConf->ssmRange.mask));
 
         } else if (strcmp(" noquerierelection", token) == 0) {
-            tmpPtr->qry.election = false;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will not participate in IGMP querier election.", tmpPtr->name);
+            tmpConf->qry.election = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not participate in IGMP querier election.", tmpConf->name);
 
         } else if (strcmp(" querierelection", token) == 0) {
-            tmpPtr->qry.election = true;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will participate in IGMP querier election.", tmpPtr->name);
+            tmpConf->qry.election = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will participate in IGMP querier election.", tmpConf->name);
 
         } else if (strcmp(" nocksumverify", token) == 0) {
-            tmpPtr->cksumVerify = false;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will not verify IGMP checksums.", tmpPtr->name);
+            tmpConf->cksumVerify = false;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will not verify IGMP checksums.", tmpConf->name);
 
         } else if (strcmp(" cksumverify", token) == 0) {
-            tmpPtr->cksumVerify = true;
-            LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpPtr->name);
+            tmpConf->cksumVerify = true;
+            LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpConf->name);
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
-            tmpPtr->bwControl = (intToken < 3 ? 0 : intToken > 3600 ? 3600 : intToken);
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting bandwidth control interval to %ds.", tmpPtr->name, intToken * 10);
+            tmpConf->bwControl = (intToken < 3 ? 0 : intToken > 3600 ? 3600 : intToken);
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting bandwidth control interval to %ds.", tmpConf->name, intToken * 10);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
-                LOG(LOG_WARNING, 0, "Config (%s): Robustness value must be between 1 and 7.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Robustness value must be between 1 and 7.", tmpConf->name);
             else {
-                tmpPtr->qry.robustness = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Settings robustness to %d.", tmpPtr->name, intToken);
+                tmpConf->qry.robustness = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Settings robustness to %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" queryinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Query interval value must be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Query interval value must be between 1 than 255.", tmpConf->name);
             else {
-                tmpPtr->qry.interval = intToken;
+                tmpConf->qry.interval = intToken;
                 if (intToken > conf.topQueryInterval)
                     conf.topQueryInterval = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpPtr->name, intToken);
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" queryresponseinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Query response interval value must be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Query response interval value must be between 1 than 255.", tmpConf->name);
             else {
-                tmpPtr->qry.responseInterval = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting query response interval to %d.", tmpPtr->name, intToken);
+                tmpConf->qry.responseInterval = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting query response interval to %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" lastmemberinterval", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 255)
-                LOG(LOG_WARNING, 0, "Config (%s): Last member query interval value must be between 1 than 255.", tmpPtr->name);
+                LOG(LOG_WARNING, 0, "Config (%s): Last member query interval value must be between 1 than 255.", tmpConf->name);
             else {
-                tmpPtr->qry.lmInterval =  intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query interval to %d.", tmpPtr->name, intToken);
+                tmpConf->qry.lmInterval =  intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query interval to %d.", tmpConf->name, intToken);
             }
 
         } else if (strcmp(" lastmembercount", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
                 LOG(LOG_WARNING, 0, "Config (%s): Last member count must be between 1 and 7.");
             else {
-                tmpPtr->qry.lmCount = intToken;
-                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpPtr->name, tmpPtr->qry.lmCount);
+                tmpConf->qry.lmCount = intToken;
+                LOG(LOG_NOTICE, 0, "Config (%s): Setting last member query count to %d.", tmpConf->name, tmpConf->qry.lmCount);
             }
 
         } else if (!strstr(options, token) && token[1] != '\0') {
             // Unknown token, return error. Token may be " " if parseFilters() returns without valid token.
-            LOG(LOG_ERR, 0, "Config (%s): Unknown token '%s'.", tmpPtr->name, token + 1);
+            LOG(LOG_ERR, 0, "Config (%s): Unknown token '%s'.", tmpConf->name, token + 1);
 
         } else if (!strstr(phyintopt, token) || token[1] == '\0')
             break;
     }
 
     // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10
-                          > tmpPtr->qry.interval) {
-        if (tmpPtr->qry.ver != 3)
-            tmpPtr->qry.responseInterval = tmpPtr->qry.interval * 10;
+    if ((tmpConf->qry.ver != 3 ? tmpConf->qry.responseInterval : getIgmpExp(tmpConf->qry.responseInterval, 0)) / 10
+                          > tmpConf->qry.interval) {
+        if (tmpConf->qry.ver != 3)
+            tmpConf->qry.responseInterval = tmpConf->qry.interval * 10;
         else
-            tmpPtr->qry.responseInterval = getIgmpExp(tmpPtr->qry.interval * 10, 1);
-        float f = (tmpPtr->qry.ver != 3 ? tmpPtr->qry.responseInterval : getIgmpExp(tmpPtr->qry.responseInterval, 0)) / 10;
+            tmpConf->qry.responseInterval = getIgmpExp(tmpConf->qry.interval * 10, 1);
+        float f = (tmpConf->qry.ver != 3 ? tmpConf->qry.responseInterval : getIgmpExp(tmpConf->qry.responseInterval, 0)) / 10;
         LOG(LOG_NOTICE, 0, "Config (%s): Setting default query interval to %ds. Default response interval %.1fs",
-            tmpPtr->name, tmpPtr->qry.interval, f);
+            tmpConf->name, tmpConf->qry.interval, f);
     }
-    if (!tmpPtr->noDefaultFilter)
-        *filP = conf.filters;
+    if (!tmpConf->noDefaultFilter)
+        tmpConf->filters ? (pfil->next = conf.filters) : (tmpConf->filters = conf.filters);
 
     // Return false if error in interface config was detected.
     if (!logerr)
         LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
-            tmpPtr->name, tmpPtr->ratelimit, tmpPtr->threshold,
-            tmpPtr->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpPtr->state == IF_STATE_UPSTREAM ? "Upstream" :
-            tmpPtr->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
-            tmpPtr->cksumVerify ? "Enabled" : "Disabled", tmpPtr->quickLeave ? "Enabled" : "Disabled");
+            tmpConf->name, tmpConf->ratelimit, tmpConf->threshold,
+            tmpConf->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpConf->state == IF_STATE_UPSTREAM ? "Upstream" :
+            tmpConf->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
+            tmpConf->cksumVerify ? "Enabled" : "Disabled", tmpConf->quickLeave ? "Enabled" : "Disabled");
     return !logerr;
 }
 
@@ -589,7 +579,7 @@ static inline bool parsePhyintToken(char *token) {
 *   Because of this recursion it is important to keep track of configuration file and buffer pointers.
 */
 bool loadConfig(char *cfgFile) {
-    static struct filters  **filP, **rateP;
+    static struct filters   *pfil = NULL, *prate = NULL;
     int64_t                  intToken    = 0, st_mode, n;
     FILE                    *confFilePtr = NULL, *fp;
     char                    *token       = NULL;
@@ -599,8 +589,6 @@ bool loadConfig(char *cfgFile) {
         // Initialize common config on first entry.
         logerr = 0;
         initCommonConfig();
-        filP  = &conf.filters;
-        rateP = &conf.rates;
     }
     if (conf.cnt == 0xFF) {
         // Check recursion and return if exceeded.
@@ -632,13 +620,13 @@ bool loadConfig(char *cfgFile) {
             if (strcmp(" phyint", token) == 0 && !parsePhyintToken(token)) {
                 return false;
             } else if (strcmp(" defaultfilter", token) == 0) {
-                if (conf.filters && *filP == conf.filters) {
+                if (conf.filters && pfil == conf.filters) {
                     LOG(LOG_ERR, 0, "Config: Defaultfilterany cannot be combined with default filters.");
                     break;
                 } else {
                     LOG(LOG_NOTICE, 0, "Config: Parsing default filters.");
                     strcpy(token, "filter");
-                    parseFilters("default", token, &filP, &rateP);
+                    parseFilters("default", token, (VS)&conf.filters, (VS)&conf.rates, (VS)&pfil, (VS)&prate);
                 }
             } else if (strstr(phyintopt, token) && token[1] != '\0') {
                 if (strcmp(" quickleave", token) != 0) // Quickleave is valid for both config and phyint.

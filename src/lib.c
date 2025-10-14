@@ -278,7 +278,7 @@ bool myLog(int Severity, const char *func, int Errno, const char *FmtSt, ...) {
     va_list   ArgPt;
 
     va_start(ArgPt, FmtSt);
-    if (CONF->logLevel == LOG_DEBUG && Severity >= LOG_NOTICE)
+    if (loglevel == LOG_DEBUG && Severity >= LOG_NOTICE)
         Ln = snprintf(LogMsg, sizeof(LogMsg), "%s: ", func);
     Ln += vsnprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, FmtSt, ArgPt);
     if (Errno > 0)

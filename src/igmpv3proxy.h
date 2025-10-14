@@ -172,17 +172,18 @@ struct timers {
 };
 
 struct filters {
+    struct filters       *prev;
+    struct filters       *next;
     struct subnet         src;                          // Source / Sender) address
     struct subnet         dst;                          // Destination multicast group
     uint8_t               dir;                          // Filter direction (up/downstream)
     uint8_t               mode;                         // Mode for group (include / exclude)
     uint64_t              action;                       // Action (aalow / block / ratelimit)
-    struct filters       *next;
 };
 #define FILSZ (sizeof(struct filters))
 #define ALLOW 1
 #define BLOCK 0
-#define FILTERANY (struct filters){ {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, 3, 3, ALLOW, NULL }
+#define FILTERANY (struct filters){ NULL, NULL, {INADDR_ANY, INADDR_ANY}, {INADDR_ANY, INADDR_ANY}, 3, 3, ALLOW }
 
 // Keeps configured Querier parameters.
 struct queryParam {
@@ -200,6 +201,8 @@ struct queryParam {
 
 // Structure to keep configuration for VIFs.
 struct vifConfig {
+    struct vifConfig   *prev;
+    struct vifConfig   *next;
     char                name[IF_NAMESIZE];
     int                 tbl;                            // Mroute Table for Interface
     uint8_t             state;                          // Configured interface state
@@ -217,15 +220,15 @@ struct vifConfig {
     bool                proxyLocalMc;                   // Forward local multicast
     struct filters     *filters;                        // ACL for interface
     struct filters     *rates;                          // Ratelimiters for interface
-    struct vifConfig   *next;
 };
 #define VIFCSZ (sizeof(struct vifConfig))
-#define DEFAULT_VIFCONF (struct vifConfig){ "", CONF->defaultTable, CONF->InterfaceState, CONF->ssmRange, CONF->threshold,      \
-                                            CONF->rateLimit, {CONF->querierIp, CONF->querierVer, CONF->querierElection,         \
-                                            CONF->robustnessValue, CONF->queryInterval, CONF->queryResponseInterval,            \
-                                            CONF->lastMemberQueryInterval, CONF->lastMemberQueryCount,0, 0}, CONF->maxOrigins,  \
-                                            CONF->bwControl, CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave, \
-                                            CONF->dHostsHTSize, CONF->proxyLocalMc, NULL, NULL, *VIFCONF }
+#define DEFAULT_VIFCONF(c) *c =(struct vifConfig){ c->prev, c->next, "", CONF->defaultTable, CONF->InterfaceState, CONF->ssmRange, \
+                                                   CONF->threshold,  CONF->rateLimit, {CONF->querierIp, CONF->querierVer,          \
+                                                   CONF->querierElection, CONF->robustnessValue, CONF->queryInterval,              \
+                                                   CONF->queryResponseInterval, CONF->lastMemberQueryInterval,                     \
+                                                   CONF->lastMemberQueryCount,0, 0}, CONF->maxOrigins, CONF->bwControl,            \
+                                                   CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave,              \
+                                                   CONF->dHostsHTSize, CONF->proxyLocalMc, NULL, NULL }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
@@ -257,6 +260,14 @@ struct ifStats {
 };
 
 struct IfDesc {
+    struct IfDesc                *prev;                  // List of interfaces in system
+    struct IfDesc                *next;                  // List of interfaces in system
+    struct IfDesc                *prevvif;               // List of all active vifs
+    struct IfDesc                *nextvif;               // List of all active vifs
+    struct IfDesc                *prevDvif;              // List of active downstream vifs
+    struct IfDesc                *nextDvif;              // List of active downstream vifs
+    struct IfDesc                *prevUvif;              // List of active upstream vifs
+    struct IfDesc                *nextUvif;              // List of active upstream vifs
     char                          Name[IF_NAMESIZE];
     struct subnet                 ip;                    // Primary IP
     uint32_t                      Flags;                 // Operational flags
@@ -275,15 +286,16 @@ struct IfDesc {
     void                         *dmct;                  // Pointer to fisrt active downstream group for vif
     void                         *umct;                  // Pointer to fisrt active downstream group for vif
     void                         *mfc;                   // Pointer to first active upstream source for vif
-    struct IfDesc                *nextvif;               // List of all active vifs
-    struct IfDesc                *nextDvif;              // List of active downstream vifs
-    struct IfDesc                *nextUvif;              // List of active upstream vifs
-    struct IfDesc                *next;                  // List of interfaces in system
 };
 #define IFSZ (sizeof(struct IfDesc))
-#define DEFAULT_IFDESC (struct IfDesc){ "", {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0, 0, 0, 0},   \
-                                        {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1, (vif_t)-1, (vif_t)-1, (intptr_t)NULL, NULL, \
-                                        NULL, NULL, NULL, NULL, NULL, IfDescL }
+#define DEFAULT_IFDESC(i)       *i = (struct IfDesc){ IfDp->prev, IfDp->next, NULL, NULL, NULL, NULL, NULL, NULL, "",            \
+                                                      {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0,     \
+                                                      0, 0, 0}, {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1, (vif_t)-1, (vif_t)-1, \
+                                                      (intptr_t)NULL, NULL, NULL, NULL }
+#define FINDVIX(l,i,n,c,v,ix)   if (! l || (((struct IfDesc *)l)->i == c - 1)) { \
+                                    v = NULL;\
+                                    ix = c;\
+                                } else for (v = l, ix = ((struct IfDesc *)l)->i - 1; v->n && v->n->i == ix; v = v->n, ix--);
 
 // IGMP Query Definition.
 struct igmpv3_query {
@@ -450,6 +462,31 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 LOG(LOG_DEBUG, 0, "free(%s:%x, %s:%d, %s:%d)", #p, p, #m, memuse.m, #s, s);                       \
                                 free(p); p = NULL;}                                                                               \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
+#define VSZ                      sizeof(void *)
+#define VS                       void **
+#define MA(e,t,d,o,i)            !t ? (VS)&e : t == 1 ? (VS)e : !o ? *((VS)e+(t)+(d)) + (i) + (4*VSZ) : (VS)e+4
+#define LST_IN(a,b,c,d)          do L_IN(a, b, c, d) while (0)
+#define LST_RM(a,b,c)            do L_RM(a, b, c) while (0)
+#define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG,0,"L_IN:(%s:%x,%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,o,i,#m,#s,s);\
+                                 void **pe = (VS)p, **lst = t != 1 ? (VS)&l : (VS)l, **ma = MA(e, t, d, o, i);                     \
+                                 if (s) _calloc(*ma, 1, m, s); void **en = !t ? (VS)&e : (VS)e+(t)+(d);                            \
+                                 void **pna  = pe  ? (t < 2 ? pe + (o) + 1 : (*(pe+(t)+(d)) + (i) + (((o)+1)*VSZ))) : NULL,        \
+                                      **pn   = pna ? *pna : t != 1 ? (VS)l : (VS)*lst, **pa = *en + (i) + ((o)*VSZ), **na = pa+1,  \
+                                      **pnpa = pn  ? (t < 2 ? pn + o       : *((void **)pn+(t)+(d)) + (i) + ((o)*VSZ)) : NULL;     \
+                                 if (pe) {*pa = pe; *na = pn;  *pna = t != 1 ? e : *en;}                                           \
+                                 else {*na = t!= 1 ? l : *lst; *lst = t != 1 ? e : *en;} if (pnpa) *pnpa = e;}
+#define L_RM(e,l,t,d,o,i,m,s)   {LOG(LOG_DEBUG, 0, "L_RM:(%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,t,d,o,i,#m,#s,s);         \
+                                 void **pa =           !t ? (VS)((VS)e+(o))   : *((VS)  e+(t)+(d)) + (i) + (o)*VSZ, **na = pa + 1, \
+                                      **pn = *pa ? (t < 2 ? *pa+(((o)+1)*VSZ) : *((VS)*pa+(t)+(d)) + (i) + ((o)+1)*VSZ) : (VS)&l , \
+                                      **np = *na ? (t < 2 ? *na+((o)*VSZ)     : *((VS)*na+(t)+(d)) + (i) + (o)*VSZ)     : NULL;    \
+                                 *pn = *na; if (np) *np = *pa; *na = *pa = NULL;                                                   \
+                                 if (s) {void **fp = MA(e,t,d,o,i); _free(*fp, m, s);}}
+#define CONFLST                  0,  0, 0, 0, vif, VIFCSZ
+#define IFLST                    0,  0, 0, 0, ifd, IFSZ
+#define VIFLST                   0,  0, 2, 0, ifd, 0
+#define DIFLST                   0,  0, 4, 0, ifd, 0
+#define UIFLST                   0,  0, 6, 0, ifd, 0
+#define FILLST                   1, -1, 0, 0, fil, FILSZ
 
 // Bit manipulation macros.
 #define BIT_SET(X,n)     ((X) |= 1 << (n))
@@ -517,6 +554,7 @@ extern int              mrt_tbl;
 
 // Upstream vif mask.
 extern uint32_t         vifcount, upvifcount, downvifcount;
+extern struct IfDesc   *IfDescL, *vifL, *dvifL, *uvifL;
 
 // Global IGMP groups.
 extern uint32_t         allhosts_group;                // All hosts addr in net order
@@ -560,15 +598,11 @@ void cliCmd(char *cmd, int tbl);
 /**
 *   ifvc.c
 */
-#define         IFL                    *getIfL(false, 0)
-#define         GETIFL(x)               for (x = IFL; x; x = x->next)
+#define         GETIFL(x)               for (x = IfDescL; x; x = x->next)
 #define         GETIFL_IF(x, y)         GETIFL(x) if (y)
-#define         VIFL                   *getIfL(false, 1)
-#define         DVIFL                  *getIfL(true, 1)
-#define         UVIFL                  *getIfL(true, 0)
-#define         GETVIFL(x)              for (x = VIFL;  x; x = x->nextDvif)
-#define         GETDVIFL(x)             for (x = DVIFL; x; x = x->nextDvif)
-#define         GETUVIFL(x)             for (x = UVIFL; x; x = x->nextUvif)
+#define         GETVIFL(x)              for (x = vifL;  x; x = x->nextDvif)
+#define         GETDVIFL(x)             for (x = dvifL; x; x = x->nextDvif)
+#define         GETUVIFL(x)             for (x = uvifL; x; x = x->nextUvif)
 #define         IF_GETDVIFL(y, x)       if (y) GETDVIFL(x)
 #define         IF_GETUVIFL(y, x)       if (y) GETUVIFL(x)
 #define         GETVIFL_IF(x, y)        GETVIFL(x) if (y)
@@ -585,7 +619,6 @@ void cliCmd(char *cmd, int tbl);
 void            freeIfDescL(void);
 void            rebuildIfVc(intptr_t *tid);
 void            buildIfVc(void);
-struct IfDesc **getIfL(bool vifl, int dir);
 struct IfDesc  *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void            getIfStats(struct IfDesc *IfDp, int h, int fd);
 void            getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -667,7 +700,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 /**
 *   timers.c
 */
-#define DEBUGQUEUE(x, y, z) if (CONF->logLevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
+#define DEBUGQUEUE(x, y, z) if (loglevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
 intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
 intptr_t        timerClear(intptr_t tid);

@@ -929,7 +929,7 @@ void logRouteTable(const char *header, int h, int fd, uint32_t addr, uint32_t ma
     uint64_t       totalb = 0, totalr = 0, i = 0;
     bool           qL = false, nH = false;
 
-    if (fd < 0 && CONF->logLevel < LOG_DEBUG && !SHUTDOWN)
+    if (fd < 0 && loglevel < LOG_DEBUG && !SHUTDOWN)
         return;
     if (MCT && SHUTDOWN) {
         while (! MCT[i] && ++i < (1 << CONF->mcTables));

@@ -40,7 +40,6 @@
 #include "igmpv3proxy.h"
 
 static int      mrouterFD = -1, nlFD     = -1;
-static uint32_t vifix[3]  = {0};
 
 /**
 *   Returns the mrouter FD.
@@ -202,11 +201,8 @@ bool k_addVIF(struct IfDesc *IfDp) {
     struct IfDesc *If = NULL;
     vif_t          Ix;
 
-    // Find availablek ernel vif index.
-    if (! VIFL || (((struct IfDesc *)VIFL)->index == vifcount - 1))
-        Ix = vifcount;
-    else for (If = VIFL, Ix = ((struct IfDesc *)VIFL)->index - 1; If->nextvif && If->nextvif->index == Ix;
-              If = If->nextvif, Ix--);
+    // Find available kernel vif index.
+    FINDVIX(vifL, index, nextvif, vifcount, If, Ix);
     // Set the vif parameters, reset bw counters.
 #ifdef HAVE_STRUCT_VIFCTL_VIFC_LCL_IFINDEX
     vifCtl = (struct vifctl){ Ix, VIFF_USE_IFINDEX, IfDp->conf->threshold, 0, {IfDp->sysidx}, {INADDR_ANY} };
@@ -227,44 +223,18 @@ bool k_addVIF(struct IfDesc *IfDp) {
         return false;
     }
     vifcount++;
-    if (If) {
-        IfDp->nextvif = If->nextvif;
-        If->nextvif = IfDp;
-    } else {
-        IfDp->nextvif = VIFL;
-        VIFL = IfDp;
-    }
+    LST_IN(IfDp, vifL, If, VIFLST);
     IfDp->index = Ix;
     IfDp->stats.iBytes = IfDp->stats.oBytes = IfDp->stats.iRate = IfDp->stats.oRate = 0;
     if (IS_DOWNSTREAM(IfDp->state)) {
-        if (! DVIFL || (((struct IfDesc *)DVIFL)->index == downvifcount - 1)) {
-            If = NULL;
-            Ix = downvifcount;
-        } else for (If = DVIFL, Ix = ((struct IfDesc *)DVIFL)->index - 1; If->nextDvif && If->nextDvif->dvifix == Ix;
-                    If = If->nextDvif, Ix--);
-        if (If) {
-            IfDp->nextDvif = If->nextDvif;
-            If->nextDvif = IfDp;
-        } else {
-            IfDp->nextDvif = DVIFL;
-            DVIFL = IfDp;
-        }
+        FINDVIX(dvifL, dvifix, nextDvif, downvifcount, If, Ix);
+        LST_IN(IfDp, dvifL, If, DIFLST);
         IfDp->dvifix = Ix;
         downvifcount++;
     }
     if (IS_UPSTREAM(IfDp->state)) {
-        if (! UVIFL || (((struct IfDesc *)UVIFL)->index == upvifcount - 1)) {
-            If = NULL;
-            Ix = upvifcount;
-        } else for (If = UVIFL, Ix = ((struct IfDesc *)UVIFL)->index - 1; If->nextUvif && If->nextUvif->uvifix == Ix;
-                    If = If->nextUvif, Ix--);
-        if (If) {
-            IfDp->nextUvif = If->nextUvif;
-            If->nextUvif = IfDp;
-        } else {
-            IfDp->nextUvif = UVIFL;
-            UVIFL = IfDp;
-        }
+        FINDVIX(uvifL, uvifix, nextUvif, upvifcount, If, Ix);
+        LST_IN(IfDp, uvifL, If, UIFLST);
         IfDp->uvifix = Ix;
         upvifcount++;
     }
@@ -291,26 +261,15 @@ void k_delVIF(struct IfDesc *IfDp) {
         LOG(LOG_ERR, 1, "Error removing VIF #%d %s", IfDp->index, IfDp->Name);
     // Reset vif index.
     vifcount--;
-    if (VIFL == IfDp)
-        VIFL = IfDp->next;
-    else FOR_IF((struct IfDesc *If = VIFL; If; If = If ? If->nextvif : NULL), If->nextvif && If->nextvif == IfDp)
-        If->nextvif = IfDp->nextvif, If = NULL;
+    LST_RM(IfDp, vifL, VIFLST);
     IfDp->index = (vif_t)-1;
     if (IfDp->dvifix != (vif_t)-1) {
         downvifcount--;
-        IfDp->dvifix = (vif_t)-1;
-        if (DVIFL == IfDp)
-            DVIFL = IfDp->next;
-        else FOR_IF((struct IfDesc *If = DVIFL; If; If = If ? If->nextDvif : NULL), If->nextDvif && If->nextDvif == IfDp)
-            If->nextDvif = IfDp->nextDvif, If = NULL;
+        LST_RM(IfDp, dvifL, DIFLST);
     }
     if (IfDp->uvifix != (vif_t)-1) {
         upvifcount--;
-        IfDp->uvifix = (vif_t)-1;
-        if (UVIFL == IfDp)
-            UVIFL = IfDp->next;
-        else FOR_IF((struct IfDesc *If = UVIFL; If; If = If ? If->nextUvif : NULL), If->nextUvif && If->nextUvif == IfDp)
-            If->nextUvif = IfDp->nextUvif, If = NULL;
+        LST_RM(IfDp, uvifL, UIFLST);
     }
 }
 

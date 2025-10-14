@@ -310,8 +310,7 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
         len += IP_HEADER_RAOPT_LEN;
         IPSETLEN;
         // Send packet.
-        if ((len = sendto(MROUTERFD, snd_buf, len, MSG_DONTWAIT, (struct sockaddr *)&sdst, sizeof(sdst))) < 0
-            || CONF->logLevel == LOG_DEBUG)
+        if ((len = sendto(MROUTERFD, snd_buf, len, MSG_DONTWAIT, (struct sockaddr *)&sdst, sizeof(sdst))) < 0)
             LOG(len < 0 ? LOG_WARNING : LOG_DEBUG, len < 0, strFmt(1, "%s from %s to %s (%d:%d:%d) on %s.", "",
                      igmpPacketKind(igmpv3->igmp_type, igmpv3->igmp_code),
                      IfDp->querier.ip == INADDR_ANY ? "INADDR_ANY" : inetFmt(IfDp->querier.ip, 0),

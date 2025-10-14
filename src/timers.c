@@ -124,7 +124,7 @@ intptr_t timerClear(intptr_t tid) {
     if (node->next)
         node->next->prev = node->prev;
     DEBUGQUEUE("Clear Timer", 1, -1);
-    IF_FOR(CONF->logLevel >= LOG_INFO, (n = node, tid = 1; n->prev; n = n->prev, tid++));
+    IF_FOR(loglevel >= LOG_INFO, (n = node, tid = 1; n->prev; n = n->prev, tid++));
     LOG(LOG_INFO, 0, "Removed timeout (#%d): %s", tid, node->name);
     _free(node, tmr, TMSZ(node->name));        // Alloced by timer_setTimer()
     return (intptr_t)NULL;

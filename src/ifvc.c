@@ -40,51 +40,22 @@
 #include "igmpv3proxy.h"
 
 // Linked list of igmpv3proxy system interfaces and ulticast vifs.
-static struct   IfDesc   *IfDescL = NULL, *vifL = NULL, *dvifL = NULL, *uvifL = NULL;
-extern volatile uint64_t  sighandled;  // From igmpv3proxy.c signal handler.
+extern volatile uint64_t   sighandled;  // From igmpv3proxy.c signal handler.
+extern struct   vifConfig *vifConf;
 
 static void configureVifs(void);
-
-/**
-*   Frees the IfDesc table and cleans up on interface removal.
-*/
-void freeIfDescL(void) {
-    struct IfDesc *IfDp = IfDescL, *fIfDp;
-    while (IfDp) {
-        if (SHUTDOWN || IfDp->state & 0x80 || (IfDp->next && IfDp->next->state & 0x80)) {
-            // Remove interface marked for deletion.
-            LOG(LOG_WARNING, 0, "Interface %s was removed.", SHUTDOWN || IfDp->state & 0x80 ? IfDp->Name : IfDp->next->Name);
-            fIfDp = SHUTDOWN || (IfDp->state & 0x80) ? IfDescL : IfDp->next;
-            if (SHUTDOWN || IfDp->state & 0x80)
-                IfDescL = IfDp = IfDp->next;
-            else
-                IfDp->next = IfDp->next->next;
-            _free(fIfDp, ifd, IFSZ);
-        } else
-            IfDp = IfDp->next;
-    }
-
-    LOG(LOG_DEBUG, 0, "Interfaces List cleared.");
-}
-
-/**
-*   Returns pointer to the list of system interfaces.
-*/
-inline struct IfDesc **getIfL(bool vifl, int dir) {
-    return !vifl ? (!dir ? &IfDescL : &vifL) : dir ? &dvifL : &uvifL;
-}
 
 /**
 *   Returns pointer to interface based on given name, sys- or vif-index or NULL if not found.
 *   mode 0 = search by vifindex, 1 = search by sysindex, 2= search by name.
 *   if bit 3 of mode is set search the active vifs, all system interfaces otherwise.
 */
-inline struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
+struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
     struct IfDesc *IfDp = !(mode & (SRCHVIFL | SRCHDVIFL | SRCHUVIFL))  ? IfDescL :
                            (mode & SRCHVIFL) ? vifL : (mode &SRCHDVIFL) ? dvifL   : uvifL;
     while (IfDp && !((mode & FINDNAME) ? strcmp(name, IfDp->Name) == 0
                                        : ((mode & FINDSYSIX) ? IfDp->sysidx : IfDp->index) == ix))
-         IfDp = !(mode & (SRCHVIFL | SRCHDVIFL | SRCHUVIFL)) ? IfDp->next : (mode & SRCHVIFL)  ? IfDp->nextvif
+        IfDp = !(mode & (SRCHVIFL | SRCHDVIFL | SRCHUVIFL)) ? IfDp->next : (mode & SRCHVIFL)  ? IfDp->nextvif
                                                                           : (mode & SRCHDVIFL) ? IfDp->nextUvif : IfDp->nextUvif;
     return IfDp;
 }
@@ -99,12 +70,11 @@ void rebuildIfVc(intptr_t *tid) {
     if (! IfDescL || IFREBUILD || SHUP)
         buildIfVc();
     configureVifs();
-    freeIfDescL();
 
     // Restart timer when doing timed reload.
     if (!SHUTDOWN && CONF->rescanVif > 1 && tid)
         *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
-    if ((IFREBUILD || STARTUP || RESTART) && CONF->logLevel == LOG_DEBUG) {
+    if ((IFREBUILD || STARTUP || RESTART) && loglevel == LOG_DEBUG) {
         sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
             memuse.ifd + memuse.vif + memuse.fil, memuse.ifd, memuse.vif, memuse.fil);
@@ -140,9 +110,8 @@ void buildIfVc(void) {
             continue;
         } else if (! IfDp) {
             // New interface, allocate and initialize.
-            _malloc(IfDp, ifd, IFSZ);  // Freed by freeIfDescL()
-            *IfDp = DEFAULT_IFDESC;
-            IfDescL = IfDp;
+            LST_IN(IfDp, IfDescL, NULL, IFLST);  // Freed by configureVifs()
+            DEFAULT_IFDESC(IfDp);
             memcpy(IfDp->Name, ifAddrs->ifa_name, strlen(ifAddrs->ifa_name));
             LOG(LOG_NOTICE, 0, "Found new interface %s.", IfDp->Name);
         } else {
@@ -190,16 +159,17 @@ void buildIfVc(void) {
 *      new      existing  monitor unused  olddown oldup   down    up
 */
 void configureVifs(void) {
-    struct IfDesc     *IfDp = NULL, *If;
-    struct vifConfig  *vifConf = NULL;
+    struct IfDesc     *IfDp, *nIfDp = IfDescL, *If;
+    struct vifConfig  *tmpConf = NULL;
     struct filters    *fil, *ofil;
     LOG(LOG_INFO, 0, "Configuring MC vifs.");
 
-    GETIFL(IfDp) {
+    while((IfDp = nIfDp)) {
+        nIfDp = IfDp->next;
         // When config is reloaded, find and link matching config to interfaces.
         if (STARTUP || CONFRELOAD || SHUP || ! IfDp->conf) {
-            for (vifConf = *VIFCONF; vifConf && strcmp(IfDp->Name, vifConf->name); vifConf = vifConf->next);
-            if (vifConf) {
+            for (tmpConf = *VIFCONF; tmpConf && strcmp(IfDp->Name, tmpConf->name); tmpConf = tmpConf->next);
+            if (tmpConf) {
                 LOG(LOG_NOTICE, 0, "Found config for %s", IfDp->Name);
             } else {
                 // Interface has no matching config, create default config.
@@ -207,14 +177,13 @@ void configureVifs(void) {
                     IS_DISABLED(CONF->InterfaceState)     ? "disabled"     :
                     IS_UPDOWNSTREAM(CONF->InterfaceState) ? "updownstream" :
                     IS_UPSTREAM(CONF->InterfaceState)     ? "upstream"     : "downstream", IfDp->Name);
-                _calloc(vifConf, 1, vif, VIFCSZ);  // Freed by freeConfig()
-                *vifConf = DEFAULT_VIFCONF;
-                *VIFCONF = vifConf;
-                strcpy(vifConf->name, IfDp->Name);
-                vifConf->filters = CONF->filters;
+                LST_IN(tmpConf, vifConf, NULL, CONFLST);  // Freed by freeConfig()
+                DEFAULT_VIFCONF(tmpConf);
+                strcpy(tmpConf->name, IfDp->Name);
+                tmpConf->filters = CONF->filters;
             }
             IfDp->oconf = IfDp->conf;
-            IfDp->conf = vifConf;
+            IfDp->conf = tmpConf;
             if (mrt_tbl < 0 && (IfDp->state & 0x80) && (IfDp->state = 0x20))
                 // We will sig proxy on seeing new interfaces and set state to monitor disabled.
                 sighandled |= GOT_SIGPROXY;
@@ -251,7 +220,7 @@ void configureVifs(void) {
             IfDp->conf->qry.interval = IfDp->conf->qry.responseInterval = 10;
         // Check if filters have changed so that ACLs will be reevaluated.
         if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
-            for (fil = vifConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
+            for (fil = tmpConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
                  fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
                  fil = fil->next, ofil = ofil->next);
             if (fil || ofil) {
@@ -291,6 +260,10 @@ void configureVifs(void) {
             k_delVIF(IfDp);
         }
         IfDp->oconf = NULL;
+        if (IfDp->state & 0x80) {
+            LOG(LOG_NOTICE, 0, "Interface %s was removed.", IfDp->Name);
+            LST_RM(IfDp, IfDescL, IFLST);
+        }
     }
 
     // All vifs created / updated, check if there is an upstream and at least one downstream.
