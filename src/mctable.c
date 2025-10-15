@@ -80,18 +80,18 @@ struct mct *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, boo
         mct->stamp.tv_nsec = (intptr_t)timerClear((intptr_t)mct->stamp.tv_nsec);
     // Allocate downstream and upstream vif tables.
     if (! mct->dvif || mct->nvif.d < downvifcount) {
-        _recalloc(mct->dvif, ifm, VPSZ(1, struct vif), PVPSZ(mct, d, struct vif));     // Freed by delGroup()
+        _recalloc(mct->dvif, ifm, VPSZ(1, struct mvif), PVPSZ(mct, d, struct mvif));   // Freed by delGroup()
         _recalloc(mct->firstsrc, ifm, VPSZ(1, void *), PVPSZ(mct, d, void *));         // Freed by delGroup()
         mct->nvif.d = downvifcount;
     }
     if (! mct->uvif || mct->nvif.u < upvifcount) {
-        _recalloc(mct->uvif, ifm, VPSZ(0, struct vif), PVPSZ(mct, u, struct vif));     // Freed by delGroup()
+        _recalloc(mct->uvif, ifm, VPSZ(0, struct mvif), PVPSZ(mct, u, struct mvif));   // Freed by delGroup()
         mct->nvif.u = upvifcount;
     }
     // Allocate downstream vif & hash table.
     if (dir && create && ix != (vif_t)-1 && ! mct->dvif[ix].vp) {
         mct->nvif.i++;
-        LST_IN(mct, IfDp->dmct, pimct, DVIFLST);                                       // Freed by delGroup()
+        LST_IN(mct, IfDp->dmct, pimct, DVIFLST(ix));                                   // Freed by delGroup()
         mct->dvif[ix].vp->v1age = mct->dvif[ix].vp->v2age = -1;
         if (IfDp->conf->dhtSz)
             _calloc(mct->dvif[ix].vp->dht, sizeof(uint64_t), dht, IfDp->conf->dhtSz);  // Freed by delGroup()
@@ -136,7 +136,7 @@ static inline bool addGroup(struct mct* mct, struct IfDesc *IfDp, int dir, int m
                 IfDp->Name, IfDp->stats.iRate, IfDp->conf->ratelimit, inetFmt(mct->group, 0));
         else if (mct->mode && !mct->uvif[ix].j && !mct->uvif[ix].d
                            && k_updateGroup(IfDp, true, mct->group, 1, (uint32_t)-1)) {
-            LST_IN(mct, IfDp->umct, NULL, UVIFLST);
+            LST_IN(mct, IfDp->umct, NULL, UVIFLST(ix));
             mct->uvif[ix].j = 1;
             LOG(LOG_INFO, 0, "Joined group %s upstream on interface %s.", inetFmt(mct->group, 0), IfDp->Name);
         }
@@ -165,7 +165,7 @@ struct mct *delGroup(struct mct* mct, struct IfDesc *IfDp, int dir) {
         LOG(LOG_INFO, 0, "Leaving group %s upstream on interface %s.", inetFmt(mct->group, 0), IfDp->Name);
         k_updateGroup(IfDp, false, mct->group, 0, (uint32_t)-1);
         mct->uvif[ix].j = 0;
-        LST_RM(mct, IfDp->umct, UVIFLST);
+        LST_RM(mct, IfDp->umct, UVIFLST(ix));
     } else if (dir == 1) {
         if (mct->dvif[ix].vp->mode)
             mct->nvif.e--;
@@ -176,7 +176,7 @@ struct mct *delGroup(struct mct* mct, struct IfDesc *IfDp, int dir) {
         if (mct->dvif[ix].vp->dht)
             _free(mct->dvif[ix].vp->dht, dht, DHTSZ);           // Alloced by findGroup()
         LOG(LOG_DEBUG, 0, "YOYO %x %x %x %x", &mct->dvif[ix].prev, mct->dvif[ix].prev,  &mct->dvif[ix].next, mct->dvif[ix].next);
-        LST_RM(mct, IfDp->dmct, DVIFLST);                       // Alloced by findGroup()
+        LST_RM(mct, IfDp->dmct, DVIFLST(ix));                   // Alloced by findGroup()
     }
     if (!mct->nvif.e && !mct->nvif.i && !remove) {
         // No clients downstream, group can be removed from table.
@@ -189,8 +189,8 @@ struct mct *delGroup(struct mct* mct, struct IfDesc *IfDp, int dir) {
             delGroup(mct, If, 0);
         remove = false;
         _free(mct->firstsrc, ifm, PVPSZ(mct, d, void *));       // Alloced by findGroup()
-        _free(mct->dvif,     ifm, PVPSZ(mct, d, struct vif));   // Alloced by findGroup()
-        _free(mct->uvif,     ifm, PVPSZ(mct, u, struct vif));   // Alloced by findGroup()
+        _free(mct->dvif,     ifm, PVPSZ(mct, d, struct mvif));  // Alloced by findGroup()
+        _free(mct->uvif,     ifm, PVPSZ(mct, u, struct mvif));  // Alloced by findGroup()
         LST_RM(mct, MCT[mctHash], MCTLST);                      // Alloced by findGroup()
     }
 
@@ -234,11 +234,11 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mct *mct, uint32_t 
     if (! src->dvif || src->nvif.d < downvifcount) {
         if (src->ttl)
             _recalloc(src->ttl, ifm, downvifcount * sizeof(uint8_t), src->nvif.d * sizeof(uint8_t));  // Freed by delSrc()
-        _recalloc(src->dvif, ifm, VPSZ(1, struct vif), PVPSZ(src, d, struct vif));                    // Freed by delSrc()
+        _recalloc(src->dvif, ifm, VPSZ(1, struct mvif), PVPSZ(src, d, struct mvif));                  // Freed by delSrc()
         src->nvif.d = downvifcount;
     }
     if (! src->uvif || src->nvif.u < upvifcount) {
-        _recalloc(src->uvif, ifm, VPSZ(0, struct vif), PVPSZ(src, u, struct vif));                    // Freed by delSrc()
+        _recalloc(src->uvif, ifm, VPSZ(0, struct mvif), PVPSZ(src, u, struct mvif));                  // Freed by delSrc()
         src->nvif.u = upvifcount;
     }
     if (dir) {
@@ -251,7 +251,7 @@ static inline struct src *addSrc(struct IfDesc *IfDp, struct mct *mct, uint32_t 
         } else if (mode && ! src->dvif[ix].vp)
             src->nvif.e++;
         if (! src->dvif[ix].vp)
-            LST_IN(src, mct->firstsrc[ix], pisrc, DVIFLST);                                           // Freed by delSrc()
+            LST_IN(src, mct->firstsrc[ix], pisrc, DVIFLST(ix));                                       // Freed by delSrc()
         // Activate route will check ACL for source on downstream interfaces.
         if (src->IfDp && IS_UPSTREAM(src->IfDp->state) &&
             ((!mode && src->ttl[ix] == 0 && !src->dvif[ix].d) || ( mode && src->ttl[ix] > 0)))
@@ -326,7 +326,7 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int dir, int mode, bool
                 src->nvif.e--;
             if (src->dvif[ix].vp->dht)
                 _free(src->dvif[ix].vp->dht, dht, IfDp->conf->dhtSz * sizeof(uint64_t));   // Alloced by addSrc()
-            LST_RM(src, mct->firstsrc[ix], DVIFLST);                                       // Alloced by addSrc()
+            LST_RM(src, mct->firstsrc[ix], DVIFLST(ix));                                   // Alloced by addSrc()
         }
         IF_GETUVIFL_IF(!leave && (mode == 0 || mode == 2) && mct->mode && !src->nvif.i, If, !src->uvif[If->uvifix].j)
             // In exclude mode upstream the source can be blocked if it is excluded on all exclude interfaces
@@ -357,8 +357,8 @@ struct src *delSrc(struct src *src, struct IfDesc *IfDp, int dir, int mode, bool
                 LOG(LOG_INFO, 0, "Maxorigins reset for group %s.", inetFmt(src->mct->group, 0));
                 mct->nsrcs[1] &= ~0x80000000;
             }
-            _free(src->dvif, ifm, PVPSZ(src, d, struct vif));   // Alloced by addSrc()
-            _free(src->uvif, ifm, PVPSZ(src, u, struct vif));   // Alloced by addSrc()
+            _free(src->dvif, ifm, PVPSZ(src, d, struct mvif));  // Alloced by addSrc()
+            _free(src->uvif, ifm, PVPSZ(src, u, struct mvif));  // Alloced by addSrc()
             LST_RM(src, mct->sources, SRCLST);                  // Alloced by addSrc()
         }
     }
@@ -524,7 +524,7 @@ void clearGroups(struct IfDesc *IfDp) {
                 k_delMRoute(src->ip, mct->group, src->IfDp);
                 src->IfDp = NULL;
                 src->bytes = src->rate = 0;
-                LST_RM(src, IfDp->mfc, MFCLST);
+                LST_RM(src, IfDp->mfc, MFCLST(ix));   // Alloced by activateRoute()
                 if (!src->nvif.i && !src->nvif.e)
                     delSrc(src, IfDp, 0, 1, false, NHASH);
             }
@@ -814,7 +814,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, uint32_t ip, uint32_t
         k_delMRoute(src->ip, mct->group, src->IfDp);
         src->IfDp = NULL;
         src->bytes = src->rate = 0;
-        LST_RM(src, IfDp->mfc, MFCLST);             // Alloced by self
+        LST_RM(src, IfDp->mfc, MFCLST(ix));             // Alloced by self
     } else {
         // Install or update kernel MFC. See RFC 3376: 6.3 IGMPv3 Source-Specific Forwarding Rules.
         if (! src && ! (src = addSrc(IfDp, mct, ip, 0, 0, false, src, NHASH))) {
@@ -827,7 +827,7 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, uint32_t ip, uint32_t
                 mct->stamp.tv_nsec = timerSet(CONF->topQueryInterval * 30, strFmt(1, "Unresolved group (%s)", "",
                                               inetFmt(group, 0)), ageUnknownGroup, src);
             clock_gettime(CLOCK_REALTIME, &src->stamp);
-            LST_IN(src, IfDp->mfc, NULL, MFCLST);   // Freed by self or clearGroups()
+            LST_IN(src, IfDp->mfc, NULL, MFCLST(ix));   // Freed by self or clearGroups()
             src->IfDp = IfDp;
         }
         memset(src->ttl, 0, src->nvif.d);

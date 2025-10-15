@@ -41,7 +41,7 @@
 #ifndef MCTABLE_H
 #define MCTABLE_H
 
-struct vif {
+struct mvif {
     void               *prev;                     // Previous mct/src for vif
     void               *next;                     // Next mct/src for vif
     struct src         *prevmfc;                  // Previous mfc on upstream interface
@@ -63,8 +63,8 @@ struct mct {
     // Keeps multicast group and source membership information.
     struct mct         *prev;                     // Previous group in table.
     struct mct         *next;                     // Next group in table.
-    struct vif         *uvif;                     // Active upstream vifs for group
-    struct vif         *dvif;                     // Downstream vifs for group
+    struct mvif        *uvif;                     // Active upstream vifs for group
+    struct mvif        *dvif;                     // Downstream vifs for group
     struct timespec     stamp;                    // Time group was installed
     uint32_t            group;                    // The group to route
     bool                mode;                     // Group upstream filter mode
@@ -78,8 +78,8 @@ struct src {
     // Keeps information on sources
     struct src         *prev;                     // Previous source in group.
     struct src         *next;                     // Next source in group
-    struct vif         *uvif;                     // Active upstream vifs for source
-    struct vif         *dvif;                     // Active downstream vifs for source
+    struct mvif        *uvif;                     // Active upstream vifs for source
+    struct mvif        *dvif;                     // Active downstream vifs for source
     uint8_t            *ttl;                      // Outgoing vifs ttl
     struct timespec     stamp;                    // Time src was installed
     uint32_t            ip;                       // Source IP adress
@@ -101,23 +101,23 @@ struct dvif {
 };
 
 struct qry {
-    struct IfDesc     *IfDp;                      // Interfce for Query
-    struct mct        *mct;                       // Pointer to group being queried
-    intptr_t           tid;                       // Timer ID
-    uint8_t            type;                      // Query type (GSQ/GSSQ)
-    uint8_t            code;                      // Query max response code (LMI)
-    uint8_t            misc;                      // Query misc (RA/QRV)
-    uint8_t            cnt;                       // Nr of queries sent
-    uint32_t           group;                     // Group for query
-    uint32_t           nsrcs[2];                  // Nr of sources in query, 0 = original, 1 = current
-    struct src        *src[];                     // Array of pointers to sources
+    struct IfDesc      *IfDp;                     // Interfce for Query
+    struct mct         *mct;                      // Pointer to group being queried
+    intptr_t            tid;                      // Timer ID
+    uint8_t             type;                     // Query type (GSQ/GSSQ)
+    uint8_t             code;                     // Query max response code (LMI)
+    uint8_t             misc;                     // Query misc (RA/QRV)
+    uint8_t             cnt;                      // Nr of queries sent
+    uint32_t            group;                    // Group for query
+    uint32_t            nsrcs[2];                 // Nr of sources in query, 0 = original, 1 = current
+    struct src         *src[];                    // Array of pointers to sources
 };
 
 #define MCTSZ              ((1 << CONF->mcTables) * sizeof(void *))
 #define MCESZ              (sizeof(struct mct))
 #define SRCSZ              (sizeof(struct src))
 #define MFCSZ              (sizeof(struct mfc))
-#define VIFSZ              (sizeof(struct vif))
+#define VIFSZ              (sizeof(struct mvif))
 #define DVIFSZ             (sizeof (struct dvif))
 #define DHTSZ               IfDp->conf->dhtSz * sizeof(uint64_t)
 #define TTLSZ              (src->nvif.d * sizeof(uint8_t))
@@ -129,11 +129,11 @@ struct qry {
 #define IS_IN(x, y)        (!x->dvif[y->dvifix].vp->mode)
 #define NHASH               (64)
 #define HASH(if, ip)       (if->conf->dhtSz ? murmurhash3(ip) : NHASH)
-#define MCTLST              0, 0,   0, 0,  mct, MCESZ
-#define SRCLST              0, 0,   0, 0,  src, SRCSZ
-#define DVIFLST             2, 1,   0, ix * VIFSZ, ifm, DVIFSZ
-#define UVIFLST             2, 0,   0, ix * VIFSZ, ifm, 0
-#define MFCLST              2, dir, 2, ix * VIFSZ, ifm, TTLSZ
+#define MCTLST              0, 0,   0, 0,         mct, MCESZ
+#define SRCLST              0, 0,   0, 0,         src, SRCSZ
+#define DVIFLST(i)          2, 1,   0, i * VIFSZ, ifm, DVIFSZ
+#define UVIFLST(i)          2, 0,   0, i * VIFSZ, ifm, 0
+#define MFCLST(i)           2, dir, 2, i * VIFSZ, ifm, TTLSZ
 #define SET_HASH(t, v, h)  {if (v->conf->dhtSz && h != 64)                                                           \
                             BIT_SET(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64);}
 #define CLR_HASH(t, v, h)  {if (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)    \
@@ -141,9 +141,9 @@ struct qry {
 #define TST_HASH(t, v, h)  (h != 64 && v->conf->dhtSz && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht &&      \
                             BIT_TST(t->dvif[v->dvifix].vp->dht[(h >> 7) % v->conf->dhtSz], h % 64))
 #define NO_HASH(t, v)      ({register uint64_t i = 0, n = v->conf->dhtSz;                                            \
-                              if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)               \
-                                  while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                            \
-                              else n = 1; i >= n; })
+                             if (n && t->dvif && t->dvif[v->dvifix].vp && t->dvif[v->dvifix].vp->dht)               \
+                                 while(i < n && t->dvif[v->dvifix].vp->dht[i] == 0) i++;                            \
+                             else n = 1; i >= n; })
 
 // Prototypes
 struct mct  *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, bool create);

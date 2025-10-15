@@ -198,9 +198,15 @@ void configureVifs(void) {
             IfDp->state = IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : IF_STATE_DISABLED;
         } else
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
+        // Check if quickleave was enabled or disabled due to config change.
+        if ((CONFRELOAD || SHUP) && IfDp->oconf->dhtSz != IfDp->conf->dhtSz) {
+            // Disable interface to free hash tables then rebuild interfaces to reanble interface.
+            LOG(LOG_WARNING, 0, "Downstream host hashtable size on %s changed from %d to %d.",
+                IfDp->Name, IfDp->oconf->dhtSz, IfDp->conf->dhtSz);
+            IfDp->state &= 03;
+            sighandled |= GOT_SIGUSR2;
+        }
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
-        if (!IfDp->conf->quickLeave)
-            IfDp->conf->dhtSz = 0;
 
         // Set configured querier ip to interface address if not configured
         // and set version to 3 for disabled/upstream only interface.
@@ -219,14 +225,6 @@ void configureVifs(void) {
                 LOG(LOG_INFO, 0, "Filters changed for %s.", IfDp->Name);
                 IfDp->filCh = true;
             }
-        }
-        // Check if quickleave was enabled or disabled due to config change.
-        if ((CONFRELOAD || SHUP) && IfDp->oconf->dhtSz != IfDp->conf->dhtSz) {
-            // Disable interface to free hash tables then rebuild interfaces to reanble interface.
-            LOG(LOG_WARNING, 0, "Downstream host hashtable size on %s changed from %d to %d.",
-                IfDp->Name, IfDp->oconf->dhtSz, IfDp->conf->dhtSz);
-            IfDp->state &= 03;
-            sighandled |= GOT_SIGUSR2;
         }
         // Check if querier process needs to be restarted, because election was turned of and other querier present.
         if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
@@ -299,7 +297,7 @@ void getIfStats(struct IfDesc *IfDp, int h, int fd) {
                          IS_DISABLED(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "Disabled" :
                      IS_UPDOWNSTREAM(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "UpDownstream" :
                        IS_DOWNSTREAM(mrt_tbl < 0 ? IfDp->conf->state : IfDp->state) ? "Downstream" : "Upstream",
-                     IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->quickLeave ? "Enabled" : "Disabled",
+                     IfDp->conf->cksumVerify ? "Enabled" : "Disabled", IfDp->conf->dhtSz ? "Enabled" : "Disabled",
                      inetFmt(IfDp->querier.ip, 0), IfDp->stats.iBytes + IfDp->stats.oBytes,
                      IfDp->stats.iRate + IfDp->stats.oRate,
                      !IS_DISABLED(IfDp->state) ? IfDp->conf->ratelimit : 0);

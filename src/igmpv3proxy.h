@@ -110,8 +110,6 @@ struct Config {
     // Last member probe.
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
-    // Set if upstream leave messages should be sent instantly..
-    bool                quickLeave;
     // Size in bytes of hash table of downstream hosts used for fast leave
     uint16_t            dHostsHTSize;
     uint32_t            hashSeed;
@@ -215,7 +213,6 @@ struct vifConfig {
     bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
-    bool                quickLeave;                     // Fast upstream leave
     uint16_t            dhtSz;                          // dHosts hash table size
     bool                proxyLocalMc;                   // Forward local multicast
     struct filters     *filters;                        // ACL for interface
@@ -227,7 +224,7 @@ struct vifConfig {
                                                    CONF->querierElection, CONF->robustnessValue, CONF->queryInterval,              \
                                                    CONF->queryResponseInterval, CONF->lastMemberQueryInterval,                     \
                                                    CONF->lastMemberQueryCount,0, 0}, CONF->maxOrigins, CONF->bwControl,            \
-                                                   CONF->disableIpMrules, false, CONF->cksumVerify, CONF->quickLeave,              \
+                                                   CONF->disableIpMrules, false, CONF->cksumVerify,                                \
                                                    CONF->dHostsHTSize, CONF->proxyLocalMc, NULL, NULL }
 
 // Running querier status for interface.
@@ -464,24 +461,24 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
 #define VSZ                      sizeof(void *)
 #define VS                       void **
-#define MA(e,t,d,o,i)            !t ? (VS)&(e) : t == 1 ? (VS)(e) : !(o) ? *((VS)e+(t)+(d)) + (i) + (4*VSZ) : (VS)(e)+4
+#define MA(e,t,d,o,i)            !t ? (VS)&(e) : t == 1 ? (VS)(e) : !(o) ? *((VS)(e)+(t)+(d)) + (i) + (4*VSZ) : (VS)(e)+4
 #define LST_IN(a,b,c,d)          do L_IN(a, b, c, d) while (0)
 #define LST_RM(a,b,c)            do L_RM(a, b, c) while (0)
 #define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG,0,"L_IN:(%s:%x,%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,o,i,#m,#s,s);\
-                                 void **pe = (VS)p, **lst = t != 1 ? (VS)&l : (VS)l, **ma = MA(e, t, d, o, i);                     \
-                                 if (s) _calloc(*ma, 1, m, s); void **en = !t ? (VS)&(e) : (VS)(e)+(t)+(d);                        \
-                                 void **pna  = pe  ? (t < 2 ? pe + (o) + 1 : (*(pe+(t)+(d)) + (i) + (((o)+1)*VSZ))) : NULL,        \
-                                      **pn   = pna ? *pna : t != 1 ? (VS)l : (VS)*lst, **pa = *en + (i) + ((o)*VSZ), **na = pa+1,  \
+                                 void **pe = (VS)(p), **lst = t != 1 ? (VS)(&l) : (VS)(l), **ma = MA(e, t, d, o, i);               \
+                                 if ((s)) _calloc(*ma, 1, m, (s)); void **en = !t ? (VS)&(e) : (VS)(e)+(t)+(d);                    \
+                                 void **pna  = pe  ? (t < 2 ? pe + (o) + 1   : (*(pe+(t)+(d)) + (i) + (((o)+1)*VSZ))) : NULL,      \
+                                      **pn   = pna ? *pna : t != 1 ? (VS)(l) : (VS)*lst, **pa = *en + (i) + ((o)*VSZ), **na = pa+1,\
                                       **pnpa = pn  ? (t < 2 ? pn + (o) : *((void **)pn+(t)+(d)) + (i) + ((o)*VSZ)) : NULL;         \
-                                 if (pe) {*pa = pe; *na = pn;  *pna = t != 1 ? e : *en;}                                          \
-                                 else {*na = t!= 1 ? l : *lst; *lst = t != 1 ? e : *en;} if (pnpa) *pnpa = t != 1 ? e : *en;}
+                                 if (pe) {*pa = pe; *na = pn;  *pna = t != 1 ? (e) : *en;}                                         \
+                                 else {*na = t!= 1 ? (l) : *lst; *lst = t != 1 ? (e) : *en;} if (pnpa) *pnpa = t != 1 ? (e) : *en;}
 #define L_RM(e,l,t,d,o,i,m,s)   {LOG(LOG_DEBUG, 0, "L_RM:(%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,t,d,o,i,#m,#s,s);         \
-                                 void **pa =    !t ? (VS)((VS)e+(o))             : *((VS)  e+(t)+(d)) + (i) + (o)*VSZ, **na = pa+1,\
+                                 void **pa =    !t ? (VS)((VS)(e)+(o))           : *((VS)(e)+(t)+(d)) + (i) + (o)*VSZ, **na = pa+1,\
                                       **pn = ! *pa ? (t != 1 ? (VS)(&l)          :   (VS)(l))                                      \
                                                    : (t  < 2 ? *pa+(((o)+1)*VSZ) : *((VS)*pa+(t)+(d)) + (i) + ((o)+1)*VSZ),        \
                                       **np = *na ? (t < 2 ? *na+((o)*VSZ)        : *((VS)*na+(t)+(d)) + (i) + (o)*VSZ)     : NULL; \
                                  *pn = *na; if (np) *np = *pa; *na = *pa = NULL;                                                   \
-                                 if (s) {void **fp = MA(e,t,d,o,i); _free(*fp, m, s);}}
+                                 if ((s)) {void **fp = MA(e,t,d,o,i); _free(*fp, m, (s));}}
 #define CONFLST                  0,  0, 0, 0, vif, VIFCSZ
 #define IFLST                    0,  0, 0, 0, ifd, IFSZ
 #define VIFLST                   0,  0, 2, 0, ifd, 0

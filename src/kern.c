@@ -262,7 +262,6 @@ void k_delVIF(struct IfDesc *IfDp) {
     // Reset vif index.
     vifcount--;
     LST_RM(IfDp, vifL, VIFLST);
-    IfDp->index = (vif_t)-1;
     if (IfDp->dvifix != (vif_t)-1) {
         downvifcount--;
         LST_RM(IfDp, dvifL, DIFLST);
@@ -271,6 +270,7 @@ void k_delVIF(struct IfDesc *IfDp) {
         upvifcount--;
         LST_RM(IfDp, uvifL, UIFLST);
     }
+    IfDp->index = IfDp->dvifix = IfDp->uvifix = (vif_t)-1;
 }
 
 /**
@@ -322,7 +322,7 @@ bool k_updateGroup(struct IfDesc *IfDp, bool join, uint32_t group, int mode, uin
 void k_setSourceFilter(struct IfDesc *IfDp, uint32_t group, uint32_t fmode, uint32_t nsrcs, uint32_t *slist) {
     uint32_t                 i, err = 0, size = (nsrcs + 1) * sizeof(struct sockaddr_storage);
     struct sockaddr_storage *ss;
-#if defined __Solaris || defined __FreeBSD__
+#if defined __Solaris || defined __FREEBSD__
     int er = EADDRNOTAVAIL;  // Freebsd / Solaris errno when group is not joined.
 #else
     int er = EINVAL;         // Linux errno when group is not joined.

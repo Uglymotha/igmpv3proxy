@@ -55,7 +55,7 @@ static const char *options = " include logfile loglevel rescanvif rescanvifnl re
                              " defaultratelimit defaultquerierver defaultquerierip defaultrobustness defaultqueryinterval"
                              " defaultqueryrepsonseinterval defaultlastmemberinterval defaultlastmembercount defaultbwcontrol"
                              " defaultproxylocalmc defaultnoquerierelection defaultproxylocalmc defaultnocksumverify defaultfilter"
-                             " defaultfilterany nodefaultfilter defaultdisableipmrules defaultssmrange ";
+                             " defaultfilterany defaultdisableipmrules defaultssmrange ";
 static const char *phyintopt = " table updownstream upstream downstream disabled proxylocalmc noproxylocalmc quickleave"
                                " noquickleave hashtablesize ratelimit threshold nocksumverify cksumverify noquerierelection"
                                " querierelection querierip querierver robustnessvalue queryinterval queryrepsonseinterval"
@@ -201,14 +201,12 @@ static inline void initCommonConfig(void) {
     // Default values for leave intervals...
     conf.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
     conf.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
-    // Sent leave message upstream on leave messages from downstream.
-    conf.quickLeave = false;
     // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
     conf.maxOrigins = DEFAULT_MAX_ORIGINS;
     // Default size of hash table is 32 bytes (= 256 bits) and can store
     // up to the 256 non-collision hosts, approximately half of /24 subnet
-    conf.dHostsHTSize    = DEFAULT_HASHTABLE_SIZE / 8;
+    conf.dHostsHTSize    = 0;
     conf.defaultTable    = 0;
     conf.disableIpMrules = false;
     // Default interface state and parameters.
@@ -414,11 +412,12 @@ static inline bool parsePhyintToken(char *token) {
 
         } else if (strcmp(" quickleave", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode enabled.", tmpConf->name);
-            tmpConf->quickLeave = true;
+            if (!tmpConf->dhtSz)
+                tmpConf->dhtSz = DEFAULT_HASHTABLE_SIZE;
 
         } else if (strcmp(" noquickleave", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config (%s): Quick leave mode disabled.", tmpConf->name);
-            tmpConf->quickLeave = false;
+            tmpConf->dhtSz = 0;
 
         } else if (strcmp(" hashtablesize", token) == 0 && INTTOKEN) {
             if (intToken < 8 || intToken > 33554432)
@@ -557,7 +556,7 @@ static inline bool parsePhyintToken(char *token) {
             tmpConf->name, tmpConf->ratelimit, tmpConf->threshold,
             tmpConf->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpConf->state == IF_STATE_UPSTREAM ? "Upstream" :
             tmpConf->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
-            tmpConf->cksumVerify ? "Enabled" : "Disabled", tmpConf->quickLeave ? "Enabled" : "Disabled");
+            tmpConf->cksumVerify ? "Enabled" : "Disabled", tmpConf->dhtSz ? "Enabled" : "Disabled");
     return !logerr;
 }
 
@@ -699,7 +698,8 @@ bool loadConfig(char *cfgFile) {
 
         } else if (strcmp(" quickleave", token) == 0 || strcmp(" defaultquickleave", token) == 0) {
             LOG(LOG_NOTICE, 0, "Config: Quick leave mode enabled.");
-            conf.quickLeave = true;
+            if (!conf.dHostsHTSize)
+                conf.dHostsHTSize = DEFAULT_HASHTABLE_SIZE;
 
         } else if (strcmp(" defaultmaxorigins", token) == 0 && INTTOKEN) {
             if ((intToken < DEFAULT_MAX_ORIGINS && intToken != 0) || intToken > 65535)
