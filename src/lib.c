@@ -116,16 +116,6 @@ struct timespec timeDiff(struct timespec t1, struct timespec t2) {
 }
 
 /**
-*   Return struct timespec offest by delay (in .1s) from current time.
-*/
-struct timespec timeDelay(int delay) {
-    clock_gettime(CLOCK_REALTIME, &curtime);
-    return curtime.tv_nsec + ((delay % 10) * 100000000) >= 1000000000 ?
-           (struct timespec){ curtime.tv_sec + delay / 10 + 1, curtime.tv_nsec + ((delay % 10) * 100000000) - 1000000000 } :
-           (struct timespec){ curtime.tv_sec + delay / 10,     curtime.tv_nsec + ((delay % 10) * 100000000) };
-}
-
-/**
 *   Returns uint32_t ip address from struct sockaddr..
 */
 uint32_t uint32_t_from_sockaddr(const struct sockaddr *addr) {

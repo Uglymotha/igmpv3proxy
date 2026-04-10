@@ -71,7 +71,7 @@ void initIgmp(int mode) {
     // Open socket.
     if (mode > 0 && MROUTERFD < 0)
         k_enableMRouter();
-    if (mode > 0 && NLFD < 0 && CONF->rescanVif == 1)
+    if (mode > 0 && NLFD < 0 && CONF->rescanVif.tv_sec == 1)
         k_enableNl();
     // Allocate and initialize send and receive packet buffers.
     if (mode > 0) {
@@ -290,12 +290,12 @@ void sendIgmp(struct IfDesc *IfDp, struct igmpv3_query *query) {
     ip->ip_dst.s_addr  = sdst.sin_addr.s_addr = query ? query->igmp_group.s_addr : allhosts_group;
     igmpv3->igmp_type  = IGMP_MEMBERSHIP_QUERY;
     igmpv3->igmp_code  = IfDp->querier.ver == 1 ? 0
-                                                : query && query->igmp_code != 0 ? query->igmp_code
-                                                : query ? IfDp->conf->qry.lmInterval
-                                                : IfDp->querier.mrc;
+                       : query && query->igmp_code != 0 ? query->igmp_code
+                       : query ? IfDp->querier.lmi
+                       : IfDp->querier.mrc;
     igmpv3->igmp_group.s_addr = query ? query->igmp_group.s_addr : 0;
     igmpv3->igmp_misc         = (query && query->igmp_type & 0x1 ? 0x8 : 0) + IfDp->querier.qrv;    // set router suppress flag.
-    igmpv3->igmp_qqi          = query ? IfDp->conf->qry.lmInterval : IfDp->querier.qqi;
+    igmpv3->igmp_qqi          = query ? IfDp->querier.lmi : IfDp->querier.qqi;
 
     uint32_t nsrcs = query ? query->igmp_nsrcs : 0,
                  i = 0, j = 0,
@@ -326,46 +326,55 @@ static void acceptMemberQuery(struct IfDesc *IfDp, uint32_t src, uint32_t dst, s
     uint32_t timeout;
 
     if (ver < IfDp->querier.ver || (ver == IfDp->querier.ver && (htonl(src) <= htonl(IfDp->querier.ip)))) {
-        if (dst == allhosts_group || src != IfDp->querier.ip) {
-            // Clear running query and age timers.
-            if (IfDp->querier.Timer)
-                IfDp->querier.Timer = timerClear(IfDp->querier.Timer);
-            if (IfDp->querier.ageTimer)
-                IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer);
-            // Set querier parameters for interface, use configured values in case querier detected because of gsq.
-            IfDp->querier = OTHER_QUERIER;
-            if (dst != allhosts_group) {
-                IfDp->querier.qqi = IfDp->conf->qry.interval;
-                IfDp->querier.qrv = IfDp->conf->qry.robustness;
-                IfDp->querier.mrc = IfDp->conf->qry.responseInterval;
-            }
-            // For downstream interface and general query set the age timer.
-            if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
-                timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10) + 1;
-                IfDp->querier.ageTimer = timerSet(timeout, strFmt(1, "Age Active Groups: %s", "", IfDp->Name),
-                                                  ageGroups, IfDp);
-            }
-            // Determine timeout for other querier, in case of gsq, use configured values.
-            if (ver == 3)
-                timeout = dst == allhosts_group ? ((getIgmpExp(igmpv3->igmp_qqi, 1) * (igmpv3->igmp_misc & 0x07)) * 10)
-                                                  + getIgmpExp(igmpv3->igmp_code, 1) / 2
-                                                : ((getIgmpExp(IfDp->querier.qqi, 1) * IfDp->querier.qrv) * 10)
-                                                  + getIgmpExp(IfDp->querier.mrc, 1) / 2;
-            else if (ver == 2)
-                timeout = dst == allhosts_group ? (IfDp->conf->qry.interval*IfDp->conf->qry.robustness*10) + igmpv3->igmp_code / 2
-                                                : ((IfDp->querier.qqi*IfDp->querier.qrv*10) * 10) + IfDp->querier.mrc / 2;
-            else
-                timeout = (100 * IfDp->conf->qry.robustness) + 5;
-            // Set timeout for other querier.
-            IfDp->querier.Timer = timerSet(timeout, strFmt(1, "%sv%1d Querier: %s", "", IS_DOWNSTREAM(IfDp->state) ? "Other " : "",
-                                                    ver, IfDp->Name), expireQuerierTimer, IfDp);
-            LOG(LOG_NOTICE, 0, "%sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
-                IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, inetFmt(src, 0),
-                IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, timeout / 10);
-        }
-        if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8) && !IQUERY)
+        if (!IS_DOWNSTREAM(IfDp->state)) {
+            IfDp->querier.ip = src;
+            IfDp->querier.ver = ver;
+            return;
+        } else if (IS_DOWNSTREAM(IfDp->state) && dst != allhosts_group && !(igmpv3->igmp_misc & 0x8) && !IQUERY) {
             // Process GSQ from other querier if Router Supress flag is not set.
             processGroupQuery(IfDp, igmpv3, ver == 3 ? ntohs(igmpv3->igmp_nsrcs) : 0, ver);
+            return;
+        }
+        // Clear running query and age timers.
+        if (IfDp->querier.Timer)
+            timerClear(&IfDp->querier.Timer);
+        if (IfDp->querier.ageTimer && dst == allhosts_group)
+            timerClear(&IfDp->querier.ageTimer);
+        // Set querier parameters for interface, use configured values in case querier detected because of gsq.
+        IfDp->querier = (struct querier){ src, ver,
+                                          ver == 3 ? igmpv3->igmp_qqi : IfDp->conf->qry.interval,
+                                          ver == 3 ? igmpv3->igmp_misc & 0x7 : IfDp->conf->qry.robustness,
+                                          ver != 1 ? igmpv3->igmp_code : 10,
+                                          ver == 3 ? igmpv3->igmp_code : IfDp->conf->qry.lmInterval,
+                                          ver != 1 ? IfDp->conf->qry.lmCount : 0,
+                                          {0, 0}, {0, 0}, 0, 0, IfDp->querier.Timer, IfDp->querier.ageTimer };
+        // For downstream interface and general query set the age timer.
+        if (IS_DOWNSTREAM(IfDp->state) && dst == allhosts_group) {
+            timeout = (ver == 3 ? getIgmpExp(igmpv3->igmp_code, 1) : ver == 2 ? igmpv3->igmp_code : 10);
+            timerSet(&IfDp->querier.ageTimer, (struct timespec){ timeout / 10, (timeout % 10) * 100000000 },
+                     strFmt(1, "Age Active Groups: %s", "", IfDp->Name), ageGroups, IfDp);
+        }
+        // Determine Group Membership Interval and Last Member Query Time.
+        if (ver == 3) {
+            timeout = 100000000 * (10 * IfDp->querier.qqi * IfDp->querier.qrv + (getIgmpExp(IfDp->querier.mrc, 1) / 2));
+            IfDp->querier.gmi.tv_nsec = 100000000 * (10 * IfDp->querier.qqi * IfDp->querier.qrv + (2 * getIgmpExp(IfDp->querier.mrc,1)));
+            IfDp->querier.lmqt.tv_nsec = 100000000 * getIgmpExp(IfDp->querier.lmi, 1) * IfDp->querier.lmc;
+        } else {
+            timeout = 100000000 * (10 * IfDp->querier.qqi * IfDp->querier.qrv + (IfDp->querier.mrc / 2));
+            IfDp->querier.gmi.tv_nsec = 100000000 * (10 * IfDp->querier.qqi * IfDp->querier.qrv + (2 * IfDp->querier.mrc));
+            IfDp->querier.lmqt.tv_nsec = 100000000 * IfDp->querier.lmi * IfDp->querier.lmc;
+        }
+        IfDp->querier.gmi.tv_sec = IfDp->querier.gmi.tv_nsec / 1000000000;
+        IfDp->querier.gmi.tv_sec %= 1000000000;
+        IfDp->querier.lmqt.tv_sec = IfDp->querier.gmi.tv_nsec / 1000000000;
+        IfDp->querier.lmqt.tv_sec %= 1000000000;
+        // Set timeout for other querier.
+        timerSet(&IfDp->querier.Timer, (struct timespec){ timeout / 1000000000, timeout % 1000000000 },
+                 strFmt(1, "%sv%1d Querier: %s", "", IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, IfDp->Name),
+                 expireQuerierTimer, IfDp);
+        LOG(LOG_NOTICE, 0, "%sv%d IGMP querier %s (%d:%d:%d) on %s. Setting Timer for %ds.",
+            IS_DOWNSTREAM(IfDp->state) ? "Other " : "", ver, inetFmt(src, 0),
+            IfDp->querier.qqi, IfDp->querier.mrc, IfDp->querier.qrv, IfDp->Name, IfDp->querier.gmi);
     } else
         LOG(LOG_NOTICE, 0, "v%d query from %s on %s, but it does not have priority over %s. Ignoring",
             ver, inetFmt(src, 0), IfDp->Name, IfDp->querier.ip == IfDp->conf->qry.ip ? "us" : inetFmt(IfDp->querier.ip, 0));
@@ -382,23 +391,22 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
             IfDp->Name, IS_UPSTREAM(IfDp->state) ? "upstream" : "disabled");
     } else {
         // Send query.
-        IfDp->querier = DEFAULT_QUERIER;
         sendIgmp(IfDp, NULL);
         // Set timer for next query.
-        if (IfDp->conf->qry.startupQueryCount > 0)
-            IfDp->conf->qry.startupQueryCount--;
+        if (IfDp->querier.sqc > 0)
+            IfDp->querier.sqc--;
         if (IfDp->querier.ver == 3)
-            timeout = getIgmpExp(IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval
-                                                                       : IfDp->querier.qqi, 0);
+            timeout = getIgmpExp(IfDp->querier.sqc > 0 ? IfDp->querier.sqi : IfDp->querier.qqi, 0);
         else
-            timeout = IfDp->conf->qry.startupQueryCount > 0 ? IfDp->conf->qry.startupQueryInterval : IfDp->querier.qqi;
-        IfDp->querier.Timer = timerSet((timeout*10) + ((uint8_t)IfDp->Name[0] % 4), strFmt(1, "General Query: %s", "", IfDp->Name),
-                                       sendGeneralMemberQuery, IfDp);
+            timeout = (IfDp->querier.sqc > 0 ? IfDp->querier.sqi : IfDp->querier.qqi);
+        timerSet(&IfDp->querier.Timer, (struct timespec) { timeout, 0 }, strFmt(1, "General Query: %s", "", IfDp->Name),
+                 sendGeneralMemberQuery, IfDp);
         // Set timer for route aging.
         timeout = IfDp->querier.ver == 3 ? getIgmpExp(IfDp->querier.mrc, 0) : IfDp->querier.mrc;
-        IfDp->querier.ageTimer = timerSet(timeout, strFmt(1, "Age Active Groups: %s", "", IfDp->Name), ageGroups, IfDp);
-        LOG(LOG_INFO, 0, "From %s to %s on %s. Delay: %d", inetFmt(IfDp->querier.ip, 0),
-            inetFmt(allhosts_group, 0), IfDp->Name, IfDp->conf->qry.responseInterval);
+        timerSet(&IfDp->querier.ageTimer, (struct timespec){ timeout / 10, (timeout % 10) * 100000000 },
+                 strFmt(1, "Age Active Groups: %s", "", IfDp->Name), ageGroups, IfDp);
+        LOG(LOG_INFO, 0, "From %s to %s on %s. Resp: %d", inetFmt(IfDp->querier.ip, 0),
+            inetFmt(allhosts_group, 0), IfDp->Name, timeout);
     }
 }
 
@@ -407,9 +415,6 @@ void sendGeneralMemberQuery(struct IfDesc *IfDp) {
 */
 static void expireQuerierTimer(struct IfDesc *IfDp) {
     LOG(LOG_NOTICE, 0, "Other querier %s on %s expired.", inetFmt(IfDp->querier.ip, 0), IfDp->Name);
-    IfDp->querier.Timer = (intptr_t)NULL;
-    if (IS_DOWNSTREAM(IfDp->state))
-        sendGeneralMemberQuery(IfDp);
-    else
-        IfDp->querier.ip = (uint32_t)-1;
+    timerClear(&IfDp->querier.Timer);
+    ctrlQuerier(2, IfDp);
 }

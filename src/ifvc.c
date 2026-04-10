@@ -66,15 +66,15 @@ struct IfDesc *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode) {
 *   Sets bit 7 when existing interface is seen.
 *   These bits are used by configureVifs() below.
 */
-void rebuildIfVc(intptr_t *tid) {
+void rebuildIfVc(void **tid) {
     struct ifreq    ifr;
-    struct ifaddrs *ifAddrs, *fifAddrs;
+    struct ifaddrs *ifAddrs, *fifAddrs = NULL;
     struct IfDesc  *IfDp;
 
     // Build new IfDEsc table on SIGHUP, SIGUSR2 or timed rebuild.
     sigstatus |= (tid ? GOT_SIGUSR2 : 0);
     // Get the system interface list.
-    if ((getifaddrs(&fifAddrs)) == -1) {
+    if (!SHUTDOWN && (getifaddrs(&fifAddrs)) == -1) {
         LOG(STARTUP ? LOG_CRIT : LOG_ERR, eNOINIT, "Cannot enumerate interfaces.");
         return;
     } else IF_FOR(! IfDescL || IFREBUILD || SHUP, (ifAddrs = fifAddrs; ifAddrs; ifAddrs = ifAddrs->ifa_next)) {
@@ -127,8 +127,8 @@ void rebuildIfVc(intptr_t *tid) {
     configureVifs();
 
     // Restart timer when doing timed reload.
-    if (!SHUTDOWN && CONF->rescanVif > 1 && tid)
-        *tid = timerSet(CONF->rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, tid);
+    if (!SHUTDOWN && CONF->rescanVif.tv_sec > 1 && tid)
+        timerSet(tid, CONF->rescanVif, "Rebuild Interfaces", rebuildIfVc, tid);
     if ((IFREBUILD || STARTUP || RESTART) && loglevel == LOG_DEBUG) {
         sigstatus &= ~GOT_SIGUSR2;
         LOG(LOG_DEBUG, 0, "Memory Stats: %lldb total, %lldb interfaces, %lldb config, %lldb filters.",
@@ -176,16 +176,15 @@ void configureVifs(void) {
             }
             IfDp->oconf = IfDp->conf;
             IfDp->conf = tmpConf;
-            if (mrt_tbl < 0 && (IfDp->state & 0x80) && (IfDp->state = 0x20))
+            if (mrt_tbl < 0 && (IfDp->state & 0x80)) {
                 // We will sig proxy on seeing new interfaces and set state to monitor disabled.
+                IfDp->state = 0xE0;
                 sighandled |= GOT_SIGPROXY;
+            }
         }
-        if (mrt_tbl < 0)
-            // Monitor process only needs config.
-            continue;
         // Evaluate to old and new state of interface.
         if ((CONFRELOAD || (IfDp->state & 0x40)) && IfDp->conf->tbl == mrt_tbl) {
-            // Existing interface, oldstate is curre nt state, newstate is configured state.= ((IfDp->state & 0x3) << 2)
+            // Existing interface, oldstate is current state, newstate is configured state.
             IfDp->state = ((IfDp->state & 0x3) << 2) | (IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : 0);
         } else if (!(IfDp->state & 0xC0) || SHUTDOWN) {
             // Removed interface. Old state is current, new is disabled, flagged for removal.
@@ -198,56 +197,59 @@ void configureVifs(void) {
             IfDp->state = IfDp->mtu && (IfDp->Flags & IFF_MULTICAST) ? IfDp->conf->state : IF_STATE_DISABLED;
         } else
             IfDp->state &= ~0x3;  // Keep old state, new state disabled.
-        // Check if quickleave was enabled or disabled due to config change.
-        if ((CONFRELOAD || SHUP) && IfDp->oconf->dhtSz != IfDp->conf->dhtSz) {
-            // Disable interface to free hash tables then rebuild interfaces to reanble interface.
-            LOG(LOG_WARNING, 0, "Downstream host hashtable size on %s changed from %d to %d.",
-                IfDp->Name, IfDp->oconf->dhtSz, IfDp->conf->dhtSz);
-            IfDp->state &= 03;
-            sighandled |= GOT_SIGUSR2;
-        }
         register uint8_t oldstate = IF_OLDSTATE(IfDp), newstate = IF_NEWSTATE(IfDp);
 
-        // Set configured querier ip to interface address if not configured
-        // and set version to 3 for disabled/upstream only interface.
-        if (IfDp->conf->qry.ip == (uint32_t)-1)
-            IfDp->conf->qry.ip = IfDp->ip.ip;
-        if (!IS_DOWNSTREAM(IfDp->state))
-            IfDp->conf->qry.ver = 3;
-        if (IfDp->conf->qry.ver == 1)
-            IfDp->conf->qry.interval = IfDp->conf->qry.responseInterval = 10;
-        // Check if filters have changed so that ACLs will be reevaluated.
-        if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
-            for (fil = tmpConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
-                 fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
-                 fil = fil->next, ofil = ofil->next);
-            if (fil || ofil) {
-                LOG(LOG_INFO, 0, "Filters changed for %s.", IfDp->Name);
-                IfDp->filCh = true;
+        // Monitor only needs config and state.
+        if (mrt_tbl >= 0) {
+            // Check if quickleave was enabled or disabled due to config change.
+            if ((CONFRELOAD || SHUP) && IfDp->oconf->dhtSz != IfDp->conf->dhtSz) {
+                // Disable interface to free hash tables then rebuild interfaces to reanble interface.
+                LOG(LOG_WARNING, 0, "Downstream host hashtable size on %s changed from %d to %d.",
+                    IfDp->Name, IfDp->oconf->dhtSz, IfDp->conf->dhtSz);
+                IfDp->state &= 03;
+                sighandled |= GOT_SIGUSR2;
             }
-        }
-        // Check if querier process needs to be restarted, because election was turned of and other querier present.
-        if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
-                                      && IfDp->querier.ip != IfDp->conf->qry.ip)
-            ctrlQuerier(2, IfDp);
-        // Check if vifs need to be added or removed and (re)init the group table.
-        if (!IS_DISABLED(newstate) && (IfDp->index != (vif_t)-1 || k_addVIF(IfDp))) {
-            IF_GETDVIFL(!STARTUP && !RESTART && IS_UPSTREAM(newstate) && !IS_UPSTREAM(oldstate), If) {
-                LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
-                sendIgmp(If, NULL);
+            // Set configured querier ip to interface address if not configured
+            // and set version to 3 for disabled/upstream only interface.
+            if (IfDp->conf->qry.ip == (uint32_t)-1)
+                IfDp->conf->qry.ip = IfDp->ip.ip;
+            if (!IS_DOWNSTREAM(IfDp->state))
+                IfDp->conf->qry.ver = 3;
+            if (IfDp->conf->qry.ver == 1)
+                IfDp->conf->qry.interval = IfDp->conf->qry.responseInterval = 10;
+            // Check if filters have changed so that ACLs will be reevaluated.
+            if (!IfDp->filCh && (CONFRELOAD || SHUP)) {
+                for (fil = tmpConf->filters, ofil = IfDp->oconf ? IfDp->oconf->filters : NULL;
+                    fil && ofil && !memcmp(fil, ofil, sizeof(struct filters) - sizeof(void *));
+                    fil = fil->next, ofil = ofil->next);
+                if (fil || ofil) {
+                    LOG(LOG_INFO, 0, "Filters changed for %s.", IfDp->Name);
+                    IfDp->filCh = true;
+                }
             }
-        }
-        if (oldstate != newstate && IS_DOWNSTREAM(newstate))
-            ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
-        if ((newstate != oldstate || IfDp->filCh) && IfDp->conf->tbl == mrt_tbl)
-            clearGroups(IfDp);
-        IfDp->filCh = false;
-        if (IS_DISABLED(newstate) && IfDp->index != (vif_t)-1) {
-            if (IfDp->bwTimer)
-                IfDp->bwTimer = timerClear(IfDp->bwTimer);
-            if (!IS_DISABLED(oldstate))
-                ctrlQuerier(0, IfDp);
-            k_delVIF(IfDp);
+            // Check if querier process needs to be restarted, because election was turned of and other querier present.
+            if (!IfDp->conf->qry.election && IS_DOWNSTREAM(newstate) && IS_DOWNSTREAM(oldstate)
+                                          && IfDp->querier.ip != IfDp->conf->qry.ip)
+                ctrlQuerier(2, IfDp);
+            // Check if vifs need to be added or removed and (re)init the group table.
+            if (!IS_DISABLED(newstate) && (IfDp->index != (vif_t)-1 || k_addVIF(IfDp))) {
+                IF_GETDVIFL(!STARTUP && !RESTART && IS_UPSTREAM(newstate) && !IS_UPSTREAM(oldstate), If) {
+                    LOG(LOG_NOTICE, 0, "New upstream interface %s. Sending query on interface %s.", IfDp->Name, If->Name);
+                    sendIgmp(If, NULL);
+                }
+            }
+            if (oldstate != newstate && IS_DOWNSTREAM(newstate))
+                ctrlQuerier(IS_DISABLED(oldstate) ? 1 : 2, IfDp);
+            if ((newstate != oldstate || IfDp->filCh) && IfDp->conf->tbl == mrt_tbl)
+                clearGroups(IfDp);
+            IfDp->filCh = false;
+            if (IS_DISABLED(newstate) && IfDp->index != (vif_t)-1) {
+                if (IfDp->bwTimer)
+                    timerClear(&IfDp->bwTimer);
+                if (!IS_DISABLED(oldstate))
+                    ctrlQuerier(0, IfDp);
+                k_delVIF(IfDp);
+            }
         }
         IfDp->oconf = NULL;
         if (IfDp->state & 0x80) {

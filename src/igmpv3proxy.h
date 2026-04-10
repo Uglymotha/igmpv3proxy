@@ -106,7 +106,7 @@ struct Config {
     uint8_t             robustnessValue;
     uint8_t             queryInterval;
     uint8_t             queryResponseInterval;
-    uint16_t            topQueryInterval;                   // Largest query interval of all interfaces.
+    struct timespec     topQueryInterval;               // Largest query interval of all interfaces.
     // Last member probe.
     uint8_t             lastMemberQueryInterval;
     uint8_t             lastMemberQueryCount;
@@ -123,18 +123,18 @@ struct Config {
     uint8_t             InterfaceState;
     uint8_t             threshold;
     uint64_t            rateLimit;
-    struct subnet       ssmRange;                    // IGMPv3 SSM Range (232.0.0.0/8)
+    struct subnet       ssmRange;                       // IGMPv3 SSM Range (232.0.0.0/8)
     struct filters     *filters, *rates;
     // Logging Parameters.
     uint8_t             logLevel;
     char               *logFilePath;
-    bool                log2Stderr;                         // Log to stderr instead of to syslog / file
+    bool                log2Stderr;                     // Log to stderr instead of to syslog / file
     // Set if nneed to detect new interface.
-    uint32_t            rescanVif;
+    struct timespec     rescanVif;
     // Set if nneed to detect config change.
-    uint32_t            rescanConf;
+    struct timespec     rescanConf;
     // Default BW Control interval.
-    uint32_t            bwControl;
+    struct timespec     bwControl;
     // Set if need to proxy IANA local multicast range 224.0.0.0/8.
     bool                proxyLocalMc;
     // Set if must not participate in IGMP querier election.
@@ -145,10 +145,10 @@ struct Config {
 
 // Memory statistics.
 struct memstats {
-    int64_t mct, src, ifm, dht;  // Multicast Forwarding Table
-    int64_t ifd, fil, vif;       // Interfaces
-    int64_t rcv, snd;            // Buffers
-    int64_t qry, tmr, var;       // Queries, Timers, various.
+    int64_t mct, src, ifm, dht;                         // Multicast Forwarding Table
+    int64_t ifd, fil, vif;                              // Interfaces
+    int64_t rcv, snd;                                   // Buffers
+    int64_t qry, tmr, var;                              // Queries, Timers, various.
 };
 
 // Forked child processes.
@@ -165,8 +165,8 @@ struct chld {
 
 // Timers for proxy control.
 struct timers {
-    intptr_t rescanConf;
-    intptr_t rescanVif;
+    void *rescanConf;
+    void *rescanVif;
 };
 
 struct filters {
@@ -193,8 +193,6 @@ struct queryParam {
     uint8_t             responseInterval;               // Configured query response interval
     uint8_t             lmInterval;                     // Configured lastmember query interval value
     uint8_t             lmCount;                        // Configured lastmember count value
-    uint8_t             startupQueryInterval;           // Configured startup query interval
-    uint8_t             startupQueryCount;              // Configured startup query count
 };
 
 // Structure to keep configuration for VIFs.
@@ -209,7 +207,7 @@ struct vifConfig {
     uint64_t            ratelimit;                      // Interface ratelimit
     struct queryParam   qry;                            // Configured query parameters
     uint32_t            maxOrigins;                     // Maximun nr of sources for groups.
-    uint32_t            bwControl;                      // BW Control interval
+    struct timespec     bwControl;                      // BW Control interval
     bool                disableIpMrules;                // Disable ip mrules actions for interface
     bool                noDefaultFilter;                // Do not add default filters to interface
     bool                cksumVerify;                    // Do not validate igmp checksums on interface
@@ -223,29 +221,26 @@ struct vifConfig {
                                                    CONF->threshold,  CONF->rateLimit, {CONF->querierIp, CONF->querierVer,          \
                                                    CONF->querierElection, CONF->robustnessValue, CONF->queryInterval,              \
                                                    CONF->queryResponseInterval, CONF->lastMemberQueryInterval,                     \
-                                                   CONF->lastMemberQueryCount,0, 0}, CONF->maxOrigins, CONF->bwControl,            \
+                                                   CONF->lastMemberQueryCount}, CONF->maxOrigins, CONF->bwControl,                 \
                                                    CONF->disableIpMrules, false, CONF->cksumVerify,                                \
                                                    CONF->dHostsHTSize, CONF->proxyLocalMc, NULL, NULL }
 
 // Running querier status for interface.
 struct querier {                                        // igmp querier status for interface
-    uint32_t       ip;                                  // Querier IP
-    uint8_t        ver;                                 // Querier version
-    uint8_t        qqi;                                 // Queriers query interval
-    uint8_t        qrv;                                 // Queriers robustness value
-    uint8_t        mrc;                                 // Queriers max response code
-    intptr_t       Timer;                               // Self / Other Querier timer
-    intptr_t       ageTimer;                            // Route aging timer
+    uint32_t        ip;                                 // Querier IP
+    uint8_t         ver;                                // Querier version
+    uint8_t         qqi;                                // Queriers query interval
+    uint8_t         qrv;                                // Queriers robustness value
+    uint8_t         mrc;                                // Queriers max response code
+    uint8_t         lmi;                                // Last Member Query Interval
+    uint8_t         lmc;                                // Last Member Query Count
+    struct timespec gmi;                                // Group Membership Interval
+    struct timespec lmqt;                               // Last Member Query Time
+    uint8_t         sqi;                                // Configured startup query interval
+    uint8_t         sqc;                                // Configured startup query count
+    void           *Timer;                              // Self / Other Querier timer
+    void           *ageTimer;                           // Route aging timer
 };
-#define DEFAULT_QUERIER (struct querier){ IfDp->conf->qry.ip, IfDp->conf->qry.ver, IfDp->conf->qry.interval,   \
-                                          IfDp->conf->qry.robustness, IfDp->conf->qry.responseInterval, (intptr_t)NULL,  \
-                                          (intptr_t)NULL }
-#define OTHER_QUERIER (struct querier){ src, ver, \
-                                        ver == 3 ? (igmpv3->igmp_qqi > 0 ? igmpv3->igmp_qqi : DEFAULT_INTERVAL_QUERY)             \
-                                                 : IfDp->conf->qry.interval,                                                      \
-                                        ver == 3 ? ((igmpv3->igmp_misc & 0x7) > 0 ? igmpv3->igmp_misc & 0x7 : DEFAULT_ROBUSTNESS) \
-                                                 : IfDp->conf->qry.robustness, ver != 1 ? igmpv3->igmp_code : 10,                 \
-                                        IfDp->querier.Timer, IfDp->querier.ageTimer }
 
 // Interfaces configuration.
 typedef unsigned short vif_t;
@@ -279,7 +274,7 @@ struct IfDesc {
     vif_t                         index;                 // MCast kernel vif index
     vif_t                         dvifix;                // Downstream vif index
     vif_t                         uvifix;                // Upstream vif index
-    intptr_t                      bwTimer;               // BW Control timerd id
+    void                         *bwTimer;               // BW Control timerd id
     void                         *dmct;                  // Pointer to fisrt active downstream group for vif
     void                         *umct;                  // Pointer to fisrt active downstream group for vif
     void                         *mfc;                   // Pointer to first active upstream source for vif
@@ -287,8 +282,8 @@ struct IfDesc {
 #define IFSZ (sizeof(struct IfDesc))
 #define DEFAULT_IFDESC(i)       *i = (struct IfDesc){ IfDp->prev, IfDp->next, NULL, NULL, NULL, NULL, NULL, NULL, "",            \
                                                       {(uint32_t)-1}, 0, 0, 0x80, NULL, NULL, false, {(uint32_t)-1, 3, 0, 0,     \
-                                                      0, 0, 0}, {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1, (vif_t)-1, (vif_t)-1, \
-                                                      (intptr_t)NULL, NULL, NULL, NULL }
+                                                      0, 0, 0, {0,0}, {0,0}, 0, 0}, {0, 0, 0, 0}, (unsigned int)-1, (vif_t)-1,   \
+                                                      (vif_t)-1, (vif_t)-1, (void *)NULL, NULL, NULL, NULL }
 #define FINDVIX(l,i,n,c,v,ix)   if (! l || (((struct IfDesc *)l)->i == c - 1)) { \
                                     v = NULL;\
                                     ix = c;\
@@ -355,6 +350,7 @@ struct igmpv3_report {
 
 // Query default values.
 #define DEFAULT_INTERVAL_QUERY          125
+#define DEFAULT_INTERVAL_LAST_MEMBER    10
 #define DEFAULT_INTERVAL_QUERY_RESPONSE 100
 
 // IGMP Global Values.
@@ -423,7 +419,7 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
 #define  eNOMEM   5
 #define  eNOCONF -7
 
-// Memory (de)allocation macro's, which check for valid size and counts.
+// Memory (de)allocation macros, which check for valid size and counts.
 #define _malloc(p,m,s)      ({if ((errno = 0) || ! (p = malloc(s)) || (memuse.m += (s)) <= 0 || (++memalloc.m) <= 0) {            \
                                 getMemStats(0, -1);                                                                               \
                                 LOG(LOG_CRIT, SIGABRT, "Invalid malloc(%p) of size %d in %s() (%s:%d)", p, s, __func__, __FILE__, \
@@ -459,11 +455,17 @@ static const char *exitmsg[16] = { "exited", "failed", "was terminated", "failed
                                 LOG(LOG_DEBUG, 0, "free(%s:%x, %s:%d, %s:%d)", #p, p, #m, memuse.m, #s, s);                       \
                                 free(p); p = NULL;}                                                                               \
                             else LOG(LOG_ERR, 0, "nullptr free of size %d in %s() (%s:%d)", s, __func__, __FILE__, __LINE__); }
-#define VSZ                      sizeof(void *)
+
+// List management macros doing address calculation of ->next and ->prev list pointers.
 #define VS                       void **
+#define VSZ                      sizeof(VS)
+// MA = malloc address calculation macro.
 #define MA(e,t,d,o,i)            !t ? (VS)&(e) : t == 1 ? (VS)(e) : !(o) ? *((VS)(e)+(t)+(d)) + (i) + (4*VSZ) : (VS)(e)+4
 #define LST_IN(a,b,c,d)          do L_IN(a, b, c, d) while (0)
 #define LST_RM(a,b,c)            do L_RM(a, b, c) while (0)
+// e = list entry to insert/remove, l = list, p = prev entry in list, t = list type, d = direction up/downstream
+// o = offset in struct, i = index into vif array, m = alloc memstat, s = size of list entry to alloc
+// pe = previous entry, pn = prev->next entry, pna = adress of prev->next, pnpa = address of prev->next->prev
 #define L_IN(e,l,p,t,d,o,i,m,s) {LOG(LOG_DEBUG,0,"L_IN:(%s:%x,%s:%x,%s:%x, %d:%d:%d:%d, %s,%s:%d)",#e,e,#l,l,#p,p,t,d,o,i,#m,#s,s);\
                                  void **pe = (VS)(p), **lst = t != 1 ? (VS)(&l) : (VS)(l), **ma = MA(e, t, d, o, i);               \
                                  if ((s)) _calloc(*ma, 1, m, (s)); void **en = !t ? (VS)&(e) : (VS)(e)+(t)+(d);                    \
@@ -578,7 +580,7 @@ void igmpProxyCleanUp(int code);
 #define            OLDCONF getConfig(true)
 struct Config     *getConfig(bool old);
 void               freeConfig(bool old);
-void               reloadConfig(intptr_t *tid);
+void               reloadConfig(void **tid);
 bool               loadConfig(char *cfgFile);
 
 /**
@@ -613,7 +615,7 @@ void cliCmd(char *cmd, int tbl);
 #define         SRCHDVIFL               0x10
 #define         SRCHUVIFL               0x20
 void            freeIfDescL(void);
-void            rebuildIfVc(intptr_t *tid);
+void            rebuildIfVc(void **tid);
 struct IfDesc  *getIf(unsigned int ix, char name[IF_NAMESIZE], int mode);
 void            getIfStats(struct IfDesc *IfDp, int h, int fd);
 void            getIfFilters(struct IfDesc *IfDp, int h, int fd);
@@ -638,7 +640,6 @@ const char     *inetFmt(uint32_t addr, uint32_t mask);
 uint16_t        inetChksum(uint16_t *addr, int len);
 int             confFilter(const struct dirent *d);
 struct timespec timeDiff(struct timespec t1, struct timespec t2);
-struct timespec timeDelay(int delay);
 uint32_t        uint32_t_from_sockaddr(const struct sockaddr *addr);
 bool            parseSubnetAddress(const char *str, uint32_t *addr, uint32_t *mask);
 uint32_t        murmurhash3(register uint32_t x);
@@ -697,8 +698,8 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 */
 #define DEBUGQUEUE(x, y, z) if (loglevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
-intptr_t        timerSet(int delay, const char *name, void (*func)(), void *);
-intptr_t        timerClear(intptr_t node);
+void            timerSet(void **tid, struct timespec delay, const char *name, void (*func)(), void *data);
+void            timerClear(void **tid);
 void            timerDebugQueue(const char *header, int h, int fd);
 
 #endif // IGMPV3PROXY_H_INCLUDED

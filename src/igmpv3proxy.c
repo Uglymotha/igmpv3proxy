@@ -312,7 +312,7 @@ static void igmpProxyInit(void) {
             // Set permissions and swith root directory.
             if (!(stat(CONF->chroot, &st) == 0 && chown(CONF->chroot, uid, gid) == 0 && chmod(CONF->chroot, 0770) == 0
                 && chroot(CONF->chroot) == 0 && chdir("/") == 0))
-                LOG(LOG_CRIT, eNOINIT, "Failed to switch root to %s (%d:%d).",CONF->chroot);
+                LOG(LOG_CRIT, eNOINIT, "Failed to switch root to %s.",CONF->chroot);
         }
         // Finally check log file permissions in case we need to run as user.
         if (CONF->logFilePath) {

@@ -72,7 +72,7 @@ static struct Config      conf, oldconf;
 struct vifConfig         *vifConf = NULL, *ovifConf = NULL;
 
 // Keeps timer ids for configurable timed functions.
-static struct timers      timers = { (intptr_t)NULL, (intptr_t)NULL };
+static struct timers      timers = { NULL, NULL };
 
 // Macro to get a token which should be integer.
 #define INTTOKEN ((nextToken(token)) && ((intToken = atoll(token + 1)) || !intToken))
@@ -110,9 +110,9 @@ void freeConfig(bool old) {
 
     if (SHUTDOWN && timers.rescanConf)
         // On Shutdown stop any running timers.
-        timers.rescanConf = timerClear(timers.rescanConf);
+         timerClear(&timers.rescanConf);
     if (SHUTDOWN && timers.rescanVif)
-        timers.rescanVif = timerClear(timers.rescanVif);
+        timerClear(&timers.rescanVif);
     LOG(LOG_INFO, 0, "%s cleared.", (old ? "Old configuration" : "Configuration"));
 }
 
@@ -195,11 +195,12 @@ static inline void initCommonConfig(void) {
     conf.pBufsz = BUF_SIZE;
     // Defaul Query Parameters.
     conf.robustnessValue = DEFAULT_ROBUSTNESS;
-    conf.queryInterval = conf.topQueryInterval = DEFAULT_INTERVAL_QUERY;
+    conf.queryInterval = DEFAULT_INTERVAL_QUERY;
+    conf.topQueryInterval = (struct timespec){ DEFAULT_INTERVAL_QUERY * 3, 0 };
     conf.queryResponseInterval = DEFAULT_INTERVAL_QUERY_RESPONSE;
-    conf.bwControl = 0;
+    conf.bwControl = (struct timespec){ 0, 0 };
     // Default values for leave intervals...
-    conf.lastMemberQueryInterval = DEFAULT_INTERVAL_QUERY_RESPONSE / 10;
+    conf.lastMemberQueryInterval = DEFAULT_INTERVAL_LAST_MEMBER;
     conf.lastMemberQueryCount    = DEFAULT_ROBUSTNESS;
     // Default maximum nr of sources for route. Always a minimum of 64 sources is allowed
     // This is controlable by the maxorigins config parameter.
@@ -219,8 +220,8 @@ static inline void initCommonConfig(void) {
     // Log to file disabled by default.
     conf.logLevel = !conf.log2Stderr ? LOG_WARNING : conf.logLevel;
     // Default no timed rebuild interfaces / reload config.
-    conf.rescanVif  = 0;
-    conf.rescanConf = 0;
+    conf.rescanVif  = (struct timespec){ 0, 0 };
+    conf.rescanConf = (struct timespec){ 0, 0 };
     // Do not proxy local mc by default.
     conf.proxyLocalMc = false;
     // Default igmpv3, validate checksums and participate in querier election by default.
@@ -483,8 +484,8 @@ static inline bool parsePhyintToken(char *token) {
             LOG(LOG_NOTICE, 0, "Config (%s): Will verify IGMP checksums.", tmpConf->name);
 
         } else if (strcmp(" bwcontrol", token) == 0 && INTTOKEN) {
-            tmpConf->bwControl = (intToken < 3 ? 0 : intToken > 3600 ? 3600 : intToken);
-            LOG(LOG_NOTICE, 0, "Config (%s): Setting bandwidth control interval to %ds.", tmpConf->name, intToken * 10);
+            tmpConf->bwControl.tv_sec = (intToken < 3 ? 0 : intToken > 3600 ? 3600 : intToken);
+            LOG(LOG_NOTICE, 0, "Config (%s): Setting bandwidth control interval to %ds.", tmpConf->name, intToken);
 
         } else if (strcmp(" robustness", token) == 0 && INTTOKEN) {
             if (intToken < 1 || intToken > 7)
@@ -499,8 +500,8 @@ static inline bool parsePhyintToken(char *token) {
                 LOG(LOG_WARNING, 0, "Config (%s): Query interval value must be between 1 than 255.", tmpConf->name);
             else {
                 tmpConf->qry.interval = intToken;
-                if (intToken > conf.topQueryInterval)
-                    conf.topQueryInterval = intToken;
+                if (intToken * 3 > conf.topQueryInterval.tv_sec)
+                    conf.topQueryInterval.tv_sec = intToken * 3;
                 LOG(LOG_NOTICE, 0, "Config (%s): Setting query interval to %d.", tmpConf->name, intToken);
             }
 
@@ -536,27 +537,21 @@ static inline bool parsePhyintToken(char *token) {
             break;
     }
 
-    // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((tmpConf->qry.ver != 3 ? tmpConf->qry.responseInterval : getIgmpExp(tmpConf->qry.responseInterval, 0)) / 10
-                          > tmpConf->qry.interval) {
-        if (tmpConf->qry.ver != 3)
-            tmpConf->qry.responseInterval = tmpConf->qry.interval * 10;
-        else
-            tmpConf->qry.responseInterval = getIgmpExp(tmpConf->qry.interval * 10, 1);
-        float f = (tmpConf->qry.ver != 3 ? tmpConf->qry.responseInterval : getIgmpExp(tmpConf->qry.responseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config (%s): Setting default query interval to %ds. Default response interval %.1fs",
-            tmpConf->name, tmpConf->qry.interval, f);
-    }
-    if (!tmpConf->noDefaultFilter)
-        tmpConf->filters ? (pfil->next = conf.filters) : (tmpConf->filters = conf.filters);
+    if (!tmpConf->noDefaultFilter && tmpConf->filters)
+        pfil->next = conf.filters;
+    else if (!tmpConf->noDefaultFilter)
+        tmpConf->filters = conf.filters;
 
     // Return false if error in interface config was detected.
     if (!logerr)
-        LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, cksum: %s, quickleave: %s",
+        LOG(LOG_NOTICE, 0, "Config (%s): Ratelimit: %d, Threshold: %d, State: %s, "
+                           "Checksum: %s, Quickleave: %s, QI: %d, QRI: %d, QRV: %d, LMI: %d, LMC: %d",
             tmpConf->name, tmpConf->ratelimit, tmpConf->threshold,
             tmpConf->state == IF_STATE_DOWNSTREAM ? "Downstream" : tmpConf->state == IF_STATE_UPSTREAM ? "Upstream" :
             tmpConf->state == IF_STATE_DISABLED   ? "Disabled"   : "UpDownstream",
-            tmpConf->cksumVerify ? "Enabled" : "Disabled", tmpConf->dhtSz ? "Enabled" : "Disabled");
+            tmpConf->cksumVerify ? "Enabled" : "Disabled", tmpConf->dhtSz ? "Enabled" : "Disabled",
+            tmpConf->qry.interval, tmpConf->qry.responseInterval, tmpConf->qry.robustness,
+            tmpConf->qry.lmInterval, tmpConf->qry.lmCount);
     return !logerr;
 }
 
@@ -791,8 +786,8 @@ bool loadConfig(char *cfgFile) {
                 LOG(LOG_WARNING, 0, "Config: Query interval must be between 1 and 255.");
             else {
                 conf.queryInterval = intToken;
-                if (intToken > conf.topQueryInterval)
-                    conf.topQueryInterval = intToken;
+                if (intToken * 3 > conf.topQueryInterval.tv_sec)
+                    conf.topQueryInterval.tv_sec = intToken * 3;
                 LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds.", conf.queryInterval);
             }
 
@@ -821,28 +816,28 @@ bool loadConfig(char *cfgFile) {
             }
 
         } else if (strcmp(" defaultbwcontrol", token) == 0 && INTTOKEN) {
-            conf.bwControl = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken) ;
-            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken * 10);
+            conf.bwControl.tv_sec = (intToken < 3 ? 3 : intToken > 3600 ? 3600 : intToken);
+            LOG(LOG_NOTICE, 0, "Config: Setting bandwidth control interval to %ds.", intToken);
 
         } else if (strcmp(" rescanvifnl", token) == 0) {
 #ifdef HAVE_NETLINK
-            conf.rescanVif = 1;
+            conf.rescanVif.tv_sec = 1;
 #else
             LOG(LOG_WARNING, 0, "Netlink is not supported on this system.");
 #endif
         } else if (strcmp(" rescanvif", token) == 0 && INTTOKEN) {
 #ifdef HAVE_NETLINK
-            conf.rescanVif = conf.rescanVif != 1 && intToken > 0 ? intToken : conf.rescanVif;
-            if (conf.rescanVif == 1)
+            conf.rescanVif.tv_sec = conf.rescanVif.tv_sec != 1 && intToken > 0 ? intToken : conf.rescanVif.tv_sec;
+            if (conf.rescanVif.tv_sec == 1)
                 LOG(LOG_NOTICE, 0, "Config: Use netlink to detect interface changes.", intToken);
             else
 #else
-            conf.rescanVif = intToken == 1 ? 2 : intToken > 1 ? intToken : 0;
+            conf.rescanVif.tv_sec = intToken == 1 ? 2 : intToken > 1 ? intToken : 0;
 #endif
                 LOG(LOG_NOTICE, 0, "Config: Need detect new interface every %ds.", intToken);
 
         } else if (strcmp(" rescanconf", token) == 0 && INTTOKEN) {
-            conf.rescanConf = intToken > 0 ? intToken : 0;
+            conf.rescanConf.tv_sec = intToken > 0 ? intToken : 0;
             LOG(LOG_NOTICE, 0, "Config: Need detect config change every %ds.", intToken);
 
         } else if (strcmp(" loglevel", token) == 0 && INTTOKEN) {
@@ -896,28 +891,18 @@ bool loadConfig(char *cfgFile) {
         LOG(LOG_ERR, 1, "Config: Failed to close config file (%d) '%s'.", conf.cnt, cfgFile);
     if (--conf.cnt > 0 || logerr)
         return !logerr;
-    // Check Query response interval and adjust if necessary (query response must be <= query interval).
-    if ((conf.querierVer != 3 ? conf.queryResponseInterval
-                              : getIgmpExp(conf.queryResponseInterval, 0)) / 10 > conf.queryInterval) {
-        if (conf.querierVer != 3)
-            conf.queryResponseInterval = conf.queryInterval * 10;
-        else
-            conf.queryResponseInterval = getIgmpExp(conf.queryInterval * 10, 1);
-        float f = (conf.querierVer != 3 ? conf.queryResponseInterval
-                                        : getIgmpExp(conf.queryResponseInterval, 0)) / 10;
-        LOG(LOG_NOTICE, 0, "Config: Setting default query interval to %ds. Default response interval %.1fs", conf.queryInterval, f);
-    }
+
     // Check if buffer sizes or timers have changed, reinit accordingly.
     if (mrt_tbl >= 0 && (CONFRELOAD || SHUP) && (conf.kBufsz != oldconf.kBufsz || conf.pBufsz != oldconf.pBufsz))
         initIgmp(2);
-    if (conf.rescanVif > 1 && ! timers.rescanVif)
-        timers.rescanVif = timerSet(conf.rescanVif * 10, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
-    else if (!conf.rescanVif && timers.rescanVif)
-        timers.rescanVif = timerClear(timers.rescanVif);
-    if (conf.rescanConf && ! timers.rescanConf)
-        timers.rescanConf = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, &timers.rescanConf);
-    else if (!conf.rescanConf && timers.rescanConf)
-        timers.rescanConf = timerClear(timers.rescanConf);
+    if (conf.rescanVif.tv_sec > 1 && ! timers.rescanVif)
+        timerSet(&timers.rescanVif, conf.rescanVif, "Rebuild Interfaces", rebuildIfVc, &timers.rescanVif);
+    else if (!conf.rescanVif.tv_sec && timers.rescanVif)
+        timerClear(&timers.rescanVif);
+    if (conf.rescanConf.tv_sec && ! timers.rescanConf)
+        timerSet(&timers.rescanConf, conf.rescanConf, "Reload Configuration", reloadConfig, &timers.rescanConf);
+    else if (!conf.rescanConf.tv_sec && timers.rescanConf)
+        timerClear(&timers.rescanConf);
 
     return !logerr;
 }
@@ -925,7 +910,7 @@ bool loadConfig(char *cfgFile) {
 /**
  *   Reloads the configuration file and removes interfaces which were removed from config.
  */
-void reloadConfig(intptr_t *tid) {
+void reloadConfig(void **tid) {
     // Check and set sigstatus if we are doing a reload confi timer..
     ovifConf        = vifConf;
     vifConf         = NULL;
@@ -947,8 +932,8 @@ void reloadConfig(intptr_t *tid) {
         freeConfig(1);
         LOG(LOG_WARNING, 0, "Configuration Reloaded from '%s'.", conf.configFilePath);
     }
-    if (conf.rescanConf && tid) {
-        *tid = timerSet(conf.rescanConf * 10, "Reload Configuration", reloadConfig, tid);
+    if (conf.rescanConf.tv_sec && tid) {
+        timerSet(tid, conf.rescanConf, "Reload Configuration", reloadConfig, tid);
         sigstatus &= ~GOT_SIGUSR1;
     }
     getMemStats(0, -1);

@@ -44,6 +44,7 @@
 *   Function to control the IGMP querier process on interfaces.
 */
 void ctrlQuerier(int start, struct IfDesc *IfDp) {
+    uint16_t resint;
     if (start != 0 && IfDp->conf->tbl != mrt_tbl)
         LOG(LOG_CRIT, -eABNRML, "Requested to %s querier on table %d interface %s.",
             !start ? "stop" : start == 1 ? "start" : "restart", IfDp->conf->tbl, IfDp->Name);
@@ -57,13 +58,11 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
             k_updateGroup(IfDp, false, alligmp3_group, 1, (uint32_t)-1);
         }
         if (IfDp->querier.Timer)
-            IfDp->querier.Timer = timerClear(IfDp->querier.Timer);
+            timerClear(&IfDp->querier.Timer);
         if (IfDp->querier.ageTimer)
-            IfDp->querier.ageTimer = timerClear(IfDp->querier.ageTimer);
+            timerClear(&IfDp->querier.ageTimer);
         memset(&IfDp->querier, 0, sizeof(struct querier));
         IfDp->querier.ip = (uint32_t)-1;
-        if (!IS_DOWNSTREAM(IF_NEWSTATE(IfDp)))
-            IfDp->conf->qry.ver = 3;
     }
     if (start && IS_DOWNSTREAM(IF_NEWSTATE(IfDp))) {
         // Join all routers groups and start querier process on new downstream interfaces.
@@ -71,13 +70,28 @@ void ctrlQuerier(int start, struct IfDesc *IfDp) {
         LOG(LOG_INFO, 0, "Joining all routers and all igmp groups on %s", IfDp->Name);
         k_updateGroup(IfDp, true, allrouters_group, 1, (uint32_t)-1);
         k_updateGroup(IfDp, true, alligmp3_group, 1, (uint32_t)-1);
-        uint16_t interval = IfDp->conf->qry.ver == 3 ? getIgmpExp(IfDp->conf->qry.interval, 0)
-                                                     : IfDp->conf->qry.ver == 2 ? IfDp->conf->qry.interval
-                                                     : 10;
-        IfDp->conf->qry.startupQueryInterval = interval > 4 ? (IfDp->conf->qry.ver == 3 ? getIgmpExp(interval / 4, 1)
-                                                                                        : interval / 4)
-                                                            : 1;
-        IfDp->conf->qry.startupQueryCount = IfDp->conf->qry.robustness;
+        if (IfDp->conf->qry.ver == 3){
+            resint = getIgmpExp(IfDp->conf->qry.responseInterval, 1);
+        } else if (IfDp->conf->qry.ver == 2) {
+            resint = IfDp->conf->qry.responseInterval;
+        } else
+            resint = 100;
+        IfDp->querier.ip   = IfDp->conf->qry.ip;
+        IfDp->querier.ver  = IfDp->conf->qry.ver;
+        IfDp->querier.qqi  = IfDp->conf->qry.interval;
+        IfDp->querier.qrv  = IfDp->querier.sqc = IfDp->conf->qry.robustness;
+        IfDp->querier.mrc  = IfDp->conf->qry.responseInterval;
+        IfDp->querier.sqi  = IfDp->querier.qqi / IfDp->querier.sqc > resint / 10 ? IfDp->querier.qqi / IfDp->querier.sqc
+                                                                                 : IfDp->querier.qqi;
+        IfDp->querier.lmi  = IfDp->conf->qry.lmInterval;
+        IfDp->querier.lmc  = IfDp->conf->qry.lmCount;
+        IfDp->querier.gmi.tv_nsec = (10 * IfDp->conf->qry.robustness * IfDp->querier.qqi + (2 * resint)) * 100000000;
+        IfDp->querier.gmi.tv_sec = IfDp->querier.gmi.tv_nsec / 1000000000;
+        IfDp->querier.gmi.tv_nsec %= 1000000000;
+        IfDp->querier.lmqt.tv_nsec = 100000000 * IfDp->conf->qry.lmCount *
+                             (IfDp->querier.ver == 3 ? getIgmpExp(IfDp->conf->qry.lmInterval, 1) : IfDp->conf->qry.lmInterval);
+        IfDp->querier.lmqt.tv_sec = IfDp->querier.lmqt.tv_nsec / 1000000000;
+        IfDp->querier.lmqt.tv_nsec %= 1000000000;
         sendGeneralMemberQuery(IfDp);
     }
 }
@@ -101,7 +115,7 @@ inline struct qry *addSrcToQlst(struct src *src, struct IfDesc *IfDp, struct qry
             if (!(qry && qry->nsrcs[1]) && (nsrcs % 32) == 0)
                 _recalloc(qry, qry, QRYSZ(nsrcs), nsrcs ? QRYSZ(nsrcs - 1) : 0);  // Freed by delQuery().
             if (nsrcs == 0)
-                *qry = (struct qry){IfDp, src->mct, (intptr_t)NULL, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount,
+                *qry = (struct qry){IfDp, src->mct, NULL, (1 << 2), IfDp->querier.lmi, IfDp->querier.lmc,
                                     0, src->mct->group, {0}};
             src->dvif[ix].vp->qry = qry;
             src->dvif[ix].vp->lm = 1;
@@ -125,7 +139,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
     } else if (nsrcs == 0 && !mct->dvif[IfDp->dvifix].vp->lm) {
         // Only start last member aging when group is allowed on interface.
         LOG(LOG_INFO, 0, "Group specific query for %s on %s.", inetFmt(mct->group, 0), IfDp->Name);
-        startQuery(IfDp, &(struct qry){ IfDp, mct, (intptr_t)NULL, 0, (1 << 1), query->igmp_code,
+        startQuery(IfDp, &(struct qry){ IfDp, mct, NULL, 0, (1 << 1), query->igmp_code,
                                          ver == 3 ? (query->igmp_misc & ~0x8) : 0, mct->group, {0} });
     } else if (nsrcs > 0) {
         // Sort array of sources in query.
@@ -133,7 +147,7 @@ inline void processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, u
         struct src *src  = mct->sources;
         nsrcs = sortArr((uint32_t *)query->igmp_src, nsrcs);
         _calloc(qry, 1, qry, QRYSZ(nsrcs));   // Freed by delQuery().
-        *qry = (struct qry){IfDp, mct, (intptr_t)NULL, (1 << 2), IfDp->conf->qry.lmInterval, IfDp->conf->qry.lmCount,
+        *qry = (struct qry){IfDp, mct, NULL, (1 << 2), IfDp->querier.lmi, IfDp->querier.lmc,
                             0, mct->group, {0, nsrcs}};
         FOR_IF((uint32_t i = 0; src && i < nsrcs; src = src->next), src->ip >= query->igmp_src[i].s_addr) {
             if (src->ip == query->igmp_src[i].s_addr)
@@ -247,11 +261,10 @@ void groupSpecificQuery(struct qry *qry) {
     if (qry->cnt <= qry->misc && (  (BIT_TST(qry->type, 1) && qry->mct->dvif[ix].vp->lm)
                                  || (BIT_TST(qry->type, 2) && qry->nsrcs[1] > 0))) {
         // Set timer for next round if there is still aging to do.
-        uint32_t timeout = (BIT_TST(qry->type, 3)      ? qry->code
-                         :  IfDp->querier.ver == 3     ? getIgmpExp(IfDp->conf->qry.lmInterval, 0)
-                         :  IfDp->conf->qry.lmInterval) + 1;
-        qry->tid = timerSet(timeout, strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qry->nsrcs[1]),
-                             groupSpecificQuery, qry);
+        uint32_t timeout = BIT_TST(qry->type, 3) ? qry->code : IfDp->querier.lmi;
+        timeout = IfDp->querier.ver == 3 ? getIgmpExp(timeout, 0) : timeout;
+        timerSet(&qry->tid, (struct timespec){ timeout / 10, (timeout % 10) * 100000000 },
+                 strFmt(1, "GSQ (%s): %s/%u", "", IfDp->Name, inetFmt(group, 0), qry->nsrcs[1]), groupSpecificQuery, qry);
     } else {
         if (BIT_TST(qry->type, 1)) {
             qry->mct->dvif[qry->IfDp->dvifix].vp->lm = 0;
@@ -273,7 +286,6 @@ void groupSpecificQuery(struct qry *qry) {
             }
         }
         LOG(LOG_DEBUG, 0, "Done querying %s/%d on %s.", inetFmt(group, 0), nsrcs, IfDp->Name);
-        qry->tid = (intptr_t)NULL;
         delQuery(qry, NULL, NULL);
     }
 
@@ -309,7 +321,7 @@ void delQuery(struct qry *qry, struct mct *mct, struct src *src) {
     if (! src || !qry->nsrcs[1]) {
         LOG(LOG_INFO, 0, "Removing query for group %s on %s.", inetFmt(qry->group, 0), qry->IfDp->Name);
         if (qry->tid)
-            timerClear(qry->tid);
+            timerClear(&qry->tid);
         // Alloced by addSrcToQlst(), processGroupQuery() or startQuery()
         _free(qry, qry, qry->nsrcs[0] ? QRYSZ(qry->nsrcs[0]) : QSZ);
     }

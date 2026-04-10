@@ -103,7 +103,7 @@ struct dvif {
 struct qry {
     struct IfDesc      *IfDp;                     // Interfce for Query
     struct mct         *mct;                      // Pointer to group being queried
-    intptr_t            tid;                      // Timer ID
+    void               *tid;                      // Timer ID
     uint8_t             type;                     // Query type (GSQ/GSSQ)
     uint8_t             code;                     // Query max response code (LMI)
     uint8_t             misc;                     // Query misc (RA/QRV)

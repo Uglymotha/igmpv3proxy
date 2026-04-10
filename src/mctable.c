@@ -77,7 +77,7 @@ struct mct *findGroup(struct IfDesc *IfDp, register uint32_t group, int dir, boo
         mct->stamp.tv_nsec = (intptr_t)NULL;
     }
     if (dir && mct->stamp.tv_nsec)
-        mct->stamp.tv_nsec = (intptr_t)timerClear((intptr_t)mct->stamp.tv_nsec);
+        timerClear((void **)&mct->stamp.tv_nsec);
     // Allocate downstream and upstream vif tables.
     if (! mct->dvif || mct->nvif.d < downvifcount) {
         _recalloc(mct->dvif, ifm, VPSZ(1, struct mvif), PVPSZ(mct, d, struct mvif));   // Freed by delGroup()
@@ -131,7 +131,7 @@ static inline bool addGroup(struct mct* mct, struct IfDesc *IfDp, int dir, int m
         if (!checkFilters(IfDp, 0, NULL, mct)) {
             // Check if group is allowed upstream on interface.
             LOG(LOG_NOTICE, 0, "Not joining denied group %s on %s.", inetFmt(mct->group, 0), IfDp->Name);
-        } else if (IfDp->conf->bwControl > 0 && IfDp->conf->ratelimit > 0 && IfDp->stats.iRate > IfDp->conf->ratelimit)
+        } else if (IfDp->conf->bwControl.tv_sec > 0 && IfDp->conf->ratelimit > 0 && IfDp->stats.iRate > IfDp->conf->ratelimit)
             LOG(LOG_NOTICE, 0, "Interface %s over bandwidth limit (%d > %d). Not joining %s.",
                 IfDp->Name, IfDp->stats.iRate, IfDp->conf->ratelimit, inetFmt(mct->group, 0));
         else if (mct->mode && !mct->uvif[ix].j && !mct->uvif[ix].d
@@ -159,7 +159,7 @@ struct mct *delGroup(struct mct* mct, struct IfDesc *IfDp, int dir) {
         dir && mct->dvif[ix].vp ? 1 : mct->uvif[ix].j, mct->mode, mct->nvif.i, mct->nvif.e, mct->nsrcs[0], mct->nsrcs[1]);
     // Update the interface group list for downstream vif.
     if (mct->stamp.tv_nsec)
-        timerClear((intptr_t)mct->stamp.tv_nsec);
+        timerClear((void **)&mct->stamp.tv_nsec);
     if (!dir && mct->uvif[ix].j && mct->mode) {
         // Leave exclude mode group upstream and clear upstream status.
         LOG(LOG_INFO, 0, "Leaving group %s upstream on interface %s.", inetFmt(mct->group, 0), IfDp->Name);
@@ -175,7 +175,6 @@ struct mct *delGroup(struct mct* mct, struct IfDesc *IfDp, int dir) {
             delQuery(mct->dvif[ix].vp->qry, mct, NULL);
         if (mct->dvif[ix].vp->dht)
             _free(mct->dvif[ix].vp->dht, dht, DHTSZ);           // Alloced by findGroup()
-        LOG(LOG_DEBUG, 0, "YOYO %x %x %x %x", &mct->dvif[ix].prev, mct->dvif[ix].prev,  &mct->dvif[ix].next, mct->dvif[ix].next);
         LST_RM(mct, IfDp->dmct, DVIFLST(ix));                   // Alloced by findGroup()
     }
     if (!mct->nvif.e && !mct->nvif.i && !remove) {
@@ -437,7 +436,7 @@ void bwControl(struct IfDesc *IfDp) {
         }
         ibytes = siocReq.bytecnt - src->bytes;
         src->bytes += ibytes;
-        src->rate = ibytes / IfDp->conf->bwControl;
+        src->rate = ibytes / IfDp->conf->bwControl.tv_sec;
         LOG(LOG_INFO, 0, "Added %lldB to %s:%s (%lldB/s), total %lldB.",
             ibytes, inetFmt(src->ip, 0), inetFmt(src->mct->group, 0), src->rate, src->bytes);
     }
@@ -448,17 +447,17 @@ void bwControl(struct IfDesc *IfDp) {
     else {
         ibytes = siocVReq.ibytes - IfDp->stats.iBytes;
         IfDp->stats.iBytes += ibytes;
-        IfDp->stats.iRate = ibytes / IfDp->conf->bwControl;
+        IfDp->stats.iRate = ibytes / IfDp->conf->bwControl.tv_sec;
         obytes = siocVReq.obytes - IfDp->stats.oBytes;
         IfDp->stats.oBytes += obytes;
-        IfDp->stats.oRate = obytes / IfDp->conf->bwControl;
+        IfDp->stats.oRate = obytes / IfDp->conf->bwControl.tv_sec;
         LOG(LOG_INFO, 0, "Added %lldB/%lldB to %s interface %s (%lldB/s/%lldB/s), total %lldB/%lldB.", ibytes, obytes,
             IS_UPDOWNSTREAM(IfDp->state) ?  "updownstream" : IS_DOWNSTREAM(IfDp->state) ? "downstream" : "upstream",
             IfDp->Name, IfDp->stats.iRate, IfDp->stats.oRate, IfDp->stats.iBytes, IfDp->stats.oBytes);
     }
 
     // Set next timer;
-    IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
+    timerSet(&IfDp->bwTimer, IfDp->conf->bwControl, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
     logRouteTable("Bandwidth Control", 0, -1, (uint32_t)-1, (uint32_t)-1, IfDp);
 }
 
@@ -516,8 +515,6 @@ void clearGroups(struct IfDesc *IfDp) {
         LOG(LOG_INFO, 0, "Vif %d - %s %s, removing %sroutes.", IfDp->index, IfDp->Name,
             !IS_DOWNSTREAM(newstate) ? "no longer downstream" : "now also upstream", !IS_DOWNSTREAM(newstate) ? "groups and " : "");
         if (!IS_UPSTREAM(oldstate)) {
-            LOG(LOG_DEBUG, 0, "YOYO %x", IfDp->mfc);
-        //IF_FOR(!IS_UPSTREAM(oldstate),
             for (struct src *src = NULL, *nsrc = IfDp->mfc; (src = nsrc) && (mct = src->mct);
                 mct->stamp.tv_nsec && ! mct->sources ? delGroup(mct, IfDp, 2) : NULL) {
                 nsrc = src->dvif[ix].nextmfc;
@@ -560,12 +557,12 @@ void clearGroups(struct IfDesc *IfDp) {
         }
     }
     // Stop and start bandwidth control if required.
-    if (IfDp->bwTimer && (!IfDp->conf->bwControl || SHUTDOWN
-        || (!STARTUP && !IFREBUILD && IfDp->oconf && IfDp->oconf->bwControl != IfDp->conf->bwControl))) {
-        IfDp->bwTimer = timerClear(IfDp->bwTimer);
+    if (IfDp->bwTimer && (!IfDp->conf->bwControl.tv_sec || SHUTDOWN
+        || (!STARTUP && !IFREBUILD && IfDp->oconf && IfDp->oconf->bwControl.tv_sec != IfDp->conf->bwControl.tv_sec))) {
+        timerClear(&IfDp->bwTimer);
     }
-    if (!SHUTDOWN && !IS_DISABLED(IfDp->state) && IfDp->conf->bwControl && ! IfDp->bwTimer)
-        IfDp->bwTimer = timerSet(IfDp->conf->bwControl * 10, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
+    if (!SHUTDOWN && !IS_DISABLED(IfDp->state) && IfDp->conf->bwControl.tv_sec && ! IfDp->bwTimer)
+        timerSet(&IfDp->bwTimer, IfDp->conf->bwControl, strFmt(1, "Bandwidth Control: %s", "", IfDp->Name), bwControl, IfDp);
 
     if (IS_DOWNSTREAM(IfDp->state))
         logRouteTable(strFmt(1, "Clear Groups (%s)", "", IfDp->Name), 1, -1, (uint32_t)-1, (uint32_t)-1, IfDp);
@@ -685,8 +682,8 @@ void updateGroup(struct IfDesc *IfDp, uint32_t ip, struct igmpv3_grec *grec) {
         }
         if (mct->dvif[ix].vp && IS_EX(mct, IfDp) && !mct->dvif[ix].vp->lm && IQUERY)
             // EX: Send Q(G).
-            startQuery(IfDp, &(struct qry){IfDp, mct, (intptr_t)NULL, (1 << 1), IfDp->conf->qry.lmInterval,
-                                           IfDp->conf->qry.lmCount, 0, mct->group, {0} });  /* FALLTHRU */
+            startQuery(IfDp, &(struct qry){IfDp, mct, NULL, (1 << 1), IfDp->querier.lmi,
+                                           IfDp->querier.lmc, 0, mct->group, {0} });  /* FALLTHRU */
     case IGMPV3_ALLOW_NEW_SOURCES:
     case IGMPV3_MODE_IS_INCLUDE:
         if (nsrcs > 0)
@@ -824,8 +821,8 @@ inline void activateRoute(struct IfDesc *IfDp, void *_src, uint32_t ip, uint32_t
             return;
         } else if (! src->IfDp) {
             if (!mct->nvif.i && !mct->nvif.e)
-                mct->stamp.tv_nsec = timerSet(CONF->topQueryInterval * 30, strFmt(1, "Unresolved group (%s)", "",
-                                              inetFmt(group, 0)), ageUnknownGroup, src);
+                timerSet((void **)&mct->stamp.tv_nsec, CONF->topQueryInterval, strFmt(1, "Unresolved group (%s)", "",
+                         inetFmt(group, 0)), ageUnknownGroup, src);
             clock_gettime(CLOCK_REALTIME, &src->stamp);
             LST_IN(src, IfDp->mfc, NULL, MFCLST(ix));   // Freed by self or clearGroups()
             src->IfDp = IfDp;
@@ -876,7 +873,7 @@ void ageGroups(struct IfDesc *IfDp) {
     uint32_t    ix = IfDp->dvifix;
 
     LOG(LOG_DEBUG, 0, "%s", IfDp->Name);
-    IfDp->querier.ageTimer = (intptr_t)NULL;
+    timerClear(&IfDp->querier.ageTimer);
     while ((mct = nmct)) {
         nmct = mct->dvif[ix].next;
         if (mct->dvif[ix].vp->lm)
@@ -913,7 +910,7 @@ void ageGroups(struct IfDesc *IfDp) {
 *   Ages unknown multicast group
 */
  void ageUnknownGroup(struct src *src) {
-    src->mct->stamp.tv_nsec = (intptr_t)NULL;
+    timerClear((void **)&src->mct->stamp.tv_nsec);
     delGroup(src->mct, src->IfDp, 2);
 }
 
