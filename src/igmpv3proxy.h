@@ -698,7 +698,7 @@ void     processGroupQuery(struct IfDesc *IfDp, struct igmpv3_query *query, uint
 */
 #define DEBUGQUEUE(x, y, z) if (loglevel == LOG_DEBUG || z >= 0) timerDebugQueue(x, y, z)
 struct timespec timerAgeQueue(void);
-void            timerSet(void **tid, struct timespec delay, const char *name, void (*func)(), void *data);
+void            timerSet(void **tid, struct timespec delay, const char *name, void *func, void *data);
 void            timerClear(void **tid);
 void            timerDebugQueue(const char *header, int h, int fd);
 

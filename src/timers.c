@@ -81,7 +81,7 @@ struct timespec timerAgeQueue(void) {
 /**
 *   Inserts a timer in queue. Queue is maintained in order of execution.
 */
-void timerSet(void **tid, struct timespec delay, const char *name, void (*func)(), void *data)
+void timerSet(void **tid, struct timespec delay, const char *name, void *func, void *data)
 {
     struct timeOutQueue        *pnode = NULL, *node = (struct timeOutQueue *)*tid;
     struct timespec             time;
